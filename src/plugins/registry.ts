@@ -45,6 +45,7 @@ import type {
   PluginOrigin,
   PluginKind,
   PluginRegistrationMode,
+  PluginResetSessionResult,
   PluginHookName,
   PluginHookHandlerMap,
   PluginHookRegistration as TypedPluginHookRegistration,
@@ -253,9 +254,110 @@ export function createEmptyPluginRegistry(): PluginRegistry {
 export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const registry = createEmptyPluginRegistry();
   const coreGatewayMethods = new Set(Object.keys(registryParams.coreGatewayHandlers ?? {}));
+  const resetSessionsInFlight = new Set<string>();
 
   const pushDiagnostic = (diag: PluginDiagnostic) => {
     registry.diagnostics.push(diag);
+  };
+
+  const normalizeResetSessionError = (error: unknown): string => {
+    if (error instanceof Error) {
+      return error.message || "Session reset failed.";
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    if (error && typeof error === "object") {
+      const maybeMessage = Reflect.get(error, "message");
+      if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+        return maybeMessage;
+      }
+      const nestedError = Reflect.get(error, "error");
+      if (nestedError && typeof nestedError === "object") {
+        const nestedMessage = Reflect.get(nestedError, "message");
+        if (typeof nestedMessage === "string" && nestedMessage.trim()) {
+          return nestedMessage;
+        }
+      }
+    }
+    return "Session reset failed.";
+  };
+
+  const createResetSessionFailure = (
+    key: string,
+    error: unknown,
+  ): Extract<PluginResetSessionResult, { ok: false }> => ({
+    ok: false,
+    key,
+    error: normalizeResetSessionError(error),
+  });
+
+  const createPluginResetSession = (params: {
+    config: OpenClawPluginApi["config"];
+    pluginId: string;
+  }): NonNullable<OpenClawPluginApi["resetSession"]> => {
+    return async (key, reason = "new") => {
+      let responseKey = typeof key === "string" ? key.trim() : "";
+
+      try {
+        if (typeof key !== "string") {
+          throw new TypeError("resetSession key must be a string");
+        }
+
+        const trimmedKey = key.trim();
+        responseKey = trimmedKey;
+        if (!trimmedKey) {
+          throw new Error("resetSession key must be a non-empty string");
+        }
+
+        const normalizedReason = reason === "reset" ? "reset" : "new";
+        const [{ resolveGatewaySessionStoreTarget }, { performGatewaySessionReset }] =
+          await Promise.all([
+            import("../gateway/session-utils.js"),
+            import("../gateway/session-reset-service.js"),
+          ]);
+
+        const target = resolveGatewaySessionStoreTarget({
+          cfg: params.config,
+          key: trimmedKey,
+        });
+        const canonicalKey = target.canonicalKey?.trim();
+        if (!canonicalKey) {
+          throw new Error("Session reset failed to resolve a canonical session key");
+        }
+
+        responseKey = canonicalKey;
+        if (resetSessionsInFlight.has(canonicalKey)) {
+          return createResetSessionFailure(
+            canonicalKey,
+            `Session reset already in progress for ${canonicalKey}.`,
+          );
+        }
+
+        resetSessionsInFlight.add(canonicalKey);
+        try {
+          const result = await performGatewaySessionReset({
+            key: trimmedKey,
+            reason: normalizedReason,
+            commandSource: `plugin:${params.pluginId}`,
+          });
+
+          if (result.ok) {
+            return {
+              ok: true,
+              key: result.key,
+              sessionId: result.entry.sessionId,
+            };
+          }
+
+          return createResetSessionFailure(canonicalKey, result.error);
+        } finally {
+          resetSessionsInFlight.delete(canonicalKey);
+        }
+      } catch (error) {
+        return createResetSessionFailure(responseKey, error);
+      }
+    };
   };
 
   const registerTool = (
@@ -938,6 +1040,9 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
           });
         }
       },
+      resetSession: createPluginResetSession({
+        pluginId: record.id,
+      }),
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) =>
         registrationMode === "full"
