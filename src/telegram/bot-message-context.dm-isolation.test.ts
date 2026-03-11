@@ -5,6 +5,10 @@ import {
   buildTelegramMessageContextForTest,
 } from "./bot-message-context.test-harness.js";
 
+// baseTelegramMessageContextConfig is typed as `never` in the harness;
+// cast to Record<string, unknown> so we can spread / assign over it in tests.
+const baseConfig = baseTelegramMessageContextConfig as unknown as Record<string, unknown>;
+
 // Mock recordInboundSession to capture session key
 const recordInboundSessionMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../channels/session.js", () => ({
@@ -41,11 +45,12 @@ describe("Telegram DM session isolation (#41165)", () => {
   });
 
   it("respects explicit dmScope: main (operator opt-in)", async () => {
-    // Set runtime config so loadConfig() also returns dmScope: "main"
-    setRuntimeConfigSnapshot({
-      ...baseTelegramMessageContextConfig,
+    const cfg = {
+      ...baseConfig,
       session: { dmScope: "main" },
-    } as never);
+    };
+    // Set runtime config so loadConfig() also returns dmScope: "main"
+    setRuntimeConfigSnapshot(cfg as never);
 
     const ctx = await buildTelegramMessageContextForTest({
       message: {
@@ -53,10 +58,7 @@ describe("Telegram DM session isolation (#41165)", () => {
         from: { id: 7463849194, first_name: "Alice" },
         text: "hello",
       },
-      cfg: {
-        ...baseTelegramMessageContextConfig,
-        session: { dmScope: "main" },
-      },
+      cfg,
     });
 
     expect(ctx).toBeTruthy();
@@ -69,11 +71,20 @@ describe("Telegram DM session isolation (#41165)", () => {
     expect(sessionKey).toBe("agent:main:main");
   });
 
-  it("preserves per-peer isolation when dmScope is per-peer", async () => {
-    setRuntimeConfigSnapshot({
-      ...baseTelegramMessageContextConfig,
-      session: { dmScope: "per-peer" },
-    } as never);
+  it("does not rewrite explicit DM peer bindings that intentionally target main", async () => {
+    const cfg = {
+      ...baseConfig,
+      bindings: [
+        {
+          agentId: "main",
+          match: {
+            channel: "telegram",
+            peer: { kind: "direct", id: "7463849194" },
+          },
+        },
+      ],
+    };
+    setRuntimeConfigSnapshot(cfg as never);
 
     const ctx = await buildTelegramMessageContextForTest({
       message: {
@@ -81,10 +92,65 @@ describe("Telegram DM session isolation (#41165)", () => {
         from: { id: 7463849194, first_name: "Alice" },
         text: "hello",
       },
-      cfg: {
-        ...baseTelegramMessageContextConfig,
-        session: { dmScope: "per-peer" },
+      cfg,
+    });
+
+    expect(ctx).toBeTruthy();
+    if (!ctx) {
+      return;
+    }
+
+    expect(ctx.route.matchedBy).toBe("binding.peer");
+    expect(ctx.ctxPayload.SessionKey).toBe("agent:main:main");
+  });
+
+  it("does not rewrite explicit account bindings that intentionally target main", async () => {
+    const cfg = {
+      ...baseConfig,
+      bindings: [
+        {
+          agentId: "main",
+          match: {
+            channel: "telegram",
+            account: "default",
+          },
+        },
+      ],
+    };
+    setRuntimeConfigSnapshot(cfg as never);
+
+    const ctx = await buildTelegramMessageContextForTest({
+      message: {
+        chat: { id: 7463849194, type: "private" },
+        from: { id: 7463849194, first_name: "Alice" },
+        text: "hello",
       },
+      cfg,
+    });
+
+    expect(ctx).toBeTruthy();
+    if (!ctx) {
+      return;
+    }
+
+    expect(ctx.route.matchedBy).toBe("binding.account");
+    expect(ctx.ctxPayload.SessionKey).toBe("agent:main:main");
+  });
+
+  it("preserves per-peer isolation when dmScope is per-peer", async () => {
+    const cfg = {
+      ...baseConfig,
+      session: { dmScope: "per-peer" },
+    };
+    setRuntimeConfigSnapshot(cfg as never);
+
+    const ctx = await buildTelegramMessageContextForTest({
+      message: {
+        chat: { id: 7463849194, type: "private" },
+        from: { id: 7463849194, first_name: "Alice" },
+        text: "hello",
+      },
+      cfg,
     });
 
     expect(ctx).toBeTruthy();
@@ -94,16 +160,15 @@ describe("Telegram DM session isolation (#41165)", () => {
 
     const sessionKey = ctx.ctxPayload.SessionKey;
     expect(sessionKey).not.toBe("agent:main:main");
-    // per-peer: already isolated by routing, guard does not override
-    expect(sessionKey).toContain("direct");
-    expect(sessionKey).toContain("7463849194");
+    expect(sessionKey).toBe("agent:main:direct:7463849194");
   });
 
   it("preserves per-channel-peer isolation when dmScope is per-channel-peer", async () => {
-    setRuntimeConfigSnapshot({
-      ...baseTelegramMessageContextConfig,
+    const cfg = {
+      ...baseConfig,
       session: { dmScope: "per-channel-peer" },
-    } as never);
+    };
+    setRuntimeConfigSnapshot(cfg as never);
 
     const ctx = await buildTelegramMessageContextForTest({
       message: {
@@ -111,10 +176,7 @@ describe("Telegram DM session isolation (#41165)", () => {
         from: { id: 7463849194, first_name: "Alice" },
         text: "hello",
       },
-      cfg: {
-        ...baseTelegramMessageContextConfig,
-        session: { dmScope: "per-channel-peer" },
-      },
+      cfg,
     });
 
     expect(ctx).toBeTruthy();
