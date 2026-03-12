@@ -4,6 +4,7 @@ import {
   HUGGINGFACE_MODEL_CATALOG,
 } from "../agents/huggingface-models.js";
 import {
+  buildDeepInfraStaticProvider,
   buildKilocodeProvider,
   buildKimiCodingProvider,
   buildQianfanProvider,
@@ -30,6 +31,7 @@ import {
 } from "../agents/venice-models.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelApi } from "../config/types.models.js";
+import { DEEPINFRA_BASE_URL, DEEPINFRA_DEFAULT_MODEL_REF } from "../providers/deepinfra-shared.js";
 import { KILOCODE_BASE_URL } from "../providers/kilocode-shared.js";
 import {
   HUGGINGFACE_DEFAULT_MODEL_REF,
@@ -468,6 +470,29 @@ export function applyKilocodeProviderConfig(cfg: OpenClawConfig): OpenClawConfig
 export function applyKilocodeConfig(cfg: OpenClawConfig): OpenClawConfig {
   const next = applyKilocodeProviderConfig(cfg);
   return applyAgentDefaultModelPrimary(next, KILOCODE_DEFAULT_MODEL_REF);
+}
+
+export function applyDeepInfraProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
+  const models = { ...cfg.agents?.defaults?.models };
+  models[DEEPINFRA_DEFAULT_MODEL_REF] = {
+    ...models[DEEPINFRA_DEFAULT_MODEL_REF],
+    alias: models[DEEPINFRA_DEFAULT_MODEL_REF]?.alias ?? "DeepInfra",
+  };
+
+  const deepinfraModels = buildDeepInfraStaticProvider().models ?? [];
+
+  return applyProviderConfigWithModelCatalog(cfg, {
+    agentModels: models,
+    providerId: "deepinfra",
+    api: "openai-completions",
+    baseUrl: DEEPINFRA_BASE_URL,
+    catalogModels: deepinfraModels,
+  });
+}
+
+export function applyDeepInfraConfig(cfg: OpenClawConfig): OpenClawConfig {
+  const next = applyDeepInfraProviderConfig(cfg);
+  return applyAgentDefaultModelPrimary(next, DEEPINFRA_DEFAULT_MODEL_REF);
 }
 
 export function applyAuthProfileConfig(

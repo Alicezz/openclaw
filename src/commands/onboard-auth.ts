@@ -9,6 +9,8 @@ export {
   applyCloudflareAiGatewayProviderConfig,
   applyHuggingfaceConfig,
   applyHuggingfaceProviderConfig,
+  applyDeepInfraConfig,
+  applyDeepInfraProviderConfig,
   applyKilocodeConfig,
   applyKilocodeProviderConfig,
   applyQianfanConfig,
@@ -66,6 +68,7 @@ export {
 } from "./onboard-auth.config-opencode-go.js";
 export {
   CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF,
+  DEEPINFRA_DEFAULT_MODEL_REF,
   KILOCODE_DEFAULT_MODEL_REF,
   LITELLM_DEFAULT_MODEL_REF,
   OPENROUTER_DEFAULT_MODEL_REF,
@@ -75,6 +78,7 @@ export {
   setByteplusApiKey,
   setQianfanApiKey,
   setGeminiApiKey,
+  setDeepInfraApiKey,
   setKilocodeApiKey,
   setLitellmApiKey,
   setKimiCodingApiKey,

@@ -30,6 +30,13 @@ import {
   TOGETHER_MODEL_CATALOG,
   buildTogetherModelDefinition,
 } from "./together-models.js";
+import {
+  DEEPINFRA_BASE_URL,
+  DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
+  DEEPINFRA_DEFAULT_COST,
+  DEEPINFRA_DEFAULT_MAX_TOKENS,
+  DEEPINFRA_MODEL_CATALOG,
+} from "../providers/deepinfra-shared.ts";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -542,6 +549,22 @@ export function buildKilocodeProvider(): ProviderConfig {
       cost: KILOCODE_DEFAULT_COST,
       contextWindow: model.contextWindow ?? KILOCODE_DEFAULT_CONTEXT_WINDOW,
       maxTokens: model.maxTokens ?? KILOCODE_DEFAULT_MAX_TOKENS,
+    })),
+  };
+}
+
+  export function buildDeepInfraStaticProvider(): ProviderConfig {
+    return {
+        baseUrl: DEEPINFRA_BASE_URL,
+        api: "openai-completions",
+        models: DEEPINFRA_MODEL_CATALOG.map((model) => ({
+          id: model.id,
+          name: model.name,
+          reasoning: model.reasoning,
+          input: model.input,
+          cost: DEEPINFRA_DEFAULT_COST,
+          contextWindow: model.contextWindow ?? DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
+          maxTokens: model.maxTokens ?? DEEPINFRA_DEFAULT_MAX_TOKENS,
     })),
   };
 }

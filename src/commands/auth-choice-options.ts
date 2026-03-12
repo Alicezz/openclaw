@@ -108,6 +108,12 @@ const AUTH_CHOICE_GROUP_DEFS: {
     choices: ["kilocode-api-key"],
   },
   {
+    value: "deepinfra",
+    label: "DeepInfra",
+    hint: "API key",
+    choices: ["deepinfra-api-key"],
+  },
+  {
     value: "qwen",
     label: "Qwen",
     hint: "OAuth",

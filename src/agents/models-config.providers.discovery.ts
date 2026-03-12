@@ -1,7 +1,9 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { DEEPINFRA_BASE_URL } from "../providers/deepinfra-shared.js";
 import { KILOCODE_BASE_URL } from "../providers/kilocode-shared.js";
+import { discoverDeepInfraModels } from "./deepinfra-models.js";
 import {
   discoverHuggingfaceModels,
   HUGGINGFACE_BASE_URL,
@@ -208,6 +210,19 @@ export async function buildKilocodeProviderWithDiscovery(): Promise<ProviderConf
   const models = await discoverKilocodeModels();
   return {
     baseUrl: KILOCODE_BASE_URL,
+    api: "openai-completions",
+    models,
+  };
+}
+
+/**
+ * Build the DeepInfra provider with dynamic model discovery from the API.
+ * Falls back to the static catalog on failure.
+ */
+export async function buildDeepInfraProviderWithDiscovery(): Promise<ProviderConfig> {
+  const models = await discoverDeepInfraModels();
+  return {
+    baseUrl: DEEPINFRA_BASE_URL,
     api: "openai-completions",
     models,
   };

@@ -15,6 +15,7 @@ import {
   applyAuthProfileConfig,
   applyCloudflareAiGatewayConfig,
   applyKilocodeConfig,
+  applyDeepInfraConfig,
   applyQianfanConfig,
   applyModelStudioConfig,
   applyModelStudioConfigCn,
@@ -44,6 +45,7 @@ import {
   setModelStudioApiKey,
   setGeminiApiKey,
   setKilocodeApiKey,
+  setDeepInfraApiKey,
   setKimiCodingApiKey,
   setLitellmApiKey,
   setMistralApiKey,
@@ -641,6 +643,33 @@ export async function applyNonInteractiveAuthChoice(params: {
       mode: "api_key",
     });
     return applyKilocodeConfig(nextConfig);
+  }
+
+  if (authChoice === "deepinfra-api-key") {
+    const resolved = await resolveApiKey({
+      provider: "deepinfra",
+      cfg: baseConfig,
+      flagValue: opts.deepinfraApiKey,
+      flagName: "--deepinfra-api-key",
+      envVar: "DEEPINFRA_API_KEY",
+      runtime,
+    });
+    if (!resolved) {
+      return null;
+    }
+    if (
+      !(await maybeSetResolvedApiKey(resolved, (value) =>
+        setDeepInfraApiKey(value, undefined, apiKeyStorageOptions),
+      ))
+    ) {
+      return null;
+    }
+    nextConfig = applyAuthProfileConfig(nextConfig, {
+      profileId: "deepinfra:default",
+      provider: "deepinfra",
+      mode: "api_key",
+    });
+    return applyDeepInfraConfig(nextConfig);
   }
 
   if (authChoice === "litellm-api-key") {

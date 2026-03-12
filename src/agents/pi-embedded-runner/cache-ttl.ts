@@ -20,6 +20,10 @@ function isOpenRouterCacheTtlModel(modelId: string): boolean {
   return OPENROUTER_CACHE_TTL_MODEL_PREFIXES.some((prefix) => modelId.startsWith(prefix));
 }
 
+function isDeepInfraCacheTtlModel(modelId: string): boolean {
+  return Array.from(CACHE_TTL_NATIVE_PROVIDERS.values()).some((prefix) => modelId.startsWith(prefix));
+}
+
 export function isCacheTtlEligibleProvider(provider: string, modelId: string): boolean {
   const normalizedProvider = provider.toLowerCase();
   const normalizedModelId = modelId.toLowerCase();
@@ -30,6 +34,9 @@ export function isCacheTtlEligibleProvider(provider: string, modelId: string): b
     return true;
   }
   if (normalizedProvider === "kilocode" && normalizedModelId.startsWith("anthropic/")) {
+    return true;
+  }
+  if (normalizedProvider === "deepinfra" && isDeepInfraCacheTtlModel(normalizedModelId)) {
     return true;
   }
   return false;

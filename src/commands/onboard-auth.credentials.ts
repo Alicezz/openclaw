@@ -10,6 +10,7 @@ import {
   type SecretInput,
   type SecretRef,
 } from "../config/types.secrets.js";
+import { DEEPINFRA_DEFAULT_MODEL_REF } from "../providers/deepinfra-shared.js";
 import { KILOCODE_DEFAULT_MODEL_REF } from "../providers/kilocode-shared.js";
 import { PROVIDER_ENV_VARS } from "../secrets/provider-env-vars.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
@@ -21,6 +22,7 @@ export {
   MODELSTUDIO_DEFAULT_MODEL_REF,
 } from "./onboard-auth.models.js";
 export { KILOCODE_DEFAULT_MODEL_REF };
+export { DEEPINFRA_DEFAULT_MODEL_REF };
 
 const resolveAuthAgentDir = (agentDir?: string) => agentDir ?? resolveOpenClawAgentDir();
 
@@ -444,6 +446,20 @@ export async function setOpencodeGoApiKey(
   await setSharedOpencodeApiKey(key, agentDir, options);
 }
 
+// TODO: use this to reduce the code duplication a bit.
+function setApiKey(
+  providerId: string,
+  key: SecretInput,
+  agentDir?: string,
+  options?: ApiKeyStorageOptions,
+) {
+  upsertAuthProfile({
+    profileId: `${providerId}:default`,
+    credential: buildApiKeyCredential(providerId, key, undefined, options),
+    agentDir: resolveAuthAgentDir(agentDir),
+  });
+}
+
 async function setSharedOpencodeApiKey(
   key: SecretInput,
   agentDir?: string,
@@ -537,4 +553,12 @@ export async function setKilocodeApiKey(
     credential: buildApiKeyCredential("kilocode", key, undefined, options),
     agentDir: resolveAuthAgentDir(agentDir),
   });
+}
+
+export async function setDeepInfraApiKey(
+  key: SecretInput,
+  agentDir?: string,
+  options?: ApiKeyStorageOptions,
+) {
+  setApiKey("deepinfra", key, agentDir, options);
 }

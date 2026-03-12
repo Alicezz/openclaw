@@ -13,6 +13,7 @@ import {
   resolveCloudflareAiGatewayBaseUrl,
 } from "./cloudflare-ai-gateway.js";
 import {
+  buildDeepInfraProviderWithDiscovery,
   buildHuggingfaceProvider,
   buildKilocodeProviderWithDiscovery,
   buildOllamaProvider,
@@ -45,6 +46,7 @@ import {
   XIAOMI_DEFAULT_MODEL_ID,
 } from "./models-config.providers.static.js";
 export {
+  buildDeepInfraStaticProvider,
   buildKimiCodingProvider,
   buildKilocodeProvider,
   buildNvidiaProvider,
@@ -671,6 +673,10 @@ const SIMPLE_IMPLICIT_PROVIDER_LOADERS: ImplicitProviderLoader[] = [
   withApiKey("nvidia", async ({ apiKey }) => ({ ...buildNvidiaProvider(), apiKey })),
   withApiKey("kilocode", async ({ apiKey }) => ({
     ...(await buildKilocodeProviderWithDiscovery()),
+    apiKey,
+  })),
+  withApiKey("deepinfra", async ({ apiKey }) => ({
+    ...(await buildDeepInfraProviderWithDiscovery()),
     apiKey,
   })),
 ];
