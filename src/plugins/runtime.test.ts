@@ -1,18 +1,27 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createEmptyPluginRegistry } from "./registry.js";
+import type { PluginHttpRouteRegistration } from "./registry.js";
 import {
+  getActivePluginRegistry,
   pinActivePluginHttpRouteRegistry,
   releasePinnedPluginHttpRouteRegistry,
   resolveActivePluginHttpRouteRegistry,
   setActivePluginRegistry,
 } from "./runtime.js";
 
-describe("plugin runtime route registry", () => {
-  afterEach(() => {
-    releasePinnedPluginHttpRouteRegistry();
-    setActivePluginRegistry(createEmptyPluginRegistry());
-  });
+const makeRoute = (path: string): PluginHttpRouteRegistration => ({
+  path,
+  handler: () => {},
+  auth: "gateway",
+  match: "exact",
+});
 
+afterEach(() => {
+  releasePinnedPluginHttpRouteRegistry();
+  setActivePluginRegistry(createEmptyPluginRegistry());
+});
+
+describe("plugin runtime route registry", () => {
   it("keeps the pinned route registry when the active plugin registry changes", () => {
     const startupRegistry = createEmptyPluginRegistry();
     const laterRegistry = createEmptyPluginRegistry();
@@ -66,5 +75,46 @@ describe("plugin runtime route registry", () => {
     pinActivePluginHttpRouteRegistry(startupRegistry);
 
     expect(resolveActivePluginHttpRouteRegistry(explicitRegistry)).toBe(startupRegistry);
+  });
+});
+
+describe("setActivePluginRegistry", () => {
+  beforeEach(() => {
+    setActivePluginRegistry(createEmptyPluginRegistry());
+  });
+
+  it("carries forward httpRoutes when new registry has none", () => {
+    const oldRegistry = createEmptyPluginRegistry();
+    const fakeRoute = makeRoute("/test");
+    oldRegistry.httpRoutes.push(fakeRoute);
+    setActivePluginRegistry(oldRegistry);
+    expect(getActivePluginRegistry()?.httpRoutes).toHaveLength(1);
+
+    const newRegistry = createEmptyPluginRegistry();
+    expect(newRegistry.httpRoutes).toHaveLength(0);
+    setActivePluginRegistry(newRegistry);
+    expect(getActivePluginRegistry()?.httpRoutes).toHaveLength(1);
+    expect(getActivePluginRegistry()?.httpRoutes[0]).toEqual(fakeRoute);
+  });
+
+  it("does not carry forward when new registry already has routes", () => {
+    const oldRegistry = createEmptyPluginRegistry();
+    oldRegistry.httpRoutes.push(makeRoute("/old"));
+    setActivePluginRegistry(oldRegistry);
+
+    const newRegistry = createEmptyPluginRegistry();
+    const newRoute = makeRoute("/new");
+    newRegistry.httpRoutes.push(newRoute);
+    setActivePluginRegistry(newRegistry);
+    expect(getActivePluginRegistry()?.httpRoutes).toHaveLength(1);
+    expect(getActivePluginRegistry()?.httpRoutes[0]).toEqual(newRoute);
+  });
+
+  it("does not carry forward when same registry is set again", () => {
+    const registry = createEmptyPluginRegistry();
+    registry.httpRoutes.push(makeRoute("/test"));
+    setActivePluginRegistry(registry);
+    setActivePluginRegistry(registry);
+    expect(getActivePluginRegistry()?.httpRoutes).toHaveLength(1);
   });
 });
