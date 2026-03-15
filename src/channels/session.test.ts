@@ -18,6 +18,7 @@ describe("recordInboundSession", () => {
   };
 
   beforeEach(() => {
+    vi.resetModules();
     recordSessionMetaFromInboundMock.mockClear();
     updateLastRouteMock.mockClear();
   });
