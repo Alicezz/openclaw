@@ -14,7 +14,12 @@ import {
   resizeToJpeg,
 } from "../../../src/media/image-ops.js";
 import { getDefaultMediaLocalRoots } from "../../../src/media/local-roots.js";
-import { detectMime, extensionForMime, getFileExtension, kindFromMime } from "../../../src/media/mime.js";
+import {
+  detectMime,
+  extensionForMime,
+  getFileExtension,
+  kindFromMime,
+} from "../../../src/media/mime.js";
 import { resolveUserPath } from "../../../src/utils.js";
 
 export type WebMediaResult = {

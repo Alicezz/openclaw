@@ -32,8 +32,10 @@ vi.mock("../../../src/media/image-ops.js", async () => {
   };
 });
 
-vi.mock("../media/mime.js", async () => {
-  const actual = await vi.importActual<typeof import("../media/mime.js")>("../media/mime.js");
+vi.mock("../../../src/media/mime.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/media/mime.js")>(
+    "../../../src/media/mime.js",
+  );
   detectMimeMock.mockImplementation((...args: Parameters<typeof actual.detectMime>) =>
     actual.detectMime(...args),
   );
@@ -43,9 +45,10 @@ vi.mock("../media/mime.js", async () => {
   };
 });
 
-vi.mock("../media/ffmpeg-exec.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../media/ffmpeg-exec.js")>("../media/ffmpeg-exec.js");
+vi.mock("../../../src/media/ffmpeg-exec.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/media/ffmpeg-exec.js")>(
+    "../../../src/media/ffmpeg-exec.js",
+  );
   runFfprobeMock.mockImplementation((...args: Parameters<typeof actual.runFfprobe>) =>
     actual.runFfprobe(...args),
   );
