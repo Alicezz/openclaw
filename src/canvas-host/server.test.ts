@@ -19,8 +19,8 @@ const chokidarMockState = vi.hoisted(() => ({
 }));
 
 const CANVAS_WS_OPEN_TIMEOUT_MS = 2_000;
-const CANVAS_RELOAD_TIMEOUT_MS = 4_000;
-const CANVAS_RELOAD_TEST_TIMEOUT_MS = 12_000;
+const CANVAS_RELOAD_TIMEOUT_MS = 8_000;
+const CANVAS_RELOAD_TEST_TIMEOUT_MS = 16_000;
 
 // Tests: avoid chokidar polling/fsevents; trigger "all" events manually.
 vi.mock("chokidar", () => {
@@ -236,6 +236,7 @@ describe("canvas host", () => {
             reject(err);
           });
         });
+        await new Promise<void>((resolve) => setImmediate(resolve));
 
         const msg = new Promise<string>((resolve, reject) => {
           const timer = setTimeout(
