@@ -52,6 +52,10 @@ enum HostEnvSecurityPolicy {
         "ZDOTDIR"
     ]
 
+    static let blockedOverridePrefixes: [String] = [
+
+    ]
+
     static let blockedPrefixes: [String] = [
         "DYLD_",
         "LD_",
