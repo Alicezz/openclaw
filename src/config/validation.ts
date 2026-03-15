@@ -22,6 +22,64 @@ import { findLegacyConfigIssues } from "./legacy.js";
 import type { OpenClawConfig, ConfigValidationIssue } from "./types.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
+// ---------------------------------------------------------------------------
+// Unknown-key recovery helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk Zod issues and strip keys flagged as "unrecognized_keys" from a
+ * deep clone of the raw config object.  Returns the cleaned object and a
+ * list of dotted-path strings describing what was removed.
+ *
+ * This mirrors the `stripUnknownConfigKeys` logic used by `openclaw doctor`
+ * (see `doctor-config-flow.ts`) so the gateway can self-heal from harmless
+ * typos / version-mismatch keys without crash-looping.
+ */
+function stripUnrecognizedKeys(
+  raw: unknown,
+  issues: Array<{ code: string; path: PropertyKey[]; keys?: PropertyKey[] }>,
+): { cleaned: unknown; removedPaths: string[] } {
+  const clone = structuredClone(raw);
+  const removedPaths: string[] = [];
+
+  for (const issue of issues) {
+    if (issue.code !== "unrecognized_keys" || !Array.isArray(issue.keys)) {
+      continue;
+    }
+
+    // Walk the clone to the parent object described by issue.path
+    let target: unknown = clone;
+    for (const segment of issue.path) {
+      if (target === null || target === undefined || typeof target !== "object") {
+        target = null;
+        break;
+      }
+      target = (target as Record<string | number, unknown>)[segment as string | number];
+    }
+
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      continue;
+    }
+
+    const record = target as Record<string, unknown>;
+    for (const key of issue.keys) {
+      if (typeof key !== "string") {
+        continue;
+      }
+      if (!(key in record)) {
+        continue;
+      }
+      delete record[key];
+      const parentPath = issue.path
+        .filter((p): p is string | number => typeof p !== "symbol")
+        .join(".");
+      removedPaths.push(parentPath ? `${parentPath}.${key}` : key);
+    }
+  }
+
+  return { cleaned: clone, removedPaths };
+}
+
 function isWorkspaceAvatarPath(value: string, workspaceDir: string): boolean {
   const workspaceRoot = path.resolve(workspaceDir);
   const resolved = path.resolve(workspaceRoot, value);
@@ -84,7 +142,9 @@ function validateIdentityAvatar(config: OpenClawConfig): ConfigValidationIssue[]
  */
 export function validateConfigObjectRaw(
   raw: unknown,
-): { ok: true; config: OpenClawConfig } | { ok: false; issues: ConfigValidationIssue[] } {
+):
+  | { ok: true; config: OpenClawConfig; warnings?: ConfigValidationIssue[] }
+  | { ok: false; issues: ConfigValidationIssue[] } {
   const legacyIssues = findLegacyConfigIssues(raw);
   if (legacyIssues.length > 0) {
     return {
@@ -97,6 +157,47 @@ export function validateConfigObjectRaw(
   }
   const validated = OpenClawSchema.safeParse(raw);
   if (!validated.success) {
+    // If every issue is an unrecognized-key error we can recover by
+    // stripping the unknown keys and re-validating.  This prevents
+    // crash-loops caused by harmless typos, deprecated fields, or
+    // version mismatches while preserving fail-closed behavior for
+    // genuinely broken configs.
+    const allUnrecognized = validated.error.issues.every((iss) => iss.code === "unrecognized_keys");
+    if (allUnrecognized) {
+      const { cleaned, removedPaths } = stripUnrecognizedKeys(
+        raw,
+        validated.error.issues as Array<{
+          code: string;
+          path: PropertyKey[];
+          keys?: PropertyKey[];
+        }>,
+      );
+      const retried = OpenClawSchema.safeParse(cleaned);
+      if (retried.success) {
+        const warnings: ConfigValidationIssue[] = removedPaths.map((p) => ({
+          path: p,
+          message: `Unrecognized config key stripped at load time (run "openclaw doctor --fix" to persist removal)`,
+        }));
+        const config = retried.data as OpenClawConfig;
+        const duplicates = findDuplicateAgentDirs(config);
+        if (duplicates.length > 0) {
+          return {
+            ok: false,
+            issues: [
+              {
+                path: "agents.list",
+                message: formatDuplicateAgentDirError(duplicates),
+              },
+            ],
+          };
+        }
+        const avatarIssues = validateIdentityAvatar(config);
+        if (avatarIssues.length > 0) {
+          return { ok: false, issues: avatarIssues };
+        }
+        return { ok: true, config, warnings };
+      }
+    }
     return {
       ok: false,
       issues: validated.error.issues.map((iss) => ({
@@ -129,7 +230,9 @@ export function validateConfigObjectRaw(
 
 export function validateConfigObject(
   raw: unknown,
-): { ok: true; config: OpenClawConfig } | { ok: false; issues: ConfigValidationIssue[] } {
+):
+  | { ok: true; config: OpenClawConfig; warnings?: ConfigValidationIssue[] }
+  | { ok: false; issues: ConfigValidationIssue[] } {
   const result = validateConfigObjectRaw(raw);
   if (!result.ok) {
     return result;
@@ -137,6 +240,7 @@ export function validateConfigObject(
   return {
     ok: true,
     config: applyModelDefaults(applyAgentDefaults(applySessionDefaults(result.config))),
+    warnings: result.warnings,
   };
 }
 
@@ -189,7 +293,7 @@ function validateConfigObjectWithPluginsBase(
 
   const config = base.config;
   const issues: ConfigValidationIssue[] = [];
-  const warnings: ConfigValidationIssue[] = [];
+  const warnings: ConfigValidationIssue[] = [...(base.warnings ?? [])];
   const hasExplicitPluginsConfig =
     isRecord(raw) && Object.prototype.hasOwnProperty.call(raw, "plugins");
 
