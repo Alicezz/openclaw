@@ -34,6 +34,7 @@ import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
+import { incrementOagMetric } from "../infra/oag-metrics.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { setGatewaySigusr1RestartPolicy, setPreRestartDeferralCheck } from "../infra/restart.js";
 import {
@@ -607,6 +608,7 @@ export async function startGatewayServer(
         logRecovery.info(
           `Channel delivery recovery finished (${key}): recovered=${summary.recovered} failed=${summary.failed} skipped=${summary.skippedMaxRetries} deferred=${summary.deferredBackoff}`,
         );
+        incrementOagMetric("deliveryRecoveries");
       };
       const recoveryTask = (async () => {
         await runRecovery();
@@ -616,7 +618,10 @@ export async function startGatewayServer(
           await runRecovery();
         }
       })()
-        .catch((err) => log.error(`Channel delivery recovery failed (${key}): ${String(err)}`))
+        .catch((err) => {
+          incrementOagMetric("deliveryRecoveryFailures");
+          log.error(`Channel delivery recovery failed (${key}): ${String(err)}`);
+        })
         .finally(() => {
           pendingRecoveryRetrigger.delete(key);
           if (activeChannelRecovery.get(key) === recoveryTask) {

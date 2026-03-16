@@ -1,3 +1,4 @@
+import type { OagConfig } from "./types.oag.js";
 import type { SecretInput } from "./types.secrets.js";
 
 export type GatewayBindMode = "auto" | "lan" | "loopback" | "custom" | "tailnet";
@@ -413,4 +414,6 @@ export type GatewayConfig = {
    * Set to 0 to disable. Default: 5.
    */
   channelHealthCheckMinutes?: number;
+  /** OAG (OpenClaw Agent Gateway) tuning parameters. All fields are optional; defaults are applied at runtime. */
+  oag?: OagConfig;
 };
