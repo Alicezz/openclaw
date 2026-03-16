@@ -1,24 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProviderPluginMethodChoice,
-  resolveProviderModelPickerEntries,
+  resolveProviderModelPickerEntriesFromProviders,
   resolveProviderPluginChoice,
-  resolveProviderWizardOptions,
+  resolveProviderWizardOptionsFromProviders,
 } from "../provider-wizard.js";
-import { resolvePluginProviders } from "../providers.js";
 import type { ProviderPlugin } from "../types.js";
 import { providerContractRegistry } from "./registry.js";
 
-function createBundledProviderConfig() {
-  return {
-    plugins: {
-      enabled: true,
-      allow: [...new Set(providerContractRegistry.map((entry) => entry.pluginId))],
-      slots: {
-        memory: "none",
-      },
-    },
-  };
+function resolveContractProviders(): ProviderPlugin[] {
+  return [
+    ...new Map(
+      providerContractRegistry.map((entry) => [entry.provider.id, entry.provider]),
+    ).values(),
+  ];
 }
 
 function resolveExpectedWizardChoiceValues(providers: ProviderPlugin[]) {
@@ -79,16 +74,8 @@ function resolveExpectedModelPickerValues(providers: ProviderPlugin[]) {
 
 describe("provider wizard contract", () => {
   it("exposes every registered provider setup choice through the shared wizard layer", () => {
-    const config = createBundledProviderConfig();
-    const providers = resolvePluginProviders({
-      config,
-      env: process.env,
-    });
-
-    const options = resolveProviderWizardOptions({
-      config,
-      env: process.env,
-    });
+    const providers = resolveContractProviders();
+    const options = resolveProviderWizardOptionsFromProviders(providers);
 
     expect(
       options.map((option) => option.value).toSorted((left, right) => left.localeCompare(right)),
@@ -99,13 +86,9 @@ describe("provider wizard contract", () => {
   });
 
   it("round-trips every shared wizard choice back to its provider and auth method", () => {
-    const config = createBundledProviderConfig();
-    const providers = resolvePluginProviders({
-      config,
-      env: process.env,
-    });
+    const providers = resolveContractProviders();
 
-    for (const option of resolveProviderWizardOptions({ config, env: process.env })) {
+    for (const option of resolveProviderWizardOptionsFromProviders(providers)) {
       const resolved = resolveProviderPluginChoice({
         providers,
         choice: option.value,
@@ -117,16 +100,8 @@ describe("provider wizard contract", () => {
   });
 
   it("exposes every registered model-picker entry through the shared wizard layer", () => {
-    const config = createBundledProviderConfig();
-    const providers = resolvePluginProviders({
-      config,
-      env: process.env,
-    });
-
-    const entries = resolveProviderModelPickerEntries({
-      config,
-      env: process.env,
-    });
+    const providers = resolveContractProviders();
+    const entries = resolveProviderModelPickerEntriesFromProviders(providers);
 
     expect(
       entries.map((entry) => entry.value).toSorted((left, right) => left.localeCompare(right)),
