@@ -1,5 +1,4 @@
 import { loadConfig, type OpenClawConfig } from "../config/config.js";
-import { resolveProviderUsageSnapshotWithPlugin } from "../plugins/provider-runtime.js";
 import { resolveFetch } from "./fetch.js";
 import { type ProviderAuth, resolveProviderAuths } from "./provider-usage.auth.js";
 import {
@@ -36,6 +35,7 @@ async function fetchProviderUsageSnapshot(params: {
   timeoutMs: number;
   fetchFn: typeof fetch;
 }): Promise<ProviderUsageSnapshot> {
+  const { resolveProviderUsageSnapshotWithPlugin } = await import("../plugins/provider-runtime.js");
   const pluginSnapshot = await resolveProviderUsageSnapshotWithPlugin({
     provider: params.auth.provider,
     config: params.config,

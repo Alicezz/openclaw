@@ -15,21 +15,14 @@ describe("resolveProviderAuths plugin seam", () => {
     resolveProviderUsageAuthWithPluginMock.mockResolvedValue(null);
   });
 
-  it("prefers plugin-owned usage auth when available", async () => {
-    resolveProviderUsageAuthWithPluginMock.mockResolvedValueOnce({
-      token: "plugin-zai-token",
-    });
-
+  it("skips plugin resolution when built-in auth is unavailable", async () => {
     await expect(
       resolveProviderAuths({
         providers: ["zai"],
       }),
-    ).resolves.toEqual([
-      {
-        provider: "zai",
-        token: "plugin-zai-token",
-      },
-    ]);
+    ).resolves.toEqual([]);
+
+    expect(resolveProviderUsageAuthWithPluginMock).not.toHaveBeenCalled();
   });
 
   it("skips plugin resolution when built-in auth can be resolved directly", async () => {
