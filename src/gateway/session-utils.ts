@@ -756,7 +756,10 @@ export function resolveSessionModelRef(
   cfg: OpenClawConfig,
   entry?:
     | SessionEntry
-    | Pick<SessionEntry, "model" | "modelProvider" | "modelOverride" | "providerOverride">,
+    | Pick<
+        SessionEntry,
+        "model" | "modelProvider" | "modelOverride" | "providerOverride" | "modelIsFromFallback"
+      >,
   agentId?: string,
 ): { provider: string; model: string } {
   const resolved = agentId
@@ -767,12 +770,14 @@ export function resolveSessionModelRef(
         defaultModel: DEFAULT_MODEL,
       });
 
-  // Prefer the last runtime model recorded on the session entry.
-  // This is the actual model used by the latest run and must win over defaults.
+  // Prefer the last runtime model recorded on the session entry,
+  // but NOT if it came from a fallback chain — fallback models should
+  // not become sticky; the primary should be retried next time.
   let provider = resolved.provider;
   let model = resolved.model;
-  const runtimeModel = entry?.model?.trim();
-  const runtimeProvider = entry?.modelProvider?.trim();
+  const isFromFallback = entry?.modelIsFromFallback === true;
+  const runtimeModel = isFromFallback ? undefined : entry?.model?.trim();
+  const runtimeProvider = isFromFallback ? undefined : entry?.modelProvider?.trim();
   if (runtimeModel) {
     if (runtimeProvider) {
       // Provider is explicitly recorded — use it directly. Re-parsing the
@@ -814,7 +819,10 @@ export function resolveSessionModelIdentityRef(
   cfg: OpenClawConfig,
   entry?:
     | SessionEntry
-    | Pick<SessionEntry, "model" | "modelProvider" | "modelOverride" | "providerOverride">,
+    | Pick<
+        SessionEntry,
+        "model" | "modelProvider" | "modelOverride" | "providerOverride" | "modelIsFromFallback"
+      >,
   agentId?: string,
 ): { provider?: string; model: string } {
   const runtimeModel = entry?.model?.trim();
