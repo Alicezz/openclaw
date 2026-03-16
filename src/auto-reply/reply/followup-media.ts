@@ -232,7 +232,7 @@ function hasOnlyFileLikeAttachments(mediaContext: FollowupMediaContext): boolean
     attachments.length > 0 &&
     attachments.every((attachment) => {
       const kind = resolveAttachmentKind(attachment);
-      return kind !== "audio" && kind !== "image" && kind !== "video";
+      return kind === "document";
     })
   );
 }
@@ -240,7 +240,7 @@ function hasOnlyFileLikeAttachments(mediaContext: FollowupMediaContext): boolean
 function hasAnyFileAttachments(mediaContext: FollowupMediaContext): boolean {
   return normalizeAttachments(mediaContext as MsgContext).some((attachment) => {
     const kind = resolveAttachmentKind(attachment);
-    return kind !== "audio" && kind !== "image" && kind !== "video";
+    return kind === "document";
   });
 }
 

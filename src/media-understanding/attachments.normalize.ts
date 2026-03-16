@@ -75,7 +75,7 @@ export function resolveAttachmentKind(
   attachment: MediaAttachment,
 ): "image" | "audio" | "video" | "document" | "unknown" {
   const kind = kindFromMime(attachment.mime);
-  if (kind === "image" || kind === "audio" || kind === "video") {
+  if (kind === "image" || kind === "audio" || kind === "video" || kind === "document") {
     return kind;
   }
 

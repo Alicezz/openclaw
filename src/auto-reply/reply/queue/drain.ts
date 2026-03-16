@@ -84,6 +84,20 @@ export async function applyDeferredMediaToQueuedRuns(items: FollowupRun[]): Prom
   );
 }
 
+/**
+ * Strip leading thread/system context lines from a prompt so that only the
+ * user message body (including any transcript injected by deferred media)
+ * remains.  The prompt built in get-reply-run.ts prepends blocks like
+ * `[Thread history - for context]\n…` and system-event blocks before the
+ * actual user body.  For overflow summaries we want the concise body, not
+ * the contextual boilerplate.
+ */
+const THREAD_CONTEXT_PREFIX_RE = /^\[Thread (?:history|starter) - for context\][\s\S]*?\n\n/;
+
+function stripLeadingThreadContext(text: string): string {
+  return text.replace(THREAD_CONTEXT_PREFIX_RE, "").trim();
+}
+
 async function resolveSummaryLines(items: FollowupRun[]): Promise<string[]> {
   // Parallelize the media understanding API calls upfront (same pattern as
   // applyDeferredMediaToQueuedRuns), then build summary lines sequentially
@@ -93,11 +107,14 @@ async function resolveSummaryLines(items: FollowupRun[]): Promise<string[]> {
       applyDeferredMediaUnderstandingToQueuedRun(item, { logLabel: "followup queue" }),
     ),
   );
-  // After deferred media, prefer the updated prompt (which includes transcripts)
-  // over the original summaryLine (which may just be the caption text).
-  return items.map((item) =>
-    buildQueueSummaryLine(item.prompt.trim() || item.summaryLine?.trim() || ""),
-  );
+  // After deferred media, prefer the concise summaryLine (the original user
+  // message body) when it exists.  Only fall back to the full prompt — with
+  // leading thread/system context stripped — when summaryLine is absent, so
+  // that transcript content injected by deferred media still surfaces.
+  return items.map((item) => {
+    const concise = item.summaryLine?.trim() || stripLeadingThreadContext(item.prompt).trim();
+    return buildQueueSummaryLine(concise || "");
+  });
 }
 
 export async function buildMediaAwareQueueSummaryPrompt(params: {
