@@ -1320,6 +1320,7 @@ export async function runEmbeddedPiAgent(
                     text:
                       "I can't respond to that - the content was flagged by the model's safety filter. " +
                       "Please rephrase or try a different topic.",
+                    isError: true,
                   },
                 ],
                 meta: {
