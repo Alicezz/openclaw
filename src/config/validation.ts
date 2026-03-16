@@ -510,13 +510,10 @@ function validateConfigObjectWithPluginsBase(
     // This avoids loading plugin manifests when only using built-in memory providers
     const provider = defaultMemorySearch.provider;
     const fallback = defaultMemorySearch.fallback;
-    const knownPluginIds =
-      provider &&
-      !knownMemoryProviders.has(provider) &&
-      fallback &&
-      !knownMemoryFallbacks.has(fallback)
-        ? getKnownPluginIds()
-        : new Set<string>();
+    const needsPluginIds =
+      (provider && !knownMemoryProviders.has(provider)) ||
+      (fallback && !knownMemoryFallbacks.has(fallback));
+    const knownPluginIds = needsPluginIds ? getKnownPluginIds() : new Set<string>();
     validateMemorySearchProvider(
       defaultMemorySearch.provider,
       "agents.defaults.memorySearch.provider",
@@ -536,13 +533,10 @@ function validateConfigObjectWithPluginsBase(
       if (memorySearch) {
         const provider = memorySearch.provider;
         const fallback = memorySearch.fallback;
-        const knownPluginIds =
-          provider &&
-          !knownMemoryProviders.has(provider) &&
-          fallback &&
-          !knownMemoryFallbacks.has(fallback)
-            ? getKnownPluginIds()
-            : new Set<string>();
+        const needsPluginIds =
+          (provider && !knownMemoryProviders.has(provider)) ||
+          (fallback && !knownMemoryFallbacks.has(fallback));
+        const knownPluginIds = needsPluginIds ? getKnownPluginIds() : new Set<string>();
         validateMemorySearchProvider(
           memorySearch.provider,
           `agents.list.${index}.memorySearch.provider`,

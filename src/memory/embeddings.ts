@@ -402,51 +402,28 @@ export async function createEmbeddingProvider(
 
   const pluginProvider = pluginProviders[normalizedRequested];
   if (pluginProvider) {
-    // Wrap plugin provider in error handler to support fallback
+    // Return plugin provider directly - fallback handling happens on actual errors
+    return { provider: pluginProvider, requestedProvider };
+  }
+
+  // Built-in fallback path - try plugin fallback first, then built-in
+  if (fallback) {
+    const normalizedFallback = normalizeProviderId(fallback);
+    const fallbackPluginProvider = pluginProviders[normalizedFallback];
+    // Try plugin fallback first if it exists
+    if (fallbackPluginProvider) {
+      return {
+        provider: fallbackPluginProvider,
+        requestedProvider,
+        fallbackFrom: requestedProvider,
+      };
+    }
+    // Try built-in fallback (normalized)
     try {
-      // Test the plugin by calling embedQuery with a dummy value
-      await pluginProvider.embedQuery("test");
-      return { provider: pluginProvider, requestedProvider };
-    } catch (pluginErr) {
-      // Plugin failed - will fall through to fallback logic below
-      const reason = formatErrorMessage(pluginErr);
-      if (fallback) {
-        const normalizedFallback = normalizeProviderId(fallback);
-        const fallbackPluginProvider = pluginProviders[normalizedFallback];
-        // Try plugin fallback first if it exists
-        if (fallbackPluginProvider) {
-          try {
-            await fallbackPluginProvider.embedQuery("test");
-            return {
-              provider: fallbackPluginProvider,
-              requestedProvider,
-              fallbackFrom: requestedProvider,
-              fallbackReason: reason,
-            };
-          } catch {
-            // Fallback plugin also failed - try built-in
-          }
-        }
-        // Try built-in fallback
-        try {
-          const fallbackResult = await createProvider(fallback);
-          return {
-            ...fallbackResult,
-            requestedProvider,
-            fallbackFrom: requestedProvider,
-            fallbackReason: reason,
-          };
-        } catch {
-          // Fallback also failed - throw the original plugin error
-          const wrapped = new Error(reason) as Error & { cause?: unknown };
-          wrapped.cause = pluginErr;
-          throw wrapped;
-        }
-      }
-      // No fallback - throw the original error
-      const wrapped = new Error(reason) as Error & { cause?: unknown };
-      wrapped.cause = pluginErr;
-      throw wrapped;
+      const fallbackResult = await createProvider(normalizedFallback);
+      return { ...fallbackResult, requestedProvider, fallbackFrom: requestedProvider };
+    } catch {
+      // Fallback failed - let the main error path handle it
     }
   }
 
