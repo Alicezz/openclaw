@@ -6,7 +6,7 @@ import { redactIdentifier } from "../../../src/logging/redact-identifier.js";
 import { createSubsystemLogger } from "../../../src/logging/subsystem.js";
 import { convertMarkdownTables } from "../../../src/markdown/tables.js";
 import { markdownToWhatsApp } from "../../../src/markdown/whatsapp.js";
-import { isVoiceCompatibleAudio } from "../../../src/media/audio.js";
+import { isWhatsAppVoiceCompatibleAudio } from "../../../src/media/audio.js";
 import { normalizePollInput, type PollInput } from "../../../src/polls.js";
 import { toWhatsappJid } from "../../../src/utils.js";
 import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "./accounts.js";
@@ -71,7 +71,7 @@ export async function sendMessageWhatsApp(
       mediaType = media.contentType;
       if (media.kind === "audio") {
         // Only Opus/Ogg audio should be labeled as a WhatsApp voice note.
-        audioAsVoice = isVoiceCompatibleAudio({
+        audioAsVoice = isWhatsAppVoiceCompatibleAudio({
           contentType: media.contentType,
           fileName: media.fileName ?? options.mediaUrl,
         });
