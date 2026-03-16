@@ -24,9 +24,39 @@ export type NormalizedPluginsConfig = {
 };
 
 export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
+  "anthropic",
+  "byteplus",
+  "cloudflare-ai-gateway",
   "device-pair",
+  "github-copilot",
+  "huggingface",
+  "kilocode",
+  "kimi-coding",
+  "minimax",
+  "minimax-portal-auth",
+  "mistral",
+  "modelstudio",
+  "moonshot",
+  "nvidia",
+  "ollama",
+  "openai",
+  "openai-codex",
+  "opencode",
+  "opencode-go",
+  "openrouter",
   "phone-control",
+  "qianfan",
+  "qwen-portal-auth",
+  "sglang",
+  "synthetic",
   "talk-voice",
+  "together",
+  "venice",
+  "vercel-ai-gateway",
+  "vllm",
+  "volcengine",
+  "xiaomi",
+  "zai",
 ]);
 
 const normalizeList = (value: unknown): string[] => {
@@ -201,10 +231,14 @@ export function resolveEnableState(
   if (entry?.enabled === false) {
     return { enabled: false, reason: "disabled in config" };
   }
+  const explicitlyAllowed = config.allow.includes(id);
+  if (origin === "workspace" && !explicitlyAllowed && entry?.enabled !== true) {
+    return { enabled: false, reason: "workspace plugin (disabled by default)" };
+  }
   if (config.slots.memory === id) {
     return { enabled: true };
   }
-  if (config.allow.length > 0 && !config.allow.includes(id)) {
+  if (config.allow.length > 0 && !explicitlyAllowed) {
     return { enabled: false, reason: "not in allowlist" };
   }
   if (entry?.enabled === true) {
