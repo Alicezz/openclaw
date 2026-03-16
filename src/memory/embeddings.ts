@@ -387,6 +387,23 @@ export async function createEmbeddingProvider(
       // Plugin failed - will fall through to fallback logic below
       const reason = formatErrorMessage(pluginErr);
       if (fallback) {
+        const normalizedFallback = normalizeProviderId(fallback);
+        const fallbackPluginProvider = pluginProviders[normalizedFallback];
+        // Try plugin fallback first if it exists
+        if (fallbackPluginProvider) {
+          try {
+            await fallbackPluginProvider.embedQuery("test");
+            return {
+              provider: fallbackPluginProvider,
+              requestedProvider,
+              fallbackFrom: requestedProvider,
+              fallbackReason: reason,
+            };
+          } catch {
+            // Fallback plugin also failed - try built-in
+          }
+        }
+        // Try built-in fallback
         try {
           const fallbackResult = await createProvider(fallback);
           return {
