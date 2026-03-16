@@ -10,6 +10,10 @@ import {
   buildModelsProviderData,
   formatModelsAvailableHeader,
 } from "../../../src/auto-reply/reply/commands-models.js";
+import {
+  buildMentionRegexes,
+  matchesMentionPatterns,
+} from "../../../src/auto-reply/reply/mentions.js";
 import { resolveStoredModelOverride } from "../../../src/auto-reply/reply/model-selection.js";
 import { listSkillCommandsForAgents } from "../../../src/auto-reply/skill-commands.js";
 import { buildCommandsMessagePaginated } from "../../../src/auto-reply/status.js";
@@ -60,6 +64,7 @@ import {
   getTelegramTextParts,
   buildTelegramGroupPeerId,
   buildTelegramParentPeer,
+  hasBotMention,
   resolveTelegramForumThreadId,
   resolveTelegramGroupAllowFromContext,
 } from "./bot/helpers.js";
@@ -888,6 +893,7 @@ export const registerTelegramHandlers = ({
     storeAllowFrom: string[];
     sendOversizeWarning: boolean;
     oversizeLogMessage: string;
+    groupConfig?: TelegramGroupConfig;
   }) => {
     const {
       ctx,
@@ -898,6 +904,7 @@ export const registerTelegramHandlers = ({
       storeAllowFrom,
       sendOversizeWarning,
       oversizeLogMessage,
+      groupConfig,
     } = params;
 
     // Text fragment handling - Telegram splits long pastes into multiple inbound messages (~4096 chars).
@@ -1018,14 +1025,41 @@ export const registerTelegramHandlers = ({
         return;
       }
       logger.warn({ chatId, error: String(mediaErr) }, "media fetch failed");
-      await withTelegramApiErrorLogging({
-        operation: "sendMessage",
-        runtime,
-        fn: () =>
-          bot.api.sendMessage(chatId, "⚠️ Failed to download media. Please try again.", {
-            reply_to_message_id: msg.message_id,
-          }),
-      }).catch(() => {});
+      // Don't send the error reply for group messages where requireMention is set
+      // and the bot was not mentioned — the bot would have silently skipped this
+      // message anyway, so responding with an error is unexpected and noisy.
+      // Mirrors the actual mention gate in bot-message-context.body.ts: explicit
+      // @bot, regex patterns (agent name/emoji), implicit reply-to-bot, and
+      // authorized control-command bypass.
+      const botUsername = ctx.me?.username;
+      const botId = ctx.me?.id;
+      const replyToBotMessage = botId != null && msg.reply_to_message?.from?.id === botId;
+      const messageTextParts = getTelegramTextParts(msg);
+      const mentionRegexes = buildMentionRegexes(loadConfig());
+      const regexMentioned = matchesMentionPatterns(messageTextParts.text, mentionRegexes);
+      const textContent = messageTextParts.text.trim();
+      const senderId = msg.from?.id ? String(msg.from.id) : "";
+      const commandBypass =
+        textContent.startsWith("/") &&
+        (storeAllowFrom.length === 0 || storeAllowFrom.includes(senderId));
+      const canDetectMention = Boolean(botUsername) || mentionRegexes.length > 0;
+      const wouldSkipMention =
+        groupConfig?.requireMention === true &&
+        canDetectMention &&
+        !(botUsername ? hasBotMention(msg, botUsername) : false) &&
+        !replyToBotMessage &&
+        !regexMentioned &&
+        !commandBypass;
+      if (!wouldSkipMention) {
+        await withTelegramApiErrorLogging({
+          operation: "sendMessage",
+          runtime,
+          fn: () =>
+            bot.api.sendMessage(chatId, "⚠️ Failed to download media. Please try again.", {
+              reply_to_message_id: msg.message_id,
+            }),
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -1684,6 +1718,7 @@ export const registerTelegramHandlers = ({
         storeAllowFrom,
         sendOversizeWarning: event.sendOversizeWarning,
         oversizeLogMessage: event.oversizeLogMessage,
+        groupConfig,
       });
     } catch (err) {
       runtime.error?.(danger(`${event.errorMessage}: ${String(err)}`));
