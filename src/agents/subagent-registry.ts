@@ -1238,6 +1238,7 @@ export function registerSubagentRun(params: {
   label?: string;
   model?: string;
   workspaceDir?: string;
+  spawnDepth?: number;
   runTimeoutSeconds?: number;
   expectsCompletionMessage?: boolean;
   spawnMode?: "run" | "session";
@@ -1269,6 +1270,7 @@ export function registerSubagentRun(params: {
     label: params.label,
     model: params.model,
     workspaceDir: params.workspaceDir,
+    spawnDepth: params.spawnDepth,
     runTimeoutSeconds,
     createdAt: now,
     startedAt: now,
