@@ -36,6 +36,7 @@ import { isRemoteEnvironment } from "../oauth-env.js";
 import { createVpsAwareOAuthHandlers } from "../oauth-flow.js";
 import { applyAuthProfileConfig } from "../onboard-auth.js";
 import { openUrl } from "../onboard-helpers.js";
+import { resolveProviderPostAuthGuidance } from "../provider-auth-guidance.js";
 import {
   applyDefaultModel,
   mergeConfigPatch,
@@ -297,6 +298,14 @@ async function runProviderAuthMethod(params: {
     prompter: params.prompter,
     setDefault: params.setDefault,
   });
+
+  if (result.profiles.length > 0 || result.defaultModel) {
+    for (const guidance of resolveProviderPostAuthGuidance(params.provider.id)) {
+      if (guidance.runtimeMessage) {
+        params.runtime.log(guidance.runtimeMessage);
+      }
+    }
+  }
 }
 
 export async function modelsAuthSetupTokenCommand(

@@ -14,6 +14,7 @@ import { createVpsAwareOAuthHandlers } from "./oauth-flow.js";
 import { applyAuthProfileConfig } from "./onboard-auth.js";
 import { openUrl } from "./onboard-helpers.js";
 import type { OnboardOptions } from "./onboard-types.js";
+import { resolveProviderPostAuthGuidance } from "./provider-auth-guidance.js";
 import {
   applyDefaultModel,
   mergeConfigPatch,
@@ -77,7 +78,11 @@ export async function runProviderPluginAuthMethod(params: {
   secretInputMode?: OnboardOptions["secretInputMode"];
   allowSecretRefPrompt?: boolean;
   opts?: Partial<OnboardOptions>;
-}): Promise<{ config: ApplyAuthChoiceParams["config"]; defaultModel?: string }> {
+}): Promise<{
+  config: ApplyAuthChoiceParams["config"];
+  defaultModel?: string;
+  profileCount: number;
+}> {
   const agentId = params.agentId ?? resolveDefaultAgentId(params.config);
   const defaultAgentId = resolveDefaultAgentId(params.config);
   const agentDir =
@@ -138,6 +143,7 @@ export async function runProviderPluginAuthMethod(params: {
   return {
     config: nextConfig,
     defaultModel: result.defaultModel,
+    profileCount: result.profiles.length,
   };
 }
 
@@ -177,6 +183,11 @@ export async function applyAuthChoiceLoadedPluginProvider(
   });
 
   let nextConfig = applied.config;
+  if (applied.profileCount > 0 || applied.defaultModel) {
+    for (const guidance of resolveProviderPostAuthGuidance(resolved.provider.id)) {
+      await params.prompter.note(guidance.message, guidance.title);
+    }
+  }
   let agentModelOverride: string | undefined;
   if (applied.defaultModel) {
     if (params.setDefaultModel) {
@@ -263,6 +274,11 @@ export async function applyAuthChoicePluginProvider(
     opts: params.opts,
   });
   nextConfig = applied.config;
+  if (applied.profileCount > 0 || applied.defaultModel) {
+    for (const guidance of resolveProviderPostAuthGuidance(provider.id)) {
+      await params.prompter.note(guidance.message, guidance.title);
+    }
+  }
 
   let agentModelOverride: string | undefined;
   if (applied.defaultModel) {

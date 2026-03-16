@@ -36,6 +36,31 @@ export function resolveProviderAuthLoginCommand(params: {
   return formatCliCommand(`openclaw models auth login --provider ${provider.id}`);
 }
 
+export type ProviderPostAuthGuidance = {
+  title: string;
+  message: string;
+  runtimeMessage?: string;
+};
+
+export function resolveProviderPostAuthGuidance(provider: string): ProviderPostAuthGuidance[] {
+  if (normalizeProviderId(provider) !== "openai-codex") {
+    return [];
+  }
+  return [
+    {
+      title: "Web search",
+      message: [
+        "Codex-capable models can optionally use native Codex web search.",
+        "Enable it with openclaw configure --section web.",
+        "Recommended mode: cached.",
+        "Docs: https://docs.openclaw.ai/tools/web",
+      ].join("\n"),
+      runtimeMessage:
+        "Tip: Codex-capable models can use native Codex web search. Enable it with openclaw configure --section web (recommended mode: cached). Docs: https://docs.openclaw.ai/tools/web",
+    },
+  ];
+}
+
 export function buildProviderAuthRecoveryHint(params: {
   provider: string;
   config?: OpenClawConfig;
