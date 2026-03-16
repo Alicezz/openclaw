@@ -82,7 +82,17 @@ export async function flushPendingToolResultsAfterIdle(opts: {
     // while a scheduled retry has not yet started. If tool calls are still
     // pending, give the agent another tick to start and wait again.
     const hasPendingToolCalls = opts.agent?.hasPendingToolCalls;
-    if (typeof hasPendingToolCalls === "function" && hasPendingToolCalls.call(opts.agent)) {
+    let pendingToolCalls = false;
+    if (typeof hasPendingToolCalls === "function") {
+      try {
+        pendingToolCalls = hasPendingToolCalls.call(opts.agent);
+      } catch {
+        // Best-effort during cleanup.
+        pendingToolCalls = false;
+      }
+    }
+
+    if (pendingToolCalls) {
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
       continue;
     }
