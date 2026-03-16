@@ -109,6 +109,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         card: feishuData.card,
         accountId: accountId ?? undefined,
         replyToMessageId,
+        replyInThread: threadId != null && !replyToId,
       });
       return { channel: "feishu", ...result };
     }

@@ -467,6 +467,53 @@ describe("feishuOutbound.sendPayload", () => {
     expect(result).toEqual(expect.objectContaining({ channel: "feishu", messageId: "text_msg" }));
   });
 
+  it("passes replyInThread to sendCardFeishu when threadId is set without replyToId", async () => {
+    const card = { header: { title: "Thread Card" }, elements: [] };
+    await sendPayload({
+      cfg: {} as any,
+      to: "chat_1",
+      text: "",
+      accountId: "main",
+      threadId: "om_thread_1",
+      payload: {
+        channelData: { feishu: { card } },
+      },
+    } as any);
+
+    expect(sendCardFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat_1",
+        card,
+        replyToMessageId: "om_thread_1",
+        replyInThread: true,
+      }),
+    );
+  });
+
+  it("does not set replyInThread when replyToId is present", async () => {
+    const card = { header: { title: "Reply Card" }, elements: [] };
+    await sendPayload({
+      cfg: {} as any,
+      to: "chat_1",
+      text: "",
+      accountId: "main",
+      replyToId: "om_reply_1",
+      threadId: "om_thread_1",
+      payload: {
+        channelData: { feishu: { card } },
+      },
+    } as any);
+
+    expect(sendCardFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat_1",
+        card,
+        replyToMessageId: "om_reply_1",
+        replyInThread: false,
+      }),
+    );
+  });
+
   it("handles multiple mediaUrls by sending each attachment", async () => {
     const result = await sendPayload({
       cfg: {} as any,
