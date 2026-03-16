@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import type { PluginRecord } from "./registry.js";
+import type { GatewayRequestHandlers } from "../gateway/server-methods/types.js";
+import { createPluginRegistry, type PluginRecord } from "./registry.js";
 import type { PluginRuntime } from "./runtime/types.js";
 import type { OpenClawPluginApi, PluginResetSessionResult } from "./types.js";
 
@@ -31,6 +32,7 @@ type SessionResetDeps = {
 
 type RegistryImportOptions = {
   sessionResetImportError?: Error;
+  enableGatewayReset?: boolean;
 };
 
 function createRecord(): PluginRecord {
@@ -57,45 +59,72 @@ function createRecord(): PluginRecord {
 }
 
 async function createApiHarness(options?: RegistryImportOptions) {
-  vi.resetModules();
-
-  if (options?.sessionResetImportError) {
-    vi.doMock("../gateway/session-reset-service.js", () => {
-      const mockedModule = {
-        performGatewaySessionReset: () => undefined,
-      };
-      return new Proxy(mockedModule, {
-        get(target, prop, receiver) {
-          if (prop === "performGatewaySessionReset") {
-            throw options.sessionResetImportError;
-          }
-          return Reflect.get(target, prop, receiver);
-        },
-      });
-    });
-  }
-
-  const sessionResetService = options?.sessionResetImportError
-    ? null
-    : await import("../gateway/session-reset-service.js");
-  const configModule = await import("../config/config.js");
-
+  const enableGatewayReset = options?.enableGatewayReset ?? true;
   const deps: SessionResetDeps = {
-    loadConfig: vi.spyOn(configModule, "loadConfig"),
-    performGatewaySessionReset:
-      sessionResetService === null
-        ? vi.fn()
-        : vi.spyOn(sessionResetService, "performGatewaySessionReset"),
+    loadConfig: vi.fn(),
+    performGatewaySessionReset: vi.fn(),
   };
+  deps.loadConfig.mockReturnValue({
+    agents: { list: [{ id: "main", default: true }] },
+    session: { mainKey: "main" },
+  } as OpenClawConfig);
 
-  const { createPluginRegistry } = await import("./registry.js");
+  const loadSessionResetModule =
+    options?.sessionResetImportError !== undefined
+      ? async () => {
+          throw options.sessionResetImportError;
+        }
+      : async () => ({
+          performGatewaySessionReset: deps.performGatewaySessionReset,
+        });
+
+  const unavailableSubagent = {
+    run: () => {
+      throw new Error("unavailable");
+    },
+    waitForRun: () => {
+      throw new Error("unavailable");
+    },
+    getSessionMessages: () => {
+      throw new Error("unavailable");
+    },
+    getSession: () => {
+      throw new Error("unavailable");
+    },
+    deleteSession: () => {
+      throw new Error("unavailable");
+    },
+  };
+  const gatewaySubagent = {
+    run: vi.fn(),
+    waitForRun: vi.fn(),
+    getSessionMessages: vi.fn(),
+    getSession: vi.fn(),
+    deleteSession: vi.fn(),
+  };
+  const runtime = {
+    config: {
+      loadConfig: deps.loadConfig,
+      writeConfigFile: vi.fn(),
+    },
+    subagent: enableGatewayReset
+      ? gatewaySubagent
+      : (unavailableSubagent as PluginRuntime["subagent"]),
+  } as unknown as PluginRuntime;
+
   const { createApi } = createPluginRegistry({
     logger: {
       info: () => {},
       warn: () => {},
       error: () => {},
     },
-    runtime: {} as PluginRuntime,
+    runtime,
+    coreGatewayHandlers: enableGatewayReset
+      ? ({
+          "sessions.reset": () => {},
+        } satisfies GatewayRequestHandlers)
+      : undefined,
+    loadSessionResetModule,
   });
 
   const api = createApi(createRecord(), {
@@ -125,9 +154,7 @@ async function createApiWithDefaultMocks() {
 }
 
 afterEach(() => {
-  vi.resetModules();
   vi.clearAllMocks();
-  vi.doUnmock("../gateway/session-reset-service.js");
 });
 
 describe("plugin resetSession", () => {
@@ -336,6 +363,26 @@ describe("plugin resetSession", () => {
         key: "agent:main:demo",
         error: "gateway rejected",
       });
+    });
+  });
+
+  describe("gateway availability guard", () => {
+    it("returns a structured failure when the gateway runtime is unavailable", async () => {
+      const { api, deps } = await createApiHarness({
+        enableGatewayReset: false,
+        sessionResetImportError: new Error("should not import reset service"),
+      });
+      deps.loadConfig.mockReturnValue({
+        agents: { list: [{ id: "ops", default: true }] },
+        session: { mainKey: "focus" },
+      } as OpenClawConfig);
+
+      await expect(api.resetSession?.("agent:ops:demo")).resolves.toEqual({
+        ok: false,
+        key: "agent:ops:demo",
+        error: "resetSession is only available while the gateway is running.",
+      });
+      expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
     });
   });
 
