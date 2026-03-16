@@ -239,18 +239,24 @@ function getPluginEmbeddingProvidersSync(
         if (resolvedApiKey) {
           return resolvedApiKey;
         }
-        const auth = await resolveApiKeyForProvider({
-          provider: normalizedId,
-          cfg: options.config,
-          agentDir: options.agentDir,
-        });
-        if (!auth) {
+        // Try to resolve from auth sources - but allow keyless plugins to proceed
+        try {
+          const auth = await resolveApiKeyForProvider({
+            provider: normalizedId,
+            cfg: options.config,
+            agentDir: options.agentDir,
+          });
+          if (!auth) {
+            return "";
+          }
+          if (typeof auth === "string") {
+            return auth;
+          }
+          return auth.apiKey ?? "";
+        } catch {
+          // No API key found - let the plugin decide what to do (may be keyless)
           return "";
         }
-        if (typeof auth === "string") {
-          return auth;
-        }
-        return auth.apiKey ?? "";
       };
 
       return {
