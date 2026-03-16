@@ -9,6 +9,7 @@ export type BuiltInAuthChoice =
   | "claude-cli"
   | "token"
   | "chutes"
+  | "clawapi-api-key"
   | "openai-codex"
   | "openai-api-key"
   | "openrouter-api-key"
@@ -57,6 +58,7 @@ export type BuiltInAuthChoiceGroupId =
   | "openai"
   | "anthropic"
   | "chutes"
+  | "clawapi"
   | "google"
   | "copilot"
   | "openrouter"
@@ -114,6 +116,7 @@ export type OnboardOptions = {
   /** API key persistence mode for setup flows (default: plaintext). */
   secretInputMode?: SecretInputMode;
   anthropicApiKey?: string;
+  clawapiApiKey?: string;
   openaiApiKey?: string;
   mistralApiKey?: string;
   openrouterApiKey?: string;

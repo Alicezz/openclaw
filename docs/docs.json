@@ -1103,6 +1103,7 @@
                 "pages": [
                   "providers/anthropic",
                   "providers/bedrock",
+                  "providers/clawapi",
                   "providers/cloudflare-ai-gateway",
                   "providers/claude-max-api-proxy",
                   "providers/deepgram",

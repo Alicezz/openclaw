@@ -1,5 +1,6 @@
 import ANTHROPIC_MANIFEST from "../../extensions/anthropic/openclaw.plugin.json" with { type: "json" };
 import BYTEPLUS_MANIFEST from "../../extensions/byteplus/openclaw.plugin.json" with { type: "json" };
+import CLAWAPI_MANIFEST from "../../extensions/clawapi/openclaw.plugin.json" with { type: "json" };
 import CLOUDFLARE_AI_GATEWAY_MANIFEST from "../../extensions/cloudflare-ai-gateway/openclaw.plugin.json" with { type: "json" };
 import COPILOT_PROXY_MANIFEST from "../../extensions/copilot-proxy/openclaw.plugin.json" with { type: "json" };
 import GITHUB_COPILOT_MANIFEST from "../../extensions/github-copilot/openclaw.plugin.json" with { type: "json" };
@@ -61,6 +62,7 @@ function collectBundledProviderAuthEnvVars(
 export const BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES = collectBundledProviderAuthEnvVars([
   ANTHROPIC_MANIFEST,
   BYTEPLUS_MANIFEST,
+  CLAWAPI_MANIFEST,
   CLOUDFLARE_AI_GATEWAY_MANIFEST,
   COPILOT_PROXY_MANIFEST,
   GITHUB_COPILOT_MANIFEST,
