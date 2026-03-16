@@ -130,10 +130,6 @@
       "types": "./dist/plugin-sdk/feishu.d.ts",
       "default": "./dist/plugin-sdk/feishu.js"
     },
-    "./plugin-sdk/google-gemini-cli-auth": {
-      "types": "./dist/plugin-sdk/google-gemini-cli-auth.d.ts",
-      "default": "./dist/plugin-sdk/google-gemini-cli-auth.js"
-    },
     "./plugin-sdk/google-antigravity-auth": {
       "types": "./dist/plugin-sdk/google-antigravity-auth.d.ts",
       "default": "./dist/plugin-sdk/google-antigravity-auth.js"
