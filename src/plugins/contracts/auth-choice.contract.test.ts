@@ -51,6 +51,7 @@ type StoredAuthProfile = {
   key?: string;
   token?: string;
 };
+const WINDOWS_CI_TIMEOUT_MS = process.platform === "win32" ? 240_000 : 120_000;
 
 const qwenPortalPlugin = (await import("../../../extensions/qwen-portal-auth/index.js")).default;
 
@@ -100,138 +101,150 @@ describe("provider auth-choice contract", () => {
     activeStateDir = null;
   });
 
-  it("maps plugin-backed auth choices through the shared preferred-provider resolver", async () => {
-    const scenarios = [
-      { authChoice: "github-copilot" as const, expectedProvider: "github-copilot" },
-      { authChoice: "qwen-portal" as const, expectedProvider: "qwen-portal" },
-      { authChoice: "minimax-global-oauth" as const, expectedProvider: "minimax-portal" },
-      { authChoice: "modelstudio-api-key" as const, expectedProvider: "modelstudio" },
-      { authChoice: "ollama" as const, expectedProvider: "ollama" },
-      { authChoice: "unknown" as AuthChoice, expectedProvider: undefined },
-    ] as const;
+  it(
+    "maps plugin-backed auth choices through the shared preferred-provider resolver",
+    async () => {
+      const scenarios = [
+        { authChoice: "github-copilot" as const, expectedProvider: "github-copilot" },
+        { authChoice: "qwen-portal" as const, expectedProvider: "qwen-portal" },
+        { authChoice: "minimax-global-oauth" as const, expectedProvider: "minimax-portal" },
+        { authChoice: "modelstudio-api-key" as const, expectedProvider: "modelstudio" },
+        { authChoice: "ollama" as const, expectedProvider: "ollama" },
+        { authChoice: "unknown" as AuthChoice, expectedProvider: undefined },
+      ] as const;
 
-    for (const scenario of scenarios) {
-      await expect(
-        resolvePreferredProviderForAuthChoice({ choice: scenario.authChoice }),
-      ).resolves.toBe(scenario.expectedProvider);
-    }
-  });
+      for (const scenario of scenarios) {
+        await expect(
+          resolvePreferredProviderForAuthChoice({ choice: scenario.authChoice }),
+        ).resolves.toBe(scenario.expectedProvider);
+      }
+    },
+    WINDOWS_CI_TIMEOUT_MS,
+  );
 
-  it("applies qwen portal auth choices through the shared plugin-provider path", async () => {
-    await setupTempState();
-    const qwenProvider = requireProvider(registerProviders(qwenPortalPlugin), "qwen-portal");
-    resolvePluginProvidersMock.mockReturnValue([qwenProvider]);
-    resolveProviderPluginChoiceMock.mockReturnValue({
-      provider: qwenProvider,
-      method: qwenProvider.auth[0],
-    });
-    loginQwenPortalOAuthMock.mockResolvedValueOnce({
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: 1_700_000_000_000,
-      resourceUrl: "portal.qwen.ai",
-    });
+  it(
+    "applies qwen portal auth choices through the shared plugin-provider path",
+    async () => {
+      await setupTempState();
+      const qwenProvider = requireProvider(registerProviders(qwenPortalPlugin), "qwen-portal");
+      resolvePluginProvidersMock.mockReturnValue([qwenProvider]);
+      resolveProviderPluginChoiceMock.mockReturnValue({
+        provider: qwenProvider,
+        method: qwenProvider.auth[0],
+      });
+      loginQwenPortalOAuthMock.mockResolvedValueOnce({
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: 1_700_000_000_000,
+        resourceUrl: "portal.qwen.ai",
+      });
 
-    const note = vi.fn(async () => {});
-    const result = await applyAuthChoiceLoadedPluginProvider({
-      authChoice: "qwen-portal",
-      config: {},
-      prompter: createWizardPrompter({ note }),
-      runtime: createExitThrowingRuntime(),
-      setDefaultModel: true,
-    });
+      const note = vi.fn(async () => {});
+      const result = await applyAuthChoiceLoadedPluginProvider({
+        authChoice: "qwen-portal",
+        config: {},
+        prompter: createWizardPrompter({ note }),
+        runtime: createExitThrowingRuntime(),
+        setDefaultModel: true,
+      });
 
-    expect(result?.config.agents?.defaults?.model).toEqual({
-      primary: "qwen-portal/coder-model",
-    });
-    expect(result?.config.auth?.profiles?.["qwen-portal:default"]).toMatchObject({
-      provider: "qwen-portal",
-      mode: "oauth",
-    });
-    expect(result?.config.models?.providers?.["qwen-portal"]).toMatchObject({
-      baseUrl: "https://portal.qwen.ai/v1",
-      models: [],
-    });
-    expect(note).toHaveBeenCalledWith(
-      "Default model set to qwen-portal/coder-model",
-      "Model configured",
-    );
+      expect(result?.config.agents?.defaults?.model).toEqual({
+        primary: "qwen-portal/coder-model",
+      });
+      expect(result?.config.auth?.profiles?.["qwen-portal:default"]).toMatchObject({
+        provider: "qwen-portal",
+        mode: "oauth",
+      });
+      expect(result?.config.models?.providers?.["qwen-portal"]).toMatchObject({
+        baseUrl: "https://portal.qwen.ai/v1",
+        models: [],
+      });
+      expect(note).toHaveBeenCalledWith(
+        "Default model set to qwen-portal/coder-model",
+        "Model configured",
+      );
 
-    const stored = await readAuthProfilesForAgent<{ profiles?: Record<string, StoredAuthProfile> }>(
-      requireOpenClawAgentDir(),
-    );
-    expect(stored.profiles?.["qwen-portal:default"]).toMatchObject({
-      type: "oauth",
-      provider: "qwen-portal",
-      access: "access-token",
-      refresh: "refresh-token",
-    });
-  });
+      const stored = await readAuthProfilesForAgent<{
+        profiles?: Record<string, StoredAuthProfile>;
+      }>(requireOpenClawAgentDir());
+      expect(stored.profiles?.["qwen-portal:default"]).toMatchObject({
+        type: "oauth",
+        provider: "qwen-portal",
+        access: "access-token",
+        refresh: "refresh-token",
+      });
+    },
+    WINDOWS_CI_TIMEOUT_MS,
+  );
 
-  it("returns provider agent overrides when default-model application is deferred", async () => {
-    await setupTempState();
-    const qwenProvider = requireProvider(registerProviders(qwenPortalPlugin), "qwen-portal");
-    resolvePluginProvidersMock.mockReturnValue([qwenProvider]);
-    resolveProviderPluginChoiceMock.mockReturnValue({
-      provider: qwenProvider,
-      method: qwenProvider.auth[0],
-    });
-    loginQwenPortalOAuthMock.mockResolvedValueOnce({
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: 1_700_000_000_000,
-      resourceUrl: "portal.qwen.ai",
-    });
+  it(
+    "returns provider agent overrides when default-model application is deferred",
+    async () => {
+      await setupTempState();
+      const qwenProvider = requireProvider(registerProviders(qwenPortalPlugin), "qwen-portal");
+      resolvePluginProvidersMock.mockReturnValue([qwenProvider]);
+      resolveProviderPluginChoiceMock.mockReturnValue({
+        provider: qwenProvider,
+        method: qwenProvider.auth[0],
+      });
+      loginQwenPortalOAuthMock.mockResolvedValueOnce({
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: 1_700_000_000_000,
+        resourceUrl: "portal.qwen.ai",
+      });
 
-    const result = await applyAuthChoiceLoadedPluginProvider({
-      authChoice: "qwen-portal",
-      config: {},
-      prompter: createWizardPrompter({}),
-      runtime: createExitThrowingRuntime(),
-      setDefaultModel: false,
-    });
+      const result = await applyAuthChoiceLoadedPluginProvider({
+        authChoice: "qwen-portal",
+        config: {},
+        prompter: createWizardPrompter({}),
+        runtime: createExitThrowingRuntime(),
+        setDefaultModel: false,
+      });
 
-    expect(githubCopilotLoginCommandMock).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      config: {
-        agents: {
-          defaults: {
-            models: {
-              "qwen-portal/coder-model": {
-                alias: "qwen",
+      expect(githubCopilotLoginCommandMock).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        config: {
+          agents: {
+            defaults: {
+              models: {
+                "qwen-portal/coder-model": {
+                  alias: "qwen",
+                },
+                "qwen-portal/vision-model": {},
               },
-              "qwen-portal/vision-model": {},
+            },
+          },
+          auth: {
+            profiles: {
+              "qwen-portal:default": {
+                provider: "qwen-portal",
+                mode: "oauth",
+              },
+            },
+          },
+          models: {
+            providers: {
+              "qwen-portal": {
+                baseUrl: "https://portal.qwen.ai/v1",
+                models: [],
+              },
             },
           },
         },
-        auth: {
-          profiles: {
-            "qwen-portal:default": {
-              provider: "qwen-portal",
-              mode: "oauth",
-            },
-          },
-        },
-        models: {
-          providers: {
-            "qwen-portal": {
-              baseUrl: "https://portal.qwen.ai/v1",
-              models: [],
-            },
-          },
-        },
-      },
-      agentModelOverride: "qwen-portal/coder-model",
-    });
+        agentModelOverride: "qwen-portal/coder-model",
+      });
 
-    const stored = await readAuthProfilesForAgent<{
-      profiles?: Record<string, StoredAuthProfile>;
-    }>(requireOpenClawAgentDir());
-    expect(stored.profiles?.["qwen-portal:default"]).toMatchObject({
-      type: "oauth",
-      provider: "qwen-portal",
-      access: "access-token",
-      refresh: "refresh-token",
-    });
-  });
+      const stored = await readAuthProfilesForAgent<{
+        profiles?: Record<string, StoredAuthProfile>;
+      }>(requireOpenClawAgentDir());
+      expect(stored.profiles?.["qwen-portal:default"]).toMatchObject({
+        type: "oauth",
+        provider: "qwen-portal",
+        access: "access-token",
+        refresh: "refresh-token",
+      });
+    },
+    WINDOWS_CI_TIMEOUT_MS,
+  );
 });

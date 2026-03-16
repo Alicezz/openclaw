@@ -77,7 +77,7 @@ function createZaiFetchMock(responses: Record<string, number>): typeof fetch {
         headers: { "content-type": "application/json" },
       },
     );
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 }
 
 async function withZaiProbeFetch<T>(

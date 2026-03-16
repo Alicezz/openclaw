@@ -3,6 +3,12 @@ import { createProviderUsageFetch, makeResponse } from "../test-utils/provider-u
 import { loadProviderUsageSummary } from "./provider-usage.load.js";
 import { ignoredErrors } from "./provider-usage.shared.js";
 
+// Mock provider-runtime to avoid slow dynamic imports on Windows CI
+vi.mock("../plugins/provider-runtime.js", () => ({
+  resolveProviderUsageSnapshotWithPlugin: vi.fn().mockResolvedValue(null),
+  resetProviderRuntimeHookCacheForTest: vi.fn(),
+}));
+
 const usageNow = Date.UTC(2026, 0, 7, 0, 0, 0);
 
 type ProviderAuth = NonNullable<
