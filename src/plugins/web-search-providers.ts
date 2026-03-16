@@ -109,12 +109,14 @@ const BUNDLED_WEB_SEARCH_PROVIDER_REGISTRY = [
   },
 ] as const;
 
+export type ResolvedPluginWebSearchProvider = PluginWebSearchProviderEntry;
+
 export function resolvePluginWebSearchProviders(params: {
   config?: PluginLoadOptions["config"];
   workspaceDir?: string;
   env?: PluginLoadOptions["env"];
   bundledAllowlistCompat?: boolean;
-}): PluginWebSearchProviderEntry[] {
+}): ResolvedPluginWebSearchProvider[] {
   const allowlistCompat = params.bundledAllowlistCompat
     ? withBundledPluginAllowlistCompat({
         config: params.config,
