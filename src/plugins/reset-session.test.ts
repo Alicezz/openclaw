@@ -100,7 +100,7 @@ async function createApiHarness(options?: RegistryImportOptions) {
     : await import("../gateway/session-utils.js");
 
   const deps: SessionResetDeps = {
-    loadConfig: vi.fn<[], OpenClawConfig>(() => ({}) as OpenClawConfig),
+    loadConfig: vi.fn(() => ({}) as OpenClawConfig),
     performGatewaySessionReset:
       sessionResetService === null
         ? vi.fn()
