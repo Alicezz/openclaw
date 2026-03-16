@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
-import type { ChannelDock } from "../channels/dock.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { isChannelConfigured } from "../config/plugin-auto-enable.js";
@@ -61,6 +60,21 @@ export type PluginLoadOptions = {
 const MAX_PLUGIN_REGISTRY_CACHE_ENTRIES = 128;
 const registryCache = new Map<string, PluginRegistry>();
 const openAllowlistWarningCache = new Set<string>();
+const LAZY_RUNTIME_REFLECTION_KEYS = [
+  "version",
+  "config",
+  "subagent",
+  "system",
+  "media",
+  "tts",
+  "stt",
+  "tools",
+  "channel",
+  "events",
+  "logging",
+  "state",
+  "modelAuth",
+] as const satisfies readonly (keyof PluginRuntime)[];
 
 export function clearPluginLoaderCache(): void {
   registryCache.clear();
@@ -70,6 +84,34 @@ export function clearPluginLoaderCache(): void {
 const defaultLogger = () => createSubsystemLogger("plugins");
 
 type PluginSdkAliasCandidateKind = "dist" | "src";
+
+type LoaderModuleResolveParams = {
+  modulePath?: string;
+  argv1?: string;
+  cwd?: string;
+  moduleUrl?: string;
+};
+
+function resolveLoaderModulePath(params: LoaderModuleResolveParams = {}): string {
+  return params.modulePath ?? fileURLToPath(params.moduleUrl ?? import.meta.url);
+}
+
+function resolveLoaderPackageRoot(
+  params: LoaderModuleResolveParams & { modulePath: string },
+): string | null {
+  const cwd = params.cwd ?? path.dirname(params.modulePath);
+  const fromModulePath = resolveOpenClawPackageRootSync({ cwd });
+  if (fromModulePath) {
+    return fromModulePath;
+  }
+  const argv1 = params.argv1 ?? process.argv[1];
+  const moduleUrl = params.moduleUrl ?? (params.modulePath ? undefined : import.meta.url);
+  return resolveOpenClawPackageRootSync({
+    cwd,
+    ...(argv1 ? { argv1 } : {}),
+    ...(moduleUrl ? { moduleUrl } : {}),
+  });
+}
 
 function resolvePluginSdkAliasCandidateOrder(params: {
   modulePath: string;
@@ -84,11 +126,22 @@ function listPluginSdkAliasCandidates(params: {
   srcFile: string;
   distFile: string;
   modulePath: string;
+  argv1?: string;
+  cwd?: string;
+  moduleUrl?: string;
 }) {
   const orderedKinds = resolvePluginSdkAliasCandidateOrder({
     modulePath: params.modulePath,
     isProduction: process.env.NODE_ENV === "production",
   });
+  const packageRoot = resolveLoaderPackageRoot(params);
+  if (packageRoot) {
+    const candidateMap = {
+      src: path.join(packageRoot, "src", "plugin-sdk", params.srcFile),
+      dist: path.join(packageRoot, "dist", "plugin-sdk", params.distFile),
+    } as const;
+    return orderedKinds.map((kind) => candidateMap[kind]);
+  }
   let cursor = path.dirname(params.modulePath);
   const candidates: string[] = [];
   for (let i = 0; i < 6; i += 1) {
@@ -112,13 +165,19 @@ const resolvePluginSdkAliasFile = (params: {
   srcFile: string;
   distFile: string;
   modulePath?: string;
+  argv1?: string;
+  cwd?: string;
+  moduleUrl?: string;
 }): string | null => {
   try {
-    const modulePath = params.modulePath ?? fileURLToPath(import.meta.url);
+    const modulePath = resolveLoaderModulePath(params);
     for (const candidate of listPluginSdkAliasCandidates({
       srcFile: params.srcFile,
       distFile: params.distFile,
       modulePath,
+      argv1: params.argv1,
+      cwd: params.cwd,
+      moduleUrl: params.moduleUrl,
     })) {
       if (fs.existsSync(candidate)) {
         return candidate;
@@ -133,12 +192,10 @@ const resolvePluginSdkAliasFile = (params: {
 const resolvePluginSdkAlias = (): string | null =>
   resolvePluginSdkAliasFile({ srcFile: "root-alias.cjs", distFile: "root-alias.cjs" });
 
-const resolveExtensionApiAlias = (params: { modulePath?: string } = {}): string | null => {
+const resolveExtensionApiAlias = (params: LoaderModuleResolveParams = {}): string | null => {
   try {
-    const modulePath = params.modulePath ?? fileURLToPath(import.meta.url);
-    const packageRoot = resolveOpenClawPackageRootSync({
-      cwd: path.dirname(modulePath),
-    });
+    const modulePath = resolveLoaderModulePath(params);
+    const packageRoot = resolveLoaderPackageRoot({ ...params, modulePath });
     if (!packageRoot) {
       return null;
     }
@@ -163,14 +220,24 @@ const resolveExtensionApiAlias = (params: { modulePath?: string } = {}): string 
   return null;
 };
 
-function resolvePluginRuntimeModulePath(params: { modulePath?: string } = {}): string | null {
+function resolvePluginRuntimeModulePath(params: LoaderModuleResolveParams = {}): string | null {
   try {
-    const modulePath = params.modulePath ?? fileURLToPath(import.meta.url);
-    const moduleDir = path.dirname(modulePath);
-    const candidates = [
-      path.join(moduleDir, "runtime", "index.ts"),
-      path.join(moduleDir, "runtime", "index.js"),
-    ];
+    const modulePath = resolveLoaderModulePath(params);
+    const orderedKinds = resolvePluginSdkAliasCandidateOrder({
+      modulePath,
+      isProduction: process.env.NODE_ENV === "production",
+    });
+    const packageRoot = resolveLoaderPackageRoot({ ...params, modulePath });
+    const candidates = packageRoot
+      ? orderedKinds.map((kind) =>
+          kind === "src"
+            ? path.join(packageRoot, "src", "plugins", "runtime", "index.ts")
+            : path.join(packageRoot, "dist", "plugins", "runtime", "index.js"),
+        )
+      : [
+          path.join(path.dirname(modulePath), "runtime", "index.ts"),
+          path.join(path.dirname(modulePath), "runtime", "index.js"),
+        ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
         return candidate;
@@ -233,6 +300,7 @@ export const __testing = {
   resolveExtensionApiAlias,
   resolvePluginSdkAliasCandidateOrder,
   resolvePluginSdkAliasFile,
+  resolvePluginRuntimeModulePath,
   maxPluginRegistryCacheEntries: MAX_PLUGIN_REGISTRY_CACHE_ENTRIES,
 };
 
@@ -353,7 +421,6 @@ function resolvePluginModuleExport(moduleExport: unknown): {
 
 function resolveSetupChannelRegistration(moduleExport: unknown): {
   plugin?: ChannelPlugin;
-  dock?: ChannelDock;
 } {
   const resolved =
     moduleExport &&
@@ -366,14 +433,12 @@ function resolveSetupChannelRegistration(moduleExport: unknown): {
   }
   const setup = resolved as {
     plugin?: unknown;
-    dock?: unknown;
   };
   if (!setup.plugin || typeof setup.plugin !== "object") {
     return {};
   }
   return {
     plugin: setup.plugin as ChannelPlugin,
-    ...(setup.dock && typeof setup.dock === "object" ? { dock: setup.dock as ChannelDock } : {}),
   };
 }
 
@@ -820,6 +885,22 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     resolvedRuntime ??= resolveCreatePluginRuntime()(options.runtimeOptions);
     return resolvedRuntime;
   };
+  const lazyRuntimeReflectionKeySet = new Set<PropertyKey>(LAZY_RUNTIME_REFLECTION_KEYS);
+  const resolveLazyRuntimeDescriptor = (prop: PropertyKey): PropertyDescriptor | undefined => {
+    if (!lazyRuntimeReflectionKeySet.has(prop)) {
+      return Reflect.getOwnPropertyDescriptor(resolveRuntime() as object, prop);
+    }
+    return {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return Reflect.get(resolveRuntime() as object, prop);
+      },
+      set(value: unknown) {
+        Reflect.set(resolveRuntime() as object, prop, value);
+      },
+    };
+  };
   const runtime = new Proxy({} as PluginRuntime, {
     get(_target, prop, receiver) {
       return Reflect.get(resolveRuntime(), prop, receiver);
@@ -828,13 +909,13 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       return Reflect.set(resolveRuntime(), prop, value, receiver);
     },
     has(_target, prop) {
-      return Reflect.has(resolveRuntime(), prop);
+      return lazyRuntimeReflectionKeySet.has(prop) || Reflect.has(resolveRuntime(), prop);
     },
     ownKeys() {
-      return Reflect.ownKeys(resolveRuntime() as object);
+      return [...LAZY_RUNTIME_REFLECTION_KEYS];
     },
     getOwnPropertyDescriptor(_target, prop) {
-      return Reflect.getOwnPropertyDescriptor(resolveRuntime() as object, prop);
+      return resolveLazyRuntimeDescriptor(prop);
     },
     defineProperty(_target, prop, attributes) {
       return Reflect.defineProperty(resolveRuntime() as object, prop, attributes);
@@ -1113,10 +1194,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
           hookPolicy: entry?.hooks,
           registrationMode,
         });
-        api.registerChannel({
-          plugin: setupRegistration.plugin,
-          ...(setupRegistration.dock ? { dock: setupRegistration.dock } : {}),
-        });
+        api.registerChannel(setupRegistration.plugin);
         registry.plugins.push(record);
         seenIds.set(pluginId, candidate.origin);
         continue;
