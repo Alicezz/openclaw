@@ -9,6 +9,11 @@ import type { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import { DEFAULT_ACCOUNT_ID } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
+import {
+  DEFAULT_CHANNEL_CONNECT_GRACE_MS,
+  DEFAULT_CHANNEL_STALE_EVENT_THRESHOLD_MS,
+  isChannelOperational,
+} from "./channel-health-policy.js";
 
 const CHANNEL_RESTART_POLICY: BackoffPolicy = {
   initialMs: 5_000,
@@ -60,6 +65,11 @@ type ChannelManagerOptions = {
   loadConfig: () => OpenClawConfig;
   channelLogs: Record<ChannelId, SubsystemLogger>;
   channelRuntimeEnvs: Record<ChannelId, RuntimeEnv>;
+  onChannelRecovered?: (params: {
+    channelId: ChannelId;
+    accountId: string;
+    snapshot: ChannelAccountSnapshot;
+  }) => void | Promise<void>;
   /**
    * Optional channel runtime helpers for external channel plugins.
    *
@@ -109,7 +119,7 @@ export type ChannelManager = {
 
 // Channel docking: lifecycle hooks (`plugin.gateway`) flow through this manager.
 export function createChannelManager(opts: ChannelManagerOptions): ChannelManager {
-  const { loadConfig, channelLogs, channelRuntimeEnvs, channelRuntime } = opts;
+  const { loadConfig, channelLogs, channelRuntimeEnvs, channelRuntime, onChannelRecovered } = opts;
 
   const channelStores = new Map<ChannelId, ChannelRuntimeStore>();
   // Tracks restart attempts per channel:account. Reset on successful start.
@@ -143,6 +153,25 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     const current = getRuntime(channelId, accountId);
     const next = { ...current, ...patch, accountId };
     store.runtimes.set(accountId, next);
+    const now = Date.now();
+    const healthPolicy = {
+      channelId,
+      now,
+      channelConnectGraceMs: DEFAULT_CHANNEL_CONNECT_GRACE_MS,
+      staleEventThresholdMs: DEFAULT_CHANNEL_STALE_EVENT_THRESHOLD_MS,
+    } as const;
+    const reconnected = current.connected === false && next.connected === true;
+    const becameOperational =
+      !isChannelOperational(current, healthPolicy) && isChannelOperational(next, healthPolicy);
+    if (reconnected || becameOperational) {
+      void Promise.resolve(onChannelRecovered?.({ channelId, accountId, snapshot: next })).catch(
+        (err) => {
+          channelLogs[channelId].warn?.(
+            `[${accountId}] channel recovery hook failed: ${formatErrorMessage(err)}`,
+          );
+        },
+      );
+    }
     return next;
   };
 
@@ -241,15 +270,17 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             setRuntime(channelId, id, { accountId: id, lastError: message });
             log.error?.(`[${id}] channel exited: ${message}`);
           })
-          .finally(() => {
-            setRuntime(channelId, id, {
-              accountId: id,
-              running: false,
-              lastStopAt: Date.now(),
-            });
-          })
           .then(async () => {
+            // Set running=false and determine restart intent atomically so
+            // observers never see running=false + restartPending=false when
+            // an auto-restart is about to happen.
             if (manuallyStopped.has(rKey)) {
+              setRuntime(channelId, id, {
+                accountId: id,
+                running: false,
+                restartPending: false,
+                lastStopAt: Date.now(),
+              });
               return;
             }
             const attempt = (restartAttempts.get(rKey) ?? 0) + 1;
@@ -257,8 +288,10 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             if (attempt > MAX_RESTART_ATTEMPTS) {
               setRuntime(channelId, id, {
                 accountId: id,
+                running: false,
                 restartPending: false,
-                reconnectAttempts: attempt,
+                reconnectAttempts: MAX_RESTART_ATTEMPTS,
+                lastStopAt: Date.now(),
               });
               log.error?.(`[${id}] giving up after ${MAX_RESTART_ATTEMPTS} restart attempts`);
               return;
@@ -269,8 +302,10 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             );
             setRuntime(channelId, id, {
               accountId: id,
+              running: false,
               restartPending: true,
               reconnectAttempts: attempt,
+              lastStopAt: Date.now(),
             });
             try {
               await sleepWithAbort(delayMs, abort.signal);
