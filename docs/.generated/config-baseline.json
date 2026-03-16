@@ -8578,7 +8578,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -9119,7 +9120,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -10910,7 +10912,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -13753,7 +13756,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -18931,7 +18935,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -19606,7 +19611,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -20242,7 +20248,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -20979,7 +20986,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -22319,7 +22327,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -23062,7 +23071,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -23571,7 +23581,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -24056,7 +24067,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -24971,7 +24983,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -25569,7 +25582,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -25908,7 +25922,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -26706,7 +26721,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -27460,7 +27476,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -28553,7 +28570,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -29957,7 +29975,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -31982,7 +32001,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -33959,7 +33979,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -35200,6 +35221,7 @@
       "type": "string",
       "required": false,
       "enumValues": [
+        "block",
         "bullets",
         "code",
         "off"
@@ -35867,7 +35889,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -36564,7 +36587,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -36820,7 +36844,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -37098,7 +37123,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -37498,7 +37524,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
@@ -37800,7 +37827,8 @@
       "enumValues": [
         "off",
         "bullets",
-        "code"
+        "code",
+        "block"
       ],
       "deprecated": false,
       "sensitive": false,
