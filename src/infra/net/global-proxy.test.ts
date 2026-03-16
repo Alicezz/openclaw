@@ -156,10 +156,34 @@ describe("applyGlobalProxyDispatcher", () => {
 
   it("handles EnvHttpProxyAgent constructor failure gracefully", () => {
     process.env.HTTPS_PROXY = "http://127.0.0.1:7897";
-    EnvHttpProxyAgentCtor.mockImplementation(() => {
+    EnvHttpProxyAgentCtor.mockImplementationOnce(() => {
       throw new Error("boom");
     });
     expect(() => applyGlobalProxyDispatcher()).not.toThrow();
     expect(setGlobalDispatcher).not.toHaveBeenCalled();
+  });
+
+  it("retries when proxy env appears after an initial no-proxy call", () => {
+    // First call: no proxy vars → no-op, latch must NOT lock.
+    applyGlobalProxyDispatcher();
+    expect(setGlobalDispatcher).not.toHaveBeenCalled();
+
+    // Second call: proxy vars now present (e.g. dotenv loaded between restarts).
+    process.env.HTTPS_PROXY = "http://127.0.0.1:7897";
+    applyGlobalProxyDispatcher();
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries after constructor failure on next call", () => {
+    process.env.HTTPS_PROXY = "http://127.0.0.1:7897";
+    EnvHttpProxyAgentCtor.mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    applyGlobalProxyDispatcher();
+    expect(setGlobalDispatcher).not.toHaveBeenCalled();
+
+    // Retry: constructor succeeds this time.
+    applyGlobalProxyDispatcher();
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
   });
 });

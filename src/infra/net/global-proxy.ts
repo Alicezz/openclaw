@@ -23,7 +23,6 @@ export function applyGlobalProxyDispatcher(): void {
   if (applied) {
     return;
   }
-  applied = true;
 
   if (!hasProxyEnvConfigured()) {
     return;
@@ -35,6 +34,7 @@ export function applyGlobalProxyDispatcher(): void {
   const ctorName = (existing as { constructor?: { name?: string } })?.constructor?.name;
   if (typeof ctorName === "string" && ctorName.includes("ProxyAgent")) {
     log.info("proxy-aware global dispatcher already present, skipping");
+    applied = true;
     return;
   }
 
@@ -45,6 +45,7 @@ export function applyGlobalProxyDispatcher(): void {
     const agentOptions = resolveAllProxyFallbackOptions() ?? {};
 
     setGlobalDispatcher(new EnvHttpProxyAgent(agentOptions));
+    applied = true;
     const active = PROXY_ENV_KEYS.find((k) => process.env[k]?.trim());
     log.info(`global undici dispatcher set to EnvHttpProxyAgent (via ${active})`);
   } catch (err) {
