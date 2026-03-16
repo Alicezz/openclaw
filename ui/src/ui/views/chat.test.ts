@@ -17,7 +17,7 @@ function createSessions(): SessionsListResult {
     ts: 0,
     path: "",
     count: 0,
-    defaults: { modelProvider: null, model: null, contextTokens: null },
+    defaults: { model: null, contextTokens: null, modelProvider: null },
     sessions: [],
   };
 }
@@ -68,7 +68,7 @@ function createChatHeaderState(
         ts: 0,
         path: "",
         count: omitSessionFromList ? 0 : 1,
-        defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+        defaults: { model: "gpt-5", contextTokens: null, modelProvider: null },
         sessions: omitSessionFromList
           ? []
           : [
@@ -95,7 +95,7 @@ function createChatHeaderState(
       ts: 0,
       path: "",
       count: omitSessionFromList ? 0 : 1,
-      defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+      defaults: { model: "gpt-5", contextTokens: null, modelProvider: null },
       sessions: omitSessionFromList
         ? []
         : [
@@ -803,7 +803,7 @@ describe("chat view", () => {
       ts: 0,
       path: "",
       count: 1,
-      defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+      defaults: { model: "gpt-5", contextTokens: null, modelProvider: null },
       sessions: [
         {
           key: state.sessionKey,
@@ -853,7 +853,7 @@ describe("chat view", () => {
       ts: 0,
       path: "",
       count: 1,
-      defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+      defaults: { model: "gpt-5", contextTokens: null, modelProvider: null },
       sessions: [
         {
           key: state.sessionKey,
@@ -882,7 +882,7 @@ describe("chat view", () => {
       ts: 0,
       path: "",
       count: 2,
-      defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
+      defaults: { model: "gpt-5", contextTokens: null, modelProvider: null },
       sessions: [
         {
           key: "agent:main:subagent:4f2146de-887b-4176-9abe-91140082959b",
