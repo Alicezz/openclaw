@@ -33,6 +33,7 @@ export const createTestRegistry = (channels: TestChannelRegistration[] = []): Pl
   services: [],
   commands: [],
   diagnostics: [],
+  dispatchInterceptors: [],
 });
 
 export const createChannelTestPluginBase = (params: {

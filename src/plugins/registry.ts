@@ -46,6 +46,7 @@ import type {
   PluginHookName,
   PluginHookHandlerMap,
   PluginHookRegistration as TypedPluginHookRegistration,
+  DispatchInterceptorPlugin,
   WebSearchProviderPlugin,
 } from "./types.js";
 
@@ -180,6 +181,7 @@ export type PluginRegistry = {
   cliRegistrars: PluginCliRegistration[];
   services: PluginServiceRegistration[];
   commands: PluginCommandRegistration[];
+  dispatchInterceptors: DispatchInterceptorPlugin[];
   diagnostics: PluginDiagnostic[];
 };
 
@@ -225,6 +227,7 @@ export function createEmptyPluginRegistry(): PluginRegistry {
     cliRegistrars: [],
     services: [],
     commands: [],
+    dispatchInterceptors: [],
     diagnostics: [],
   };
 }
@@ -847,6 +850,12 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
           });
         }
       },
+      registerDispatchInterceptor:
+        registrationMode === "full"
+          ? (interceptor) => {
+              registry.dispatchInterceptors.push(interceptor);
+            }
+          : () => {},
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) =>
         registrationMode === "full"
