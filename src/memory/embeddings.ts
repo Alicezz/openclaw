@@ -1,5 +1,6 @@
 import fsSync from "node:fs";
 import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
+import { resolveApiKeyForProvider } from "../agents/model-auth.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { SecretInput } from "../config/types.secrets.js";
@@ -228,15 +229,35 @@ function getPluginEmbeddingProvidersSync(
         return undefined;
       }
       const normalizedId = normalizeProviderId(p.id);
-      const resolvedApiKey = resolveMemorySecretInputString({
-        value: options.remote?.apiKey,
-        path: "agents.*.memorySearch.remote.apiKey",
-      });
-      const apiKey = resolvedApiKey ?? "";
+
+      // Helper to resolve API key from config or auth sources
+      const resolveApiKey = async (): Promise<string> => {
+        const resolvedApiKey = resolveMemorySecretInputString({
+          value: options.remote?.apiKey,
+          path: "agents.*.memorySearch.remote.apiKey",
+        });
+        if (resolvedApiKey) {
+          return resolvedApiKey;
+        }
+        const auth = await resolveApiKeyForProvider({
+          provider: normalizedId,
+          cfg: options.config,
+          agentDir: options.agentDir,
+        });
+        if (!auth) {
+          return "";
+        }
+        if (typeof auth === "string") {
+          return auth;
+        }
+        return auth.apiKey ?? "";
+      };
+
       return {
         id: normalizedId,
         model: options.model,
         embedQuery: async (text: string) => {
+          const apiKey = await resolveApiKey();
           if (embedFn) {
             const result = await embedFn({
               text,
@@ -270,6 +291,7 @@ function getPluginEmbeddingProvidersSync(
           );
         },
         embedBatch: async (texts: string[]) => {
+          const apiKey = await resolveApiKey();
           if (embedBatchFn) {
             const result = await embedBatchFn({
               texts,
@@ -289,6 +311,7 @@ function getPluginEmbeddingProvidersSync(
           }
           const results = await Promise.all(
             texts.map(async (text) => {
+              const apiKey = await resolveApiKey();
               const result = await embedFn({
                 text,
                 model: options.model,
@@ -304,6 +327,7 @@ function getPluginEmbeddingProvidersSync(
           return results;
         },
         embedBatchInputs: async (inputs: EmbeddingInput[]) => {
+          const apiKey = await resolveApiKey();
           if (embedBatchInputsFn) {
             const result = await embedBatchInputsFn({
               inputs: inputs as {

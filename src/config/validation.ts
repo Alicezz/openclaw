@@ -463,6 +463,7 @@ function validateConfigObjectWithPluginsBase(
     "voyage",
     "mistral",
     "ollama",
+    "auto",
   ]);
   const knownMemoryFallbacks = new Set([...knownMemoryProviders, "none"]);
 
