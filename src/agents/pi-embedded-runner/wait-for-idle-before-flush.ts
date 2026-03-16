@@ -55,7 +55,19 @@ export async function flushPendingToolResultsAfterIdle(opts: {
   const waitStartedAt = Date.now();
 
   while (true) {
-    const timedOut = await waitForAgentIdleBestEffort(opts.agent, timeoutMs);
+    const elapsedMs = Date.now() - waitStartedAt;
+    const remainingMs = timeoutMs - elapsedMs;
+
+    if (remainingMs <= 0) {
+      if (opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
+        opts.sessionManager.clearPendingToolResults();
+        return;
+      }
+      opts.sessionManager?.flushPendingToolResults?.();
+      return;
+    }
+
+    const timedOut = await waitForAgentIdleBestEffort(opts.agent, remainingMs);
 
     if (timedOut) {
       if (opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
@@ -71,14 +83,6 @@ export async function flushPendingToolResultsAfterIdle(opts: {
     // pending, give the agent another tick to start and wait again.
     const hasPendingToolCalls = opts.agent?.hasPendingToolCalls;
     if (typeof hasPendingToolCalls === "function" && hasPendingToolCalls.call(opts.agent)) {
-      if (Date.now() - waitStartedAt >= timeoutMs) {
-        if (opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
-          opts.sessionManager.clearPendingToolResults();
-          return;
-        }
-        opts.sessionManager?.flushPendingToolResults?.();
-        return;
-      }
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
       continue;
     }
