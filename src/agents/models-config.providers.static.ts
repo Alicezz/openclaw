@@ -1,5 +1,12 @@
 import type { OpenClawConfig } from "../config/config.js";
 import {
+  DEEPINFRA_BASE_URL,
+  DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
+  DEEPINFRA_DEFAULT_COST,
+  DEEPINFRA_DEFAULT_MAX_TOKENS,
+  DEEPINFRA_MODEL_CATALOG,
+} from "../providers/deepinfra-shared.js";
+import {
   KILOCODE_BASE_URL,
   KILOCODE_DEFAULT_CONTEXT_WINDOW,
   KILOCODE_DEFAULT_COST,
@@ -30,13 +37,6 @@ import {
   TOGETHER_MODEL_CATALOG,
   buildTogetherModelDefinition,
 } from "./together-models.js";
-import {
-  DEEPINFRA_BASE_URL,
-  DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
-  DEEPINFRA_DEFAULT_COST,
-  DEEPINFRA_DEFAULT_MAX_TOKENS,
-  DEEPINFRA_MODEL_CATALOG,
-} from "../providers/deepinfra-shared.ts";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -553,18 +553,18 @@ export function buildKilocodeProvider(): ProviderConfig {
   };
 }
 
-  export function buildDeepInfraStaticProvider(): ProviderConfig {
-    return {
-        baseUrl: DEEPINFRA_BASE_URL,
-        api: "openai-completions",
-        models: DEEPINFRA_MODEL_CATALOG.map((model) => ({
-          id: model.id,
-          name: model.name,
-          reasoning: model.reasoning,
-          input: model.input,
-          cost: DEEPINFRA_DEFAULT_COST,
-          contextWindow: model.contextWindow ?? DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
-          maxTokens: model.maxTokens ?? DEEPINFRA_DEFAULT_MAX_TOKENS,
+export function buildDeepInfraStaticProvider(): ProviderConfig {
+  return {
+    baseUrl: DEEPINFRA_BASE_URL,
+    api: "openai-completions",
+    models: DEEPINFRA_MODEL_CATALOG.map((model) => ({
+      id: model.id,
+      name: model.name,
+      reasoning: model.reasoning,
+      input: model.input,
+      cost: DEEPINFRA_DEFAULT_COST,
+      contextWindow: model.contextWindow ?? DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
+      maxTokens: model.maxTokens ?? DEEPINFRA_DEFAULT_MAX_TOKENS,
     })),
   };
 }
