@@ -484,8 +484,20 @@ export async function createEmbeddingProvider(
           fallbackFrom: requestedProvider,
           fallbackReason: reason,
         };
-      } catch {
-        // Fallback also failed - throw primary error
+      } catch (fallbackErr) {
+        // Both failed - check if both are missing API key errors
+        const fallbackReason = formatErrorMessage(fallbackErr);
+        if (isMissingApiKeyError(primaryErr) && isMissingApiKeyError(fallbackErr)) {
+          // Both missing keys - degrade to FTS-only mode
+          return {
+            provider: null,
+            requestedProvider,
+            fallbackFrom: requestedProvider,
+            fallbackReason: reason,
+            providerUnavailableReason: `${reason}\n\nFallback to ${fallback} failed: ${fallbackReason}`,
+          };
+        }
+        // Other errors - throw primary error
         const wrapped = new Error(reason) as Error & { cause?: unknown };
         wrapped.cause = primaryErr;
         throw wrapped;
