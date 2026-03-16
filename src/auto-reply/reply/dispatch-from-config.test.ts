@@ -8,7 +8,7 @@ import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { ReplyDispatcher } from "./reply-dispatcher.js";
 import { buildTestCtx } from "./test-ctx.js";
 
-type AbortResult = { handled: boolean; aborted: boolean; stoppedSubagents?: number };
+type AbortResult = Awaited<ReturnType<(typeof import("./abort.js"))["tryFastAbortFromMessage"]>>;
 
 const mocks = vi.hoisted(() => ({
   routeReply: vi.fn(async (_params: unknown) => ({ ok: true, messageId: "mock" })),
