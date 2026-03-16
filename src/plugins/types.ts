@@ -16,7 +16,6 @@ import type { ProviderCapabilities } from "../agents/provider-capabilities.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
-import type { ChannelDock } from "../channels/dock.js";
 import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.js";
 import type { createVpsAwareOAuthHandlers } from "../commands/oauth-flow.js";
 import type { OnboardOptions } from "../commands/onboard-types.js";
@@ -120,6 +119,15 @@ export type ProviderAuthContext = {
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
   /**
+   * Optional onboarding CLI options that triggered this auth flow.
+   *
+   * Present for setup/configure/auth-choice flows so provider methods can
+   * honor preseeded flags like `--openai-api-key` or generic
+   * `--token/--token-provider` pairs. Direct `models auth login` usually
+   * leaves this undefined.
+   */
+  opts?: Partial<OnboardOptions>;
+  /**
    * Onboarding secret persistence preference.
    *
    * Interactive wizard flows set this when the caller explicitly requested
@@ -187,6 +195,14 @@ export type ProviderAuthMethod = {
   label: string;
   hint?: string;
   kind: ProviderAuthKind;
+  /**
+   * Optional wizard/onboarding metadata for this specific auth method.
+   *
+   * Use this when one provider exposes multiple setup entries (for example API
+   * key + OAuth, or region-specific login flows). OpenClaw uses this to expose
+   * method-specific auth choices while keeping the provider id stable.
+   */
+  wizard?: ProviderPluginWizardSetup;
   run: (ctx: ProviderAuthContext) => Promise<ProviderAuthResult>;
   runNonInteractive?: (
     ctx: ProviderAuthMethodNonInteractiveContext,
@@ -536,6 +552,18 @@ export type ProviderPluginWizardSetup = {
   groupLabel?: string;
   groupHint?: string;
   methodId?: string;
+  /**
+   * Optional model-allowlist prompt policy applied after this auth choice is
+   * selected in configure/onboarding flows.
+   *
+   * Keep this UI-facing and static. Provider logic that needs runtime state
+   * should stay in `run`/`runNonInteractive`.
+   */
+  modelAllowlist?: {
+    allowedKeys?: string[];
+    initialSelections?: string[];
+    message?: string;
+  };
 };
 
 export type ProviderPluginWizardModelPicker = {
@@ -756,6 +784,14 @@ export type ProviderPlugin = {
    * bearer token (for example Gemini CLI's `{ token, projectId }` payload).
    */
   formatApiKey?: (cred: AuthProfileCredential) => string;
+  /**
+   * Legacy auth-profile ids that should be retired by `openclaw doctor`.
+   *
+   * Use this when a provider plugin replaces an older core-managed profile id
+   * and wants cleanup/migration messaging to live with the provider instead of
+   * in hardcoded doctor tables.
+   */
+  deprecatedProfileIds?: string[];
   /**
    * Provider-owned OAuth refresh.
    *
@@ -1118,7 +1154,6 @@ export type OpenClawPluginService = {
 
 export type OpenClawPluginChannelRegistration = {
   plugin: ChannelPlugin;
-  dock?: ChannelDock;
 };
 
 export type OpenClawPluginDefinition = {

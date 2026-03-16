@@ -218,7 +218,8 @@ Tool authoring guide: [Plugin agent tools](/plugins/agent-tools).
 Provider plugins now have two layers:
 
 - manifest metadata: `providerAuthEnvVars` for cheap env-auth lookup before
-  runtime load
+  runtime load, plus `providerAuthChoices` for cheap onboarding/auth-choice
+  labels and CLI flag metadata before runtime load
 - config-time hooks: `catalog` / legacy `discovery`
 - runtime hooks: `resolveDynamicModel`, `prepareDynamicModel`, `normalizeResolvedModel`, `capabilities`, `prepareExtraParams`, `wrapStreamFn`, `formatApiKey`, `refreshOAuth`, `buildAuthDoctorHint`, `isCacheTtlEligible`, `buildMissingAuthMessage`, `suppressBuiltInModel`, `augmentModelCatalog`, `isBinaryThinking`, `supportsXHighThinking`, `resolveDefaultThinkingLevel`, `isModernModelRef`, `prepareRuntimeAuth`, `resolveUsageAuth`, `fetchUsageSnapshot`
 
@@ -228,8 +229,11 @@ needing a whole custom inference transport.
 
 Use manifest `providerAuthEnvVars` when the provider has env-based credentials
 that generic auth/status/model-picker paths should see without loading plugin
-runtime. Keep provider runtime `envVars` for operator-facing hints such as
-onboarding labels or OAuth client-id/client-secret setup vars.
+runtime. Use manifest `providerAuthChoices` when onboarding/auth-choice CLI
+surfaces should know the provider's choice id, group labels, and simple
+one-flag auth wiring without loading provider runtime. Keep provider runtime
+`envVars` for operator-facing hints such as onboarding labels or OAuth
+client-id/client-secret setup vars.
 
 ### Hook order
 
@@ -1195,11 +1199,11 @@ A provider plugin can participate in five distinct phases:
    `auth[].run(ctx)` performs OAuth, API-key capture, device code, or custom
    setup and returns auth profiles plus optional config patches.
 2. **Non-interactive setup**
-   `auth[].runNonInteractive(ctx)` handles `openclaw setup --wizard --non-interactive`
+   `auth[].runNonInteractive(ctx)` handles `openclaw onboard --non-interactive`
    without prompts. Use this when the provider needs custom headless setup
    beyond the built-in simple API-key paths.
 3. **Wizard integration**
-   `wizard.setup` adds an entry to `openclaw setup --wizard`.
+   `wizard.setup` adds an entry to `openclaw onboard`.
    `wizard.modelPicker` adds a setup entry to the model picker.
 4. **Implicit discovery**
    `discovery.run(ctx)` can contribute provider config automatically during
@@ -1266,6 +1270,16 @@ errors instead.
 
 ### Provider wizard metadata
 
+Provider auth/onboarding metadata can live in two layers:
+
+- manifest `providerAuthChoices`: cheap labels, grouping, `--auth-choice`
+  ids, and simple CLI flag metadata available before runtime load
+- runtime `wizard.setup` / `auth[].wizard`: richer behavior that depends on
+  loaded provider code
+
+Use manifest metadata for static labels/flags. Use runtime wizard metadata when
+setup depends on dynamic auth methods, method fallback, or runtime validation.
+
 `wizard.setup` controls how the provider appears in grouped onboarding:
 
 - `choiceId`: auth-choice value
@@ -1275,6 +1289,7 @@ errors instead.
 - `groupLabel`: group label
 - `groupHint`: group hint
 - `methodId`: auth method to run
+- `modelAllowlist`: optional post-auth allowlist policy (`allowedKeys`, `initialSelections`, `message`)
 
 `wizard.modelPicker` controls how a provider appears as a "set this up now"
 entry in model selection:
@@ -1360,7 +1375,7 @@ or more auth methods (OAuth, API key, device code, etc.). Those methods can
 power:
 
 - `openclaw models auth login --provider <id> [--method <id>]`
-- `openclaw setup --wizard`
+- `openclaw onboard`
 - model-picker “custom provider” setup entries
 - implicit provider discovery during model resolution/listing
 
@@ -1435,8 +1450,13 @@ Notes:
   for headless onboarding.
 - Return `configPatch` when you need to add default models or provider config.
 - Return `defaultModel` so `--set-default` can update agent defaults.
-- `wizard.setup` adds a provider choice to `openclaw setup --wizard`.
+- `wizard.setup` adds a provider choice to onboarding surfaces such as
+  `openclaw onboard` / `openclaw setup --wizard`.
+- `wizard.setup.modelAllowlist` lets the provider narrow the follow-up model
+  allowlist prompt during onboarding/configure.
 - `wizard.modelPicker` adds a “setup this provider” entry to the model picker.
+- `deprecatedProfileIds` lets the provider own `openclaw doctor` cleanup for
+  retired auth-profile ids.
 - `discovery.run` returns either `{ provider }` for the plugin’s own provider id
   or `{ providers }` for multi-provider discovery.
 - `discovery.order` controls when the provider runs relative to built-in
