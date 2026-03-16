@@ -3,7 +3,11 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { GatewayRequestHandlers } from "../gateway/server-methods/types.js";
 import { createPluginRegistry, type PluginRecord } from "./registry.js";
 import type { PluginRuntime } from "./runtime/types.js";
-import type { OpenClawPluginApi, PluginResetSessionResult } from "./types.js";
+import type {
+  OpenClawPluginApi,
+  PluginRegistrationMode,
+  PluginResetSessionResult,
+} from "./types.js";
 
 vi.mock("@mariozechner/pi-ai/oauth", () => ({
   getOAuthApiKey: () => "",
@@ -33,6 +37,7 @@ type SessionResetDeps = {
 type RegistryImportOptions = {
   sessionResetImportError?: Error;
   enableGatewayReset?: boolean;
+  registrationMode?: PluginRegistrationMode;
 };
 
 function createRecord(): PluginRecord {
@@ -129,6 +134,7 @@ async function createApiHarness(options?: RegistryImportOptions) {
 
   const api = createApi(createRecord(), {
     config: {} as OpenClawConfig,
+    registrationMode: options?.registrationMode,
   });
 
   return { api, deps };
@@ -170,6 +176,18 @@ describe("plugin resetSession", () => {
 
       expect(api).toHaveProperty("resetSession");
       expect(api.resetSession).toBeTypeOf("function");
+    });
+
+    it("omits resetSession in setup-only registration mode", async () => {
+      const { api } = await createApiHarness({ registrationMode: "setup-only" });
+
+      expect(api.resetSession).toBeUndefined();
+    });
+
+    it("omits resetSession in setup-runtime registration mode", async () => {
+      const { api } = await createApiHarness({ registrationMode: "setup-runtime" });
+
+      expect(api.resetSession).toBeUndefined();
     });
   });
 

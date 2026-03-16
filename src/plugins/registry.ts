@@ -7,6 +7,7 @@ import type {
   GatewayRequestHandler,
   GatewayRequestHandlers,
 } from "../gateway/server-methods/types.js";
+import { resolveGatewaySessionStoreTarget } from "../gateway/session-utils.js";
 import { registerInternalHook } from "../hooks/internal-hooks.js";
 import type { HookEntry } from "../hooks/types.js";
 import { resolveUserPath } from "../utils.js";
@@ -255,152 +256,6 @@ export function createEmptyPluginRegistry(): PluginRegistry {
   };
 }
 
-const FALLBACK_AGENT_ID = "main";
-const DEFAULT_MAIN_SESSION_KEY = "main";
-const VALID_AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
-const INVALID_AGENT_CHARS_RE = /[^a-z0-9_-]+/g;
-const LEADING_DASH_RE = /^-+/;
-const TRAILING_DASH_RE = /-+$/;
-
-type ParsedPluginAgentSessionKey = { agentId: string; rest: string } | null;
-
-const isGlobalSessionKey = (value: string): boolean => value === "global" || value === "unknown";
-
-const normalizePluginMainKey = (value: string | undefined | null): string => {
-  const trimmed = (value ?? "").trim();
-  return trimmed ? trimmed.toLowerCase() : DEFAULT_MAIN_SESSION_KEY;
-};
-
-const normalizePluginAgentId = (value: string | undefined | null): string => {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) {
-    return FALLBACK_AGENT_ID;
-  }
-  if (VALID_AGENT_ID_RE.test(trimmed)) {
-    return trimmed.toLowerCase();
-  }
-  const sanitized =
-    trimmed
-      .toLowerCase()
-      .replace(INVALID_AGENT_CHARS_RE, "-")
-      .replace(LEADING_DASH_RE, "")
-      .replace(TRAILING_DASH_RE, "")
-      .slice(0, 64) || FALLBACK_AGENT_ID;
-  return sanitized;
-};
-
-const parsePluginAgentSessionKey = (
-  sessionKey: string | undefined | null,
-): ParsedPluginAgentSessionKey => {
-  const raw = (sessionKey ?? "").trim().toLowerCase();
-  if (!raw) {
-    return null;
-  }
-  const parts = raw.split(":").filter(Boolean);
-  if (parts.length < 3 || parts[0] !== "agent") {
-    return null;
-  }
-  const agentId = parts[1]?.trim();
-  const rest = parts.slice(2).join(":");
-  if (!agentId || !rest) {
-    return null;
-  }
-  return { agentId, rest };
-};
-
-const buildPluginAgentMainSessionKey = (params: {
-  agentId: string;
-  mainKey?: string | undefined | null;
-}): string => {
-  const agentId = normalizePluginAgentId(params.agentId);
-  const mainKey = normalizePluginMainKey(params.mainKey);
-  return `agent:${agentId}:${mainKey}`;
-};
-
-const canonicalizePluginMainSessionAlias = (params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  sessionKey: string;
-}): string => {
-  const raw = params.sessionKey.trim();
-  if (!raw) {
-    return "";
-  }
-  const normalized = raw.toLowerCase();
-  const normalizedAgent = normalizePluginAgentId(params.agentId);
-  const normalizedMainKey = normalizePluginMainKey(params.cfg.session?.mainKey);
-  const agentMainSessionKey = buildPluginAgentMainSessionKey({
-    agentId: normalizedAgent,
-    mainKey: normalizedMainKey,
-  });
-  const agentMainAliasKey = buildPluginAgentMainSessionKey({
-    agentId: normalizedAgent,
-    mainKey: DEFAULT_MAIN_SESSION_KEY,
-  });
-  const isAlias =
-    normalized === "main" ||
-    normalized === normalizedMainKey ||
-    normalized === agentMainSessionKey ||
-    normalized === agentMainAliasKey;
-
-  if (params.cfg.session?.scope === "global" && isAlias) {
-    return "global";
-  }
-  return isAlias ? agentMainSessionKey : normalized;
-};
-
-const resolveDefaultPluginAgentId = (cfg: OpenClawConfig): string => {
-  const agents = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
-  const defaultAgentId =
-    agents.find((agent) => agent?.default)?.id ??
-    agents.find((agent) => typeof agent?.id === "string")?.id ??
-    FALLBACK_AGENT_ID;
-  return normalizePluginAgentId(defaultAgentId);
-};
-
-const resolvePluginMainSessionKey = (cfg: OpenClawConfig): string => {
-  if (cfg.session?.scope === "global") {
-    return "global";
-  }
-  const defaultAgentId = resolveDefaultPluginAgentId(cfg);
-  return buildPluginAgentMainSessionKey({
-    agentId: defaultAgentId,
-    mainKey: cfg.session?.mainKey,
-  });
-};
-
-const resolveCanonicalPluginSessionKey = (cfg: OpenClawConfig, rawKey: string): string => {
-  const trimmedKey = rawKey.trim();
-  if (!trimmedKey) {
-    return "";
-  }
-  const lowered = trimmedKey.toLowerCase();
-  if (isGlobalSessionKey(lowered)) {
-    return lowered;
-  }
-
-  const parsed = parsePluginAgentSessionKey(trimmedKey);
-  if (parsed) {
-    return canonicalizePluginMainSessionAlias({
-      cfg,
-      agentId: parsed.agentId,
-      sessionKey: trimmedKey,
-    });
-  }
-
-  const normalizedMainKey = normalizePluginMainKey(cfg.session?.mainKey);
-  if (lowered === "main" || lowered === normalizedMainKey) {
-    return resolvePluginMainSessionKey(cfg);
-  }
-
-  if (lowered.startsWith("agent:")) {
-    return lowered;
-  }
-
-  const defaultAgentId = resolveDefaultPluginAgentId(cfg);
-  return `agent:${defaultAgentId}:${lowered}`;
-};
-
 export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const registry = createEmptyPluginRegistry();
   const coreGatewayMethods = new Set(Object.keys(registryParams.coreGatewayHandlers ?? {}));
@@ -492,7 +347,11 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
 
         const normalizedReason = reason === "reset" ? "reset" : "new";
         const liveConfig = params.loadConfig();
-        const canonicalKey = resolveCanonicalPluginSessionKey(liveConfig, trimmedKey);
+        const resolvedTarget = resolveGatewaySessionStoreTarget({
+          cfg: liveConfig,
+          key: trimmedKey,
+        });
+        const canonicalKey = resolvedTarget.canonicalKey?.trim();
         if (!canonicalKey) {
           throw new Error("Session reset failed to resolve a canonical session key");
         }
@@ -1216,12 +1075,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
           });
         }
       },
-      resetSession: createPluginResetSession({
-        pluginId: record.id,
-        loadConfig: runtimeLoadConfig,
-        isGatewayRuntimeAvailable,
-        loadSessionResetModule,
-      }),
+      resetSession:
+        registrationMode === "full"
+          ? createPluginResetSession({
+              pluginId: record.id,
+              loadConfig: runtimeLoadConfig,
+              isGatewayRuntimeAvailable,
+              loadSessionResetModule,
+            })
+          : undefined,
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) =>
         registrationMode === "full"
