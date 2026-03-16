@@ -36,6 +36,8 @@ import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
+import { ensureAuthProfileStore } from "../../auth-profiles.js";
+import type { ApiKeyCredential, AuthProfileStore } from "../../auth-profiles.js";
 import {
   analyzeBootstrapBudget,
   buildBootstrapPromptWarning,
@@ -52,6 +54,7 @@ import { ensureCustomApiRegistered } from "../../custom-api-registry.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
+import { createGigachatStreamFn } from "../../gigachat-stream.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
@@ -216,6 +219,25 @@ function createYieldAbortedResponse(model: { api?: string; provider?: string; id
     async *[Symbol.asyncIterator]() {},
     result: async () => message,
   };
+}
+
+export function resolveGigachatAuthProfileMetadata(
+  store: Pick<AuthProfileStore, "profiles">,
+  authProfileId?: string,
+): Record<string, string> | undefined {
+  const profileIds = [authProfileId?.trim(), "gigachat:default"].filter(
+    (profileId): profileId is string => Boolean(profileId),
+  );
+  for (const profileId of profileIds) {
+    const credential = store.profiles[profileId];
+    if (
+      credential?.type === "api_key" &&
+      (credential as ApiKeyCredential).provider === "gigachat"
+    ) {
+      return credential.metadata;
+    }
+  }
+  return undefined;
 }
 
 // Queue a hidden steering message so pi-agent-core skips any remaining tool calls.
@@ -1903,6 +1925,28 @@ export async function runEmbeddedAttempt(
         });
         activeSession.agent.streamFn = ollamaStreamFn;
         ensureCustomApiRegistered(params.model.api, ollamaStreamFn);
+      } else if (normalizeProviderId(params.provider) === "gigachat") {
+        const providerConfig = params.config?.models?.providers?.[params.provider];
+        const baseUrl =
+          (typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl : undefined) ??
+          (typeof params.model.baseUrl === "string" ? params.model.baseUrl : undefined) ??
+          process.env.GIGACHAT_BASE_URL?.trim() ??
+          "https://gigachat.devices.sberbank.ru/api/v1";
+
+        // Read GigaChat-specific config from auth profile credential metadata.
+        const gigachatStore = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+        const gigachatMeta = resolveGigachatAuthProfileMetadata(
+          gigachatStore,
+          params.attempt.authProfileId,
+        );
+
+        const gigachatStreamFn = createGigachatStreamFn({
+          baseUrl,
+          authMode: (gigachatMeta?.authMode as "oauth" | "basic") ?? "oauth",
+          insecureTls: gigachatMeta?.insecureTls === "true",
+          scope: gigachatMeta?.scope,
+        });
+        activeSession.agent.streamFn = gigachatStreamFn;
       } else if (params.model.api === "openai-responses" && params.provider === "openai") {
         const wsApiKey = await params.authStorage.getApiKey(params.provider);
         if (wsApiKey) {

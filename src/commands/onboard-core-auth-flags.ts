@@ -1,6 +1,6 @@
 import type { AuthChoice, OnboardOptions } from "./onboard-types.js";
 
-type OnboardCoreAuthOptionKey = keyof Pick<OnboardOptions, "litellmApiKey">;
+type OnboardCoreAuthOptionKey = keyof Pick<OnboardOptions, "gigachatApiKey" | "litellmApiKey">;
 
 export type OnboardCoreAuthFlag = {
   optionKey: OnboardCoreAuthOptionKey;
@@ -11,6 +11,13 @@ export type OnboardCoreAuthFlag = {
 };
 
 export const CORE_ONBOARD_AUTH_FLAGS: ReadonlyArray<OnboardCoreAuthFlag> = [
+  {
+    optionKey: "gigachatApiKey",
+    authChoice: "gigachat-api-key",
+    cliFlag: "--gigachat-api-key",
+    cliOption: "--gigachat-api-key <key>",
+    description: "GigaChat credentials key",
+  },
   {
     optionKey: "litellmApiKey",
     authChoice: "litellm-api-key",
