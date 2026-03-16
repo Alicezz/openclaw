@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { registerContextEngineForOwner } from "../context-engine/registry.js";
 import type {
   GatewayRequestHandler,
@@ -251,6 +252,8 @@ export function createEmptyPluginRegistry(): PluginRegistry {
   };
 }
 
+const FALLBACK_AGENT_ID = "main";
+
 export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const registry = createEmptyPluginRegistry();
   const coreGatewayMethods = new Set(Object.keys(registryParams.coreGatewayHandlers ?? {}));
@@ -310,22 +313,54 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         }
 
         const normalizedReason = reason === "reset" ? "reset" : "new";
-        const [
-          { loadConfig },
-          { resolveGatewaySessionStoreTarget },
-          { performGatewaySessionReset },
-        ] = await Promise.all([
-          import("../config/config.js"),
-          import("../gateway/session-utils.js"),
-          import("../gateway/session-reset-service.js"),
-        ]);
+        const [{ loadConfig }, { performGatewaySessionReset }, canonicalModule, sessionKeyModule] =
+          await Promise.all([
+            import("../config/config.js"),
+            import("../gateway/session-reset-service.js"),
+            import("../config/sessions/main-session.js"),
+            import("../routing/session-key.js"),
+          ]);
+        const { canonicalizeMainSessionAlias, resolveMainSessionKey } = canonicalModule;
+        const { normalizeAgentId, normalizeMainKey, parseAgentSessionKey } = sessionKeyModule;
+        const isGlobalSessionKey = (value: string): boolean =>
+          value === "global" || value === "unknown";
+        const resolveDefaultPluginAgentId = (cfg: OpenClawConfig): string => {
+          const agents = Array.isArray(cfg.agents?.list) ? cfg.agents?.list : [];
+          const defaultAgentId =
+            agents.find((agent) => agent?.default)?.id ??
+            agents.find((agent) => typeof agent?.id === "string")?.id ??
+            FALLBACK_AGENT_ID;
+          return normalizeAgentId(defaultAgentId);
+        };
+        const resolveCanonicalPluginSessionKey = (cfg: OpenClawConfig, rawKey: string): string => {
+          const trimmedKey = rawKey.trim();
+          if (!trimmedKey) {
+            return "";
+          }
+          const lowered = trimmedKey.toLowerCase();
+          if (isGlobalSessionKey(lowered)) {
+            return lowered;
+          }
+          const parsed = parseAgentSessionKey(lowered);
+          if (parsed) {
+            return canonicalizeMainSessionAlias({
+              cfg,
+              agentId: normalizeAgentId(parsed.agentId),
+              sessionKey: lowered,
+            });
+          }
+          const normalizedMainKey = normalizeMainKey(cfg.session?.mainKey);
+          if (lowered === "main" || lowered === normalizedMainKey) {
+            return resolveMainSessionKey(cfg);
+          }
+          if (lowered.startsWith("agent:")) {
+            return lowered;
+          }
+          const defaultAgentId = resolveDefaultPluginAgentId(cfg);
+          return `agent:${defaultAgentId}:${lowered}`;
+        };
         const liveConfig = loadConfig();
-
-        const target = resolveGatewaySessionStoreTarget({
-          cfg: liveConfig,
-          key: trimmedKey,
-        });
-        const canonicalKey = target.canonicalKey?.trim();
+        const canonicalKey = resolveCanonicalPluginSessionKey(liveConfig, trimmedKey);
         if (!canonicalKey) {
           throw new Error("Session reset failed to resolve a canonical session key");
         }
