@@ -1,104 +1,226 @@
 ---
-summary: "Spec for the Clawdbot macOS companion menu bar app (gateway + node broker)"
+summary: "OpenClaw macOS companion app (menu bar + gateway broker)"
 read_when:
   - Implementing macOS app features
   - Changing gateway lifecycle or node bridging on macOS
+title: "macOS App"
 ---
-# Clawdbot macOS Companion (menu bar + gateway broker)
 
-Author: steipete · Status: draft spec · Date: 2025-12-20
+# OpenClaw macOS Companion (menu bar + gateway broker)
 
-## Purpose
-- Single macOS menu-bar app named **Clawdbot** that:
-  - Shows native notifications for Clawdbot/clawdbot events.
-  - Owns TCC prompts (Notifications, Accessibility, Screen Recording, Automation/AppleScript, Microphone, Speech Recognition).
-  - Runs (or connects to) the **Gateway** and exposes itself as a **node** so agents can reach macOS‑only features.
-  - Hosts **PeekabooBridge** for UI automation (consumed by `peekaboo`; see [`docs/mac/peekaboo.md`](/platforms/mac/peekaboo)).
-  - Installs a single CLI (`clawdbot`) by symlinking the bundled binary.
+The macOS app is the **menu‑bar companion** for OpenClaw. It owns permissions,
+manages/attaches to the Gateway locally (launchd or manual), and exposes macOS
+capabilities to the agent as a node.
 
-## High-level design
-- SwiftPM package in `apps/macos/` (macOS 15+, Swift 6).
-- Targets:
-  - `ClawdbotIPC` (shared Codable types + helpers for app‑internal actions).
-  - `Clawdbot` (LSUIElement MenuBarExtra app; hosts Gateway + node bridge + PeekabooBridgeHost).
-- Bundle ID: `com.clawdbot.mac`.
-- Bundled runtime binaries live under `Contents/Resources/Relay/`:
-  - `clawdbot` (bun‑compiled relay: CLI + gateway-daemon)
-- The app symlinks `clawdbot` into `/usr/local/bin` and `/opt/homebrew/bin`.
+## What it does
 
-## Gateway + node bridge
-- The mac app runs the Gateway in **local** mode (unless configured remote).
-- The gateway port is configurable via `gateway.port` or `CLAWDBOT_GATEWAY_PORT` (default 18789). The mac app reads that value for launchd, probes, and remote SSH tunnels.
-- The mac app connects to the bridge as a **node** and advertises capabilities/commands.
-- Agent‑facing actions are exposed via `node.invoke` (no local control socket).
-- The mac app watches `~/.clawdbot/clawdbot.json` and switches modes live when `gateway.mode` or `gateway.remote.url` changes.
-- If `gateway.mode` is unset but `gateway.remote.url` is set, the mac app treats it as remote mode.
-- Changing connection mode in the mac app writes `gateway.mode` (and `gateway.remote.url` in remote mode) back to the config file.
+- Shows native notifications and status in the menu bar.
+- Owns TCC prompts (Notifications, Accessibility, Screen Recording, Microphone,
+  Speech Recognition, Automation/AppleScript).
+- Runs or connects to the Gateway (local or remote).
+- Exposes macOS‑only tools (Canvas, Camera, Screen Recording, `system.run`).
+- Starts the local node host service in **remote** mode (launchd), and stops it in **local** mode.
+- Optionally hosts **PeekabooBridge** for UI automation.
+- Installs the global CLI (`openclaw`) via npm/pnpm on request (bun not recommended for the Gateway runtime).
 
-### Node commands (mac)
-- Canvas: `canvas.present|navigate|eval|snapshot|a2ui.*`
-- Camera: `camera.snap|camera.clip`
+## Local vs remote mode
+
+- **Local** (default): the app attaches to a running local Gateway if present;
+  otherwise it enables the launchd service via `openclaw gateway install`.
+- **Remote**: the app connects to a Gateway over SSH/Tailscale and never starts
+  a local process.
+  The app starts the local **node host service** so the remote Gateway can reach this Mac.
+  The app does not spawn the Gateway as a child process.
+
+## Launchd control
+
+The app manages a per‑user LaunchAgent labeled `ai.openclaw.gateway`
+(or `ai.openclaw.<profile>` when using `--profile`/`OPENCLAW_PROFILE`; legacy `com.openclaw.*` still unloads).
+
+```bash
+launchctl kickstart -k gui/$UID/ai.openclaw.gateway
+launchctl bootout gui/$UID/ai.openclaw.gateway
+```
+
+Replace the label with `ai.openclaw.<profile>` when running a named profile.
+
+If the LaunchAgent isn’t installed, enable it from the app or run
+`openclaw gateway install`.
+
+## Node capabilities (mac)
+
+The macOS app presents itself as a node. Common commands:
+
+- Canvas: `canvas.present`, `canvas.navigate`, `canvas.eval`, `canvas.snapshot`, `canvas.a2ui.*`
+- Camera: `camera.snap`, `camera.clip`
 - Screen: `screen.record`
-- System: `system.run` (shell) and `system.notify`
+- System: `system.run`, `system.notify`
 
-### Permission advertising
-- Nodes include a `permissions` map in hello/pairing.
-- The Gateway surfaces it via `node.list` / `node.describe` so agents can decide what to run.
+The node reports a `permissions` map so agents can decide what’s allowed.
 
-## CLI (`clawdbot`)
-- The **only** CLI is `clawdbot` (TS/bun). There is no `clawdbot-mac` helper.
-- For mac‑specific actions, the CLI uses `node.invoke`:
-  - `clawdbot canvas present|navigate|eval|snapshot|a2ui push|a2ui reset`
-  - `clawdbot nodes run --node <id> -- <command...>`
-  - `clawdbot nodes notify --node <id> --title ...`
+Node service + app IPC:
 
-## Onboarding
-- Install CLI (symlink) → Permissions checklist → Test notification → Done.
-- Remote mode skips local gateway/CLI steps.
-- Selecting Local auto-enables the bundled Gateway via launchd (unless “Attach only” debug mode is enabled).
+- When the headless node host service is running (remote mode), it connects to the Gateway WS as a node.
+- `system.run` executes in the macOS app (UI/TCC context) over a local Unix socket; prompts + output stay in-app.
 
-## Deep links (URL scheme)
+Diagram (SCI):
 
-Clawdbot (the macOS app) registers a URL scheme for triggering local actions from anywhere (browser, Shortcuts, CLI, etc.).
+```
+Gateway -> Node Service (WS)
+                 |  IPC (UDS + token + HMAC + TTL)
+                 v
+             Mac App (UI + TCC + system.run)
+```
 
-Scheme:
-- `clawdbot://…`
+## Exec approvals (system.run)
 
-### `clawdbot://agent`
+`system.run` is controlled by **Exec approvals** in the macOS app (Settings → Exec approvals).
+Security + ask + allowlist are stored locally on the Mac in:
 
-Triggers a Gateway `agent` request (same machinery as WebChat/agent runs).
+```
+~/.openclaw/exec-approvals.json
+```
 
 Example:
 
+```json
+{
+  "version": 1,
+  "defaults": {
+    "security": "deny",
+    "ask": "on-miss"
+  },
+  "agents": {
+    "main": {
+      "security": "allowlist",
+      "ask": "on-miss",
+      "allowlist": [{ "pattern": "/opt/homebrew/bin/rg" }]
+    }
+  }
+}
+```
+
+Notes:
+
+- `allowlist` entries are glob patterns for resolved binary paths.
+- Raw shell command text that contains shell control or expansion syntax (`&&`, `||`, `;`, `|`, `` ` ``, `$`, `<`, `>`, `(`, `)`) is treated as an allowlist miss and requires explicit approval (or allowlisting the shell binary).
+- Choosing “Always Allow” in the prompt adds that command to the allowlist.
+- `system.run` environment overrides are filtered (drops `PATH`, `DYLD_*`, `LD_*`, `NODE_OPTIONS`, `PYTHON*`, `PERL*`, `RUBYOPT`, `SHELLOPTS`, `PS4`) and then merged with the app’s environment.
+- For shell wrappers (`bash|sh|zsh ... -c/-lc`), request-scoped environment overrides are reduced to a small explicit allowlist (`TERM`, `LANG`, `LC_*`, `COLORTERM`, `NO_COLOR`, `FORCE_COLOR`).
+- For allow-always decisions in allowlist mode, known dispatch wrappers (`env`, `nice`, `nohup`, `stdbuf`, `timeout`) persist inner executable paths instead of wrapper paths. If unwrapping is not safe, no allowlist entry is persisted automatically.
+
+## Deep links
+
+The app registers the `openclaw://` URL scheme for local actions.
+
+### `openclaw://agent`
+
+Triggers a Gateway `agent` request.
+
 ```bash
-open 'clawdbot://agent?message=Hello%20from%20deep%20link'
+open 'openclaw://agent?message=Hello%20from%20deep%20link'
 ```
 
 Query parameters:
-- `message` (required): the agent prompt (URL-encoded).
-- `sessionKey` (optional): explicit session key to use.
-- `thinking` (optional): thinking hint (e.g. `low`; omit for default).
-- `deliver` (optional): `true|false` (default: false).
-- `to` / `provider` (optional): forwarded to the Gateway `agent` method (only meaningful with `deliver=true`).
-- `timeoutSeconds` (optional): timeout hint forwarded to the Gateway.
-- `key` (optional): unattended mode key (see below).
 
-Safety/guardrails:
-- Always enabled.
-- Without a `key` query param, the app will prompt for confirmation before invoking the agent.
-- With `key=<value>`, Clawdbot runs without prompting (intended for personal automations).
-  - The current key is shown in Debug Settings and stored locally in UserDefaults.
+- `message` (required)
+- `sessionKey` (optional)
+- `thinking` (optional)
+- `deliver` / `to` / `channel` (optional)
+- `timeoutSeconds` (optional)
+- `key` (optional unattended mode key)
 
-Notes:
-- In local mode, Clawdbot will start the local Gateway if needed before issuing the request.
-- In remote mode, Clawdbot will use the configured remote tunnel/endpoint.
+Safety:
+
+- Without `key`, the app prompts for confirmation.
+- Without `key`, the app enforces a short message limit for the confirmation prompt and ignores `deliver` / `to` / `channel`.
+- With a valid `key`, the run is unattended (intended for personal automations).
+
+## Onboarding flow (typical)
+
+1. Install and launch **OpenClaw.app**.
+2. Complete the permissions checklist (TCC prompts).
+3. Ensure **Local** mode is active and the Gateway is running.
+4. Install the CLI if you want terminal access.
+
+## State dir placement (macOS)
+
+Avoid putting your OpenClaw state dir in iCloud or other cloud-synced folders.
+Sync-backed paths can add latency and occasionally cause file-lock/sync races for
+sessions and credentials.
+
+Prefer a local non-synced state path such as:
+
+```bash
+OPENCLAW_STATE_DIR=~/.openclaw
+```
+
+If `openclaw doctor` detects state under:
+
+- `~/Library/Mobile Documents/com~apple~CloudDocs/...`
+- `~/Library/CloudStorage/...`
+
+it will warn and recommend moving back to a local path.
 
 ## Build & dev workflow (native)
-- `cd apps/macos && swift build` (debug) / `swift build -c release`.
-- Run app for dev: `swift run Clawdbot` (or Xcode scheme).
-- Package app + CLI: [`scripts/package-mac-app.sh`](https://github.com/clawdbot/clawdbot/blob/main/scripts/package-mac-app.sh) (builds bun CLI + gateway).
-- Tests: add Swift Testing suites under `apps/macos/Tests`.
 
-## Open questions / decisions
-- Should `system.run` support streaming stdout/stderr or keep buffered responses only?
-- Should we allow node‑side permission prompts, or always require explicit app UI action?
+- `cd apps/macos && swift build`
+- `swift run OpenClaw` (or Xcode)
+- Package app: `scripts/package-mac-app.sh`
+
+## Debug gateway connectivity (macOS CLI)
+
+Use the debug CLI to exercise the same Gateway WebSocket handshake and discovery
+logic that the macOS app uses, without launching the app.
+
+```bash
+cd apps/macos
+swift run openclaw-mac connect --json
+swift run openclaw-mac discover --timeout 3000 --json
+```
+
+Connect options:
+
+- `--url <ws://host:port>`: override config
+- `--mode <local|remote>`: resolve from config (default: config or local)
+- `--probe`: force a fresh health probe
+- `--timeout <ms>`: request timeout (default: `15000`)
+- `--json`: structured output for diffing
+
+Discovery options:
+
+- `--include-local`: include gateways that would be filtered as “local”
+- `--timeout <ms>`: overall discovery window (default: `2000`)
+- `--json`: structured output for diffing
+
+Tip: compare against `openclaw gateway discover --json` to see whether the
+macOS app’s discovery pipeline (NWBrowser + tailnet DNS‑SD fallback) differs from
+the Node CLI’s `dns-sd` based discovery.
+
+## Remote connection plumbing (SSH tunnels)
+
+When the macOS app runs in **Remote** mode, it opens an SSH tunnel so local UI
+components can talk to a remote Gateway as if it were on localhost.
+
+### Control tunnel (Gateway WebSocket port)
+
+- **Purpose:** health checks, status, Web Chat, config, and other control-plane calls.
+- **Local port:** the Gateway port (default `18789`), always stable.
+- **Remote port:** the same Gateway port on the remote host.
+- **Behavior:** no random local port; the app reuses an existing healthy tunnel
+  or restarts it if needed.
+- **SSH shape:** `ssh -N -L <local>:127.0.0.1:<remote>` with BatchMode +
+  ExitOnForwardFailure + keepalive options.
+- **IP reporting:** the SSH tunnel uses loopback, so the gateway will see the node
+  IP as `127.0.0.1`. Use **Direct (ws/wss)** transport if you want the real client
+  IP to appear (see [macOS remote access](/platforms/mac/remote)).
+
+For setup steps, see [macOS remote access](/platforms/mac/remote). For protocol
+details, see [Gateway protocol](/gateway/protocol).
+
+## Related docs
+
+- [Gateway runbook](/gateway)
+- [Gateway (macOS)](/platforms/mac/bundled-gateway)
+- [macOS permissions](/platforms/mac/permissions)
+- [Canvas](/platforms/mac/canvas)

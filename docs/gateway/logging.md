@@ -3,25 +3,34 @@ summary: "Logging surfaces, file logs, WS log styles, and console formatting"
 read_when:
   - Changing logging output or formats
   - Debugging CLI or gateway output
+title: "Logging"
 ---
 
 # Logging
 
-Clawdbot has two log “surfaces”:
+For a user-facing overview (CLI + Control UI + config), see [/logging](/logging).
+
+OpenClaw has two log “surfaces”:
 
 - **Console output** (what you see in the terminal / Debug UI).
-- **File logs** (JSON lines) written by the internal logger.
+- **File logs** (JSON lines) written by the gateway logger.
 
 ## File-based logger
 
-Clawdbot uses a file logger backed by `tslog` ([`src/logging.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/logging.ts)).
-
-- Default rolling log file is under `/tmp/clawdbot/` (one file per day): `clawdbot-YYYY-MM-DD.log`
-- The log file path and level can be configured via `~/.clawdbot/clawdbot.json`:
+- Default rolling log file is under `/tmp/openclaw/` (one file per day): `openclaw-YYYY-MM-DD.log`
+  - Date uses the gateway host's local timezone.
+- The log file path and level can be configured via `~/.openclaw/openclaw.json`:
   - `logging.file`
   - `logging.level`
 
 The file format is one JSON object per line.
+
+The Control UI Logs tab tails this file via the gateway (`logs.tail`).
+CLI can do the same:
+
+```bash
+openclaw logs --follow
+```
 
 **Verbose vs. log levels**
 
@@ -33,9 +42,8 @@ The file format is one JSON object per line.
 
 ## Console capture
 
-The CLI entrypoint enables console capture ([`src/index.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/index.ts) calls `enableConsoleCapture()`).
-That means every `console.log/info/warn/error/debug/trace` is also written into the file logs,
-while still behaving normally on stdout/stderr.
+The CLI captures `console.log/info/warn/error/debug/trace` and writes them to file logs,
+while still printing to stdout/stderr.
 
 You can tune console verbosity independently via:
 
@@ -44,7 +52,7 @@ You can tune console verbosity independently via:
 
 ## Tool summary redaction
 
-Verbose tool summaries (e.g. `🛠️ bash: ...`) can mask sensitive tokens before they hit the
+Verbose tool summaries (e.g. `🛠️ Exec: ...`) can mask sensitive tokens before they hit the
 console stream. This is **tools-only** and does not alter file logs.
 
 - `logging.redactSensitive`: `off` | `tools` (default: `tools`)
@@ -65,7 +73,7 @@ The gateway prints WebSocket protocol logs in two modes:
 
 ### WS log style
 
-`clawdbot gateway` supports a per-gateway style switch:
+`openclaw gateway` supports a per-gateway style switch:
 
 - `--ws-log auto` (default): normal mode is optimized; verbose mode uses compact output
 - `--ws-log compact`: compact output (paired request/response) when verbose
@@ -76,31 +84,26 @@ Examples:
 
 ```bash
 # optimized (only errors/slow)
-clawdbot gateway
+openclaw gateway
 
 # show all WS traffic (paired)
-clawdbot gateway --verbose --ws-log compact
+openclaw gateway --verbose --ws-log compact
 
 # show all WS traffic (full meta)
-clawdbot gateway --verbose --ws-log full
+openclaw gateway --verbose --ws-log full
 ```
 
 ## Console formatting (subsystem logging)
 
-Clawdbot formats console logs via a small wrapper on top of the existing stack:
-
-- **tslog** for structured file logs ([`src/logging.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/logging.ts))
-- **chalk** for colors ([`src/globals.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/globals.ts))
-
 The console formatter is **TTY-aware** and prints consistent, prefixed lines.
-Subsystem loggers are created via `createSubsystemLogger("gateway")`.
+Subsystem loggers keep output grouped and scannable.
 
 Behavior:
 
 - **Subsystem prefixes** on every line (e.g. `[gateway]`, `[canvas]`, `[tailscale]`)
 - **Subsystem colors** (stable per subsystem) plus level coloring
 - **Color when output is a TTY or the environment looks like a rich terminal** (`TERM`/`COLORTERM`/`TERM_PROGRAM`), respects `NO_COLOR`
-- **Shortened subsystem prefixes**: drops leading `gateway/` + `providers/`, keeps last 2 segments (e.g. `whatsapp/outbound`)
+- **Shortened subsystem prefixes**: drops leading `gateway/` + `channels/`, keeps last 2 segments (e.g. `whatsapp/outbound`)
 - **Sub-loggers by subsystem** (auto prefix + structured field `{ subsystem }`)
 - **`logRaw()`** for QR/UX output (no prefix, no formatting)
 - **Console styles** (e.g. `pretty | compact | json`)

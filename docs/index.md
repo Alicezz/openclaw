@@ -1,215 +1,192 @@
 ---
-summary: "Top-level overview of Clawdbot, features, and purpose"
+summary: "OpenClaw is a multi-channel gateway for AI agents that runs on any OS."
 read_when:
-  - Introducing Clawdbot to newcomers
+  - Introducing OpenClaw to newcomers
+title: "OpenClaw"
 ---
-# CLAWDBOT 🦞
 
-> *"EXFOLIATE! EXFOLIATE!"* — A space lobster, probably
-
-<p align="center">
-  <img src="whatsapp-clawd.jpg" alt="CLAWDBOT" width="420" />
-</p>
+# OpenClaw 🦞
 
 <p align="center">
-  <strong>Any OS + WhatsApp/Telegram/Discord/iMessage gateway for AI agents (Pi).</strong><br />
-  Send a message, get an agent response — from your pocket.
+    <img
+        src="/assets/openclaw-logo-text-dark.png"
+        alt="OpenClaw"
+        width="500"
+        class="dark:hidden"
+    />
+    <img
+        src="/assets/openclaw-logo-text.png"
+        alt="OpenClaw"
+        width="500"
+        class="hidden dark:block"
+    />
 </p>
+
+> _"EXFOLIATE! EXFOLIATE!"_ — A space lobster, probably
 
 <p align="center">
-  <a href="https://github.com/clawdbot/clawdbot">GitHub</a> ·
-  <a href="https://github.com/clawdbot/clawdbot/releases">Releases</a> ·
-  <a href="https://docs.clawd.bot">Docs</a> ·
-  <a href="https://docs.clawd.bot/start/clawd">Clawd setup</a>
+  <strong>Any OS gateway for AI agents across WhatsApp, Telegram, Discord, iMessage, and more.</strong><br />
+  Send a message, get an agent response from your pocket. Plugins add Mattermost and more.
 </p>
 
-CLAWDBOT bridges WhatsApp (via WhatsApp Web / Baileys), Telegram (Bot API / grammY), Discord (Bot API / discord.js), and iMessage (imsg CLI) to coding agents like [Pi](https://github.com/badlogic/pi-mono).
-It’s built for [Clawd](https://clawd.me), a space lobster who needed a TARDIS.
+<Columns>
+  <Card title="Get Started" href="/start/getting-started" icon="rocket">
+    Install OpenClaw and bring up the Gateway in minutes.
+  </Card>
+  <Card title="Run the Wizard" href="/start/wizard" icon="sparkles">
+    Guided setup with `openclaw onboard` and pairing flows.
+  </Card>
+  <Card title="Open the Control UI" href="/web/control-ui" icon="layout-dashboard">
+    Launch the browser dashboard for chat, config, and sessions.
+  </Card>
+</Columns>
 
-## Start here
+## What is OpenClaw?
 
-- **New install from zero:** https://docs.clawd.bot/start/getting-started
-- **Guided setup (recommended):** https://docs.clawd.bot/start/wizard (`clawdbot onboard`)
-- **Open the dashboard (local Gateway):** http://127.0.0.1:18789/ (or http://localhost:18789/)
+OpenClaw is a **self-hosted gateway** that connects your favorite chat apps — WhatsApp, Telegram, Discord, iMessage, and more — to AI coding agents like Pi. You run a single Gateway process on your own machine (or a server), and it becomes the bridge between your messaging apps and an always-available AI assistant.
 
-If the Gateway is running on the same computer, that link opens the browser Control UI
-immediately. If it fails, start the Gateway first: `clawdbot gateway`.
+**Who is it for?** Developers and power users who want a personal AI assistant they can message from anywhere — without giving up control of their data or relying on a hosted service.
 
-## Dashboard (browser Control UI)
+**What makes it different?**
 
-The dashboard is the browser Control UI for chat, config, nodes, sessions, and more.
-Local default: http://127.0.0.1:18789/
-Remote access: https://docs.clawd.bot/web and https://docs.clawd.bot/gateway/tailscale
+- **Self-hosted**: runs on your hardware, your rules
+- **Multi-channel**: one Gateway serves WhatsApp, Telegram, Discord, and more simultaneously
+- **Agent-native**: built for coding agents with tool use, sessions, memory, and multi-agent routing
+- **Open source**: MIT licensed, community-driven
+
+**What do you need?** Node 24 (recommended), or Node 22 LTS (`22.16+`) for compatibility, an API key from your chosen provider, and 5 minutes. For best quality and security, use the strongest latest-generation model available.
 
 ## How it works
 
-```
-WhatsApp / Telegram / Discord
-        │
-        ▼
-  ┌───────────────────────────┐
-  │          Gateway          │  ws://127.0.0.1:18789 (loopback-only)
-  │     (single source)       │  tcp://0.0.0.0:18790 (Bridge)
-  │                           │  http://<gateway-host>:18793
-  │                           │    /__clawdbot__/canvas/ (Canvas host)
-  └───────────┬───────────────┘
-              │
-              ├─ Pi agent (RPC)
-              ├─ CLI (clawdbot …)
-              ├─ Chat UI (SwiftUI)
-              ├─ macOS app (Clawdbot.app)
-              ├─ iOS node via Bridge + pairing
-              └─ Android node via Bridge + pairing
+```mermaid
+flowchart LR
+  A["Chat apps + plugins"] --> B["Gateway"]
+  B --> C["Pi agent"]
+  B --> D["CLI"]
+  B --> E["Web Control UI"]
+  B --> F["macOS app"]
+  B --> G["iOS and Android nodes"]
 ```
 
-Most operations flow through the **Gateway** (`clawdbot gateway`), a single long-running process that owns provider connections and the WebSocket control plane.
+The Gateway is the single source of truth for sessions, routing, and channel connections.
 
-## Network model
+## Key capabilities
 
-- **One Gateway per host**: it is the only process allowed to own the WhatsApp Web session.
-- **Loopback-first**: Gateway WS defaults to `ws://127.0.0.1:18789`.
-  - For Tailnet access, run `clawdbot gateway --bind tailnet --token ...` (token is required for non-loopback binds).
-- **Bridge for nodes**: optional LAN/tailnet-facing bridge on `tcp://0.0.0.0:18790` for paired nodes (Bonjour-discoverable).
-- **Canvas host**: HTTP file server on `canvasHost.port` (default `18793`), serving `/__clawdbot__/canvas/` for node WebViews; see [`docs/configuration.md`](https://docs.clawd.bot/gateway/configuration) (`canvasHost`).
-- **Remote use**: SSH tunnel or tailnet/VPN; see [`docs/remote.md`](https://docs.clawd.bot/gateway/remote) and [`docs/discovery.md`](https://docs.clawd.bot/gateway/discovery).
-
-## Features (high level)
-
-- 📱 **WhatsApp Integration** — Uses Baileys for WhatsApp Web protocol
-- ✈️ **Telegram Bot** — DMs + groups via grammY
-- 🎮 **Discord Bot** — DMs + guild channels via discord.js
-- 💬 **iMessage** — Local imsg CLI integration (macOS)
-- 🤖 **Agent bridge** — Pi (RPC mode) with tool streaming
-- 🧠 **Multi-agent routing** — Route provider accounts/peers to isolated agents (workspace + per-agent sessions)
-- 🔐 **Subscription auth** — Anthropic (Claude Pro/Max) + OpenAI (ChatGPT/Codex) via OAuth
-- 💬 **Sessions** — Direct chats collapse into shared `main` (default); groups are isolated
-- 👥 **Group Chat Support** — Mention-based by default; owner can toggle `/activation always|mention`
-- 📎 **Media Support** — Send and receive images, audio, documents
-- 🎤 **Voice notes** — Optional transcription hook
-- 🖥️ **WebChat + macOS app** — Local UI + menu bar companion for ops and voice wake
-- 📱 **iOS node** — Pairs as a node and exposes a Canvas surface
-- 📱 **Android node** — Pairs as a node and exposes Canvas + Chat + Camera
-
-Note: legacy Claude/Codex/Gemini/Opencode paths have been removed; Pi is the only coding-agent path.
+<Columns>
+  <Card title="Multi-channel gateway" icon="network">
+    WhatsApp, Telegram, Discord, and iMessage with a single Gateway process.
+  </Card>
+  <Card title="Plugin channels" icon="plug">
+    Add Mattermost and more with extension packages.
+  </Card>
+  <Card title="Multi-agent routing" icon="route">
+    Isolated sessions per agent, workspace, or sender.
+  </Card>
+  <Card title="Media support" icon="image">
+    Send and receive images, audio, and documents.
+  </Card>
+  <Card title="Web Control UI" icon="monitor">
+    Browser dashboard for chat, config, sessions, and nodes.
+  </Card>
+  <Card title="Mobile nodes" icon="smartphone">
+    Pair iOS and Android nodes for Canvas, camera, and voice-enabled workflows.
+  </Card>
+</Columns>
 
 ## Quick start
 
-Runtime requirement: **Node ≥ 22**.
+<Steps>
+  <Step title="Install OpenClaw">
+    ```bash
+    npm install -g openclaw@latest
+    ```
+  </Step>
+  <Step title="Onboard and install the service">
+    ```bash
+    openclaw onboard --install-daemon
+    ```
+  </Step>
+  <Step title="Pair WhatsApp and start the Gateway">
+    ```bash
+    openclaw channels login
+    openclaw gateway --port 18789
+    ```
+  </Step>
+</Steps>
 
-```bash
-# From source (recommended while the npm package is still settling)
-pnpm install
-pnpm build
-pnpm link --global
+Need the full install and dev setup? See [Quick start](/start/quickstart).
 
-# Pair WhatsApp Web (shows QR)
-clawdbot login
+## Dashboard
 
-# Run the Gateway (leave running)
-clawdbot gateway --port 18789
-```
+Open the browser Control UI after the Gateway starts.
 
-Multi-instance quickstart (optional):
+- Local default: [http://127.0.0.1:18789/](http://127.0.0.1:18789/)
+- Remote access: [Web surfaces](/web) and [Tailscale](/gateway/tailscale)
 
-```bash
-CLAWDBOT_CONFIG_PATH=~/.clawdbot/a.json \
-CLAWDBOT_STATE_DIR=~/.clawdbot-a \
-clawdbot gateway --port 19001
-```
-
-Send a test message (requires a running Gateway):
-
-```bash
-clawdbot send --to +15555550123 --message "Hello from CLAWDBOT"
-```
+<p align="center">
+  <img src="/whatsapp-openclaw.jpg" alt="OpenClaw" width="420" />
+</p>
 
 ## Configuration (optional)
 
-Config lives at `~/.clawdbot/clawdbot.json`.
+Config lives at `~/.openclaw/openclaw.json`.
 
-- If you **do nothing**, CLAWDBOT uses the bundled Pi binary in RPC mode with per-sender sessions.
-- If you want to lock it down, start with `whatsapp.allowFrom` and (for groups) mention rules.
+- If you **do nothing**, OpenClaw uses the bundled Pi binary in RPC mode with per-sender sessions.
+- If you want to lock it down, start with `channels.whatsapp.allowFrom` and (for groups) mention rules.
 
 Example:
 
 ```json5
 {
-  whatsapp: {
-    allowFrom: ["+15555550123"],
-    groups: { "*": { requireMention: true } }
+  channels: {
+    whatsapp: {
+      allowFrom: ["+15555550123"],
+      groups: { "*": { requireMention: true } },
+    },
   },
-  routing: { groupChat: { mentionPatterns: ["@clawd"] } }
+  messages: { groupChat: { mentionPatterns: ["@openclaw"] } },
 }
 ```
 
-## Docs
+## Start here
 
-- Start here:
-  - [Docs hubs (all pages linked)](https://docs.clawd.bot/start/hubs)
-  - [FAQ](https://docs.clawd.bot/start/faq) ← *common questions answered*
-  - [Configuration](https://docs.clawd.bot/gateway/configuration)
-  - [Slash commands](https://docs.clawd.bot/tools/slash-commands)
-  - [Multi-agent routing](https://docs.clawd.bot/concepts/multi-agent)
-  - [Updating / rollback](https://docs.clawd.bot/install/updating)
-  - [Pairing (DM + nodes)](https://docs.clawd.bot/start/pairing)
-  - [Nix mode](https://docs.clawd.bot/install/nix)
-  - [Clawd personal assistant setup](https://docs.clawd.bot/start/clawd)
-  - [Skills](https://docs.clawd.bot/tools/skills)
-  - [Skills config](https://docs.clawd.bot/tools/skills-config)
-  - [Workspace templates](https://docs.clawd.bot/reference/templates/AGENTS)
-  - [RPC adapters](https://docs.clawd.bot/reference/rpc)
-  - [Gateway runbook](https://docs.clawd.bot/gateway)
-  - [Nodes (iOS/Android)](https://docs.clawd.bot/nodes)
-  - [Web surfaces (Control UI)](https://docs.clawd.bot/web)
-  - [Discovery + transports](https://docs.clawd.bot/gateway/discovery)
-  - [Remote access](https://docs.clawd.bot/gateway/remote)
-- Providers and UX:
-  - [WebChat](https://docs.clawd.bot/web/webchat)
-  - [Control UI (browser)](https://docs.clawd.bot/web/control-ui)
-  - [Telegram](https://docs.clawd.bot/providers/telegram)
-  - [Discord](https://docs.clawd.bot/providers/discord)
-  - [iMessage](https://docs.clawd.bot/providers/imessage)
-  - [Groups](https://docs.clawd.bot/concepts/groups)
-  - [WhatsApp group messages](https://docs.clawd.bot/concepts/group-messages)
-  - [Media: images](https://docs.clawd.bot/nodes/images)
-  - [Media: audio](https://docs.clawd.bot/nodes/audio)
-- Companion apps:
-  - [macOS app](https://docs.clawd.bot/platforms/macos)
-  - [iOS app](https://docs.clawd.bot/platforms/ios)
-  - [Android app](https://docs.clawd.bot/platforms/android)
-  - [Windows (WSL2)](https://docs.clawd.bot/platforms/windows)
-  - [Linux app](https://docs.clawd.bot/platforms/linux)
-- Ops and safety:
-  - [Sessions](https://docs.clawd.bot/concepts/session)
-  - [Cron jobs](https://docs.clawd.bot/automation/cron-jobs)
-  - [Webhooks](https://docs.clawd.bot/automation/webhook)
-  - [Gmail hooks (Pub/Sub)](https://docs.clawd.bot/automation/gmail-pubsub)
-  - [Security](https://docs.clawd.bot/gateway/security)
-  - [Troubleshooting](https://docs.clawd.bot/gateway/troubleshooting)
+<Columns>
+  <Card title="Docs hubs" href="/start/hubs" icon="book-open">
+    All docs and guides, organized by use case.
+  </Card>
+  <Card title="Configuration" href="/gateway/configuration" icon="settings">
+    Core Gateway settings, tokens, and provider config.
+  </Card>
+  <Card title="Remote access" href="/gateway/remote" icon="globe">
+    SSH and tailnet access patterns.
+  </Card>
+  <Card title="Channels" href="/channels/telegram" icon="message-square">
+    Channel-specific setup for WhatsApp, Telegram, Discord, and more.
+  </Card>
+  <Card title="Nodes" href="/nodes" icon="smartphone">
+    iOS and Android nodes with pairing, Canvas, camera, and device actions.
+  </Card>
+  <Card title="Help" href="/help" icon="life-buoy">
+    Common fixes and troubleshooting entry point.
+  </Card>
+</Columns>
 
-## The name
+## Learn more
 
-**CLAWDBOT = CLAW + TARDIS** — because every space lobster needs a time-and-space machine.
-
----
-
-*"We're all just playing with our own prompts."* — an AI, probably high on tokens
-
-## Credits
-
-- **Peter Steinberger** ([@steipete](https://twitter.com/steipete)) — Creator, lobster whisperer
-- **Mario Zechner** ([@badlogicc](https://twitter.com/badlogicgames)) — Pi creator, security pen-tester
-- **Clawd** — The space lobster who demanded a better name
-
-## Core Contributors
-
-- **Maxim Vovshin** (@Hyaxia, 36747317+Hyaxia@users.noreply.github.com) — Blogwatcher skill
-- **Nacho Iacovino** (@nachoiacovino, nacho.iacovino@gmail.com) — Location parsing (Telegram + WhatsApp)
-
-## License
-
-MIT — Free as a lobster in the ocean 🦞
-
----
-
-*"We're all just playing with our own prompts."* — An AI, probably high on tokens
+<Columns>
+  <Card title="Full feature list" href="/concepts/features" icon="list">
+    Complete channel, routing, and media capabilities.
+  </Card>
+  <Card title="Multi-agent routing" href="/concepts/multi-agent" icon="route">
+    Workspace isolation and per-agent sessions.
+  </Card>
+  <Card title="Security" href="/gateway/security" icon="shield">
+    Tokens, allowlists, and safety controls.
+  </Card>
+  <Card title="Troubleshooting" href="/gateway/troubleshooting" icon="wrench">
+    Gateway diagnostics and common errors.
+  </Card>
+  <Card title="About and credits" href="/reference/credits" icon="info">
+    Project origins, contributors, and license.
+  </Card>
+</Columns>

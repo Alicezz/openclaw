@@ -9,6 +9,8 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from html import escape as html_escape
 from pathlib import Path
 
 
@@ -62,24 +64,131 @@ def pick_prompts(count: int) -> list[str]:
     return prompts
 
 
+def get_model_defaults(model: str) -> tuple[str, str]:
+    """Return (default_size, default_quality) for the given model."""
+    if model == "dall-e-2":
+        # quality will be ignored
+        return ("1024x1024", "standard")
+    elif model == "dall-e-3":
+        return ("1024x1024", "standard")
+    else:
+        # GPT image or future models
+        return ("1024x1024", "high")
+
+
+def normalize_optional_flag(
+    *,
+    model: str,
+    raw_value: str,
+    flag_name: str,
+    supported: Callable[[str], bool],
+    allowed: set[str],
+    allowed_text: str,
+    unsupported_message: str,
+    aliases: dict[str, str] | None = None,
+) -> str:
+    """Normalize a string flag, warn when unsupported, and reject invalid values."""
+    value = raw_value.strip().lower()
+    if not value:
+        return ""
+
+    if not supported(model):
+        print(unsupported_message.format(model=model), file=sys.stderr)
+        return ""
+
+    if aliases:
+        value = aliases.get(value, value)
+
+    if value not in allowed:
+        raise ValueError(
+            f"Invalid --{flag_name} '{raw_value}'. Allowed values: {allowed_text}."
+        )
+    return value
+
+
+def normalize_background(model: str, background: str) -> str:
+    """Validate --background for GPT image models."""
+    return normalize_optional_flag(
+        model=model,
+        raw_value=background,
+        flag_name="background",
+        supported=lambda candidate: candidate.startswith("gpt-image"),
+        allowed={"transparent", "opaque", "auto"},
+        allowed_text="transparent, opaque, auto",
+        unsupported_message=(
+            "Warning: --background is only supported for gpt-image models; "
+            "ignoring for '{model}'."
+        ),
+    )
+
+
+def normalize_style(model: str, style: str) -> str:
+    """Validate --style for dall-e-3."""
+    return normalize_optional_flag(
+        model=model,
+        raw_value=style,
+        flag_name="style",
+        supported=lambda candidate: candidate == "dall-e-3",
+        allowed={"vivid", "natural"},
+        allowed_text="vivid, natural",
+        unsupported_message=(
+            "Warning: --style is only supported for dall-e-3; ignoring for '{model}'."
+        ),
+    )
+
+
+def normalize_output_format(model: str, output_format: str) -> str:
+    """Normalize output format for GPT image models and validate allowed values."""
+    return normalize_optional_flag(
+        model=model,
+        raw_value=output_format,
+        flag_name="output-format",
+        supported=lambda candidate: candidate.startswith("gpt-image"),
+        allowed={"png", "jpeg", "webp"},
+        allowed_text="png, jpeg, webp",
+        unsupported_message=(
+            "Warning: --output-format is only supported for gpt-image models; "
+            "ignoring for '{model}'."
+        ),
+        aliases={"jpg": "jpeg"},
+    )
+
+
 def request_images(
     api_key: str,
     prompt: str,
     model: str,
     size: str,
     quality: str,
+    background: str = "",
+    output_format: str = "",
+    style: str = "",
 ) -> dict:
     url = "https://api.openai.com/v1/images/generations"
-    body = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "size": size,
-            "quality": quality,
-            "n": 1,
-            "response_format": "b64_json",
-        }
-    ).encode("utf-8")
+    args = {
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "n": 1,
+    }
+
+    # Quality parameter - dall-e-2 doesn't accept this parameter
+    if model != "dall-e-2":
+        args["quality"] = quality
+
+    # Note: response_format no longer supported by OpenAI Images API
+    # dall-e models now return URLs by default
+
+    if model.startswith("gpt-image"):
+        if background:
+            args["background"] = background
+        if output_format:
+            args["output_format"] = output_format
+
+    if model == "dall-e-3" and style:
+        args["style"] = style
+
+    body = json.dumps(args).encode("utf-8")
     req = urllib.request.Request(
         url,
         method="POST",
@@ -102,8 +211,8 @@ def write_gallery(out_dir: Path, items: list[dict]) -> None:
         [
             f"""
 <figure>
-  <a href="{it["file"]}"><img src="{it["file"]}" loading="lazy" /></a>
-  <figcaption>{it["prompt"]}</figcaption>
+  <a href="{html_escape(it["file"], quote=True)}"><img src="{html_escape(it["file"], quote=True)}" loading="lazy" /></a>
+  <figcaption>{html_escape(it["prompt"])}</figcaption>
 </figure>
 """.strip()
             for it in items
@@ -123,7 +232,7 @@ def write_gallery(out_dir: Path, items: list[dict]) -> None:
   code {{ color: #9cd1ff; }}
 </style>
 <h1>openai-image-gen</h1>
-<p>Output: <code>{out_dir.as_posix()}</code></p>
+<p>Output: <code>{html_escape(out_dir.as_posix())}</code></p>
 <div class="grid">
 {thumbs}
 </div>
@@ -136,8 +245,11 @@ def main() -> int:
     ap.add_argument("--prompt", help="Single prompt. If omitted, random prompts are generated.")
     ap.add_argument("--count", type=int, default=8, help="How many images to generate.")
     ap.add_argument("--model", default="gpt-image-1", help="Image model id.")
-    ap.add_argument("--size", default="1024x1024", help="Image size (e.g. 1024x1024, 1536x1024).")
-    ap.add_argument("--quality", default="high", help="Image quality (varies by model).")
+    ap.add_argument("--size", default="", help="Image size (e.g. 1024x1024, 1536x1024). Defaults based on model if not specified.")
+    ap.add_argument("--quality", default="", help="Image quality (e.g. high, standard). Defaults based on model if not specified.")
+    ap.add_argument("--background", default="", help="Background transparency (GPT models only): transparent, opaque, or auto.")
+    ap.add_argument("--output-format", default="", help="Output format (GPT models only): png, jpeg, or webp.")
+    ap.add_argument("--style", default="", help="Image style (dall-e-3 only): vivid or natural.")
     ap.add_argument("--out-dir", default="", help="Output directory (default: ./tmp/openai-image-gen-<ts>).")
     args = ap.parse_args()
 
@@ -146,21 +258,64 @@ def main() -> int:
         print("Missing OPENAI_API_KEY", file=sys.stderr)
         return 2
 
+    # Apply model-specific defaults if not specified
+    default_size, default_quality = get_model_defaults(args.model)
+    size = args.size or default_size
+    quality = args.quality or default_quality
+
+    count = args.count
+    if args.model == "dall-e-3" and count > 1:
+        print(f"Warning: dall-e-3 only supports generating 1 image at a time. Reducing count from {count} to 1.", file=sys.stderr)
+        count = 1
+
     out_dir = Path(args.out_dir).expanduser() if args.out_dir else default_out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    prompts = [args.prompt] * args.count if args.prompt else pick_prompts(args.count)
+    prompts = [args.prompt] * count if args.prompt else pick_prompts(count)
+
+    try:
+        normalized_background = normalize_background(args.model, args.background)
+        normalized_style = normalize_style(args.model, args.style)
+        normalized_output_format = normalize_output_format(args.model, args.output_format)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+    # Determine file extension based on output format
+    if args.model.startswith("gpt-image") and normalized_output_format:
+        file_ext = normalized_output_format
+    else:
+        file_ext = "png"
 
     items: list[dict] = []
     for idx, prompt in enumerate(prompts, start=1):
         print(f"[{idx}/{len(prompts)}] {prompt}")
-        res = request_images(api_key, prompt, args.model, args.size, args.quality)
-        b64 = res.get("data", [{}])[0].get("b64_json")
-        if not b64:
+        res = request_images(
+            api_key,
+            prompt,
+            args.model,
+            size,
+            quality,
+            normalized_background,
+            normalized_output_format,
+            normalized_style,
+        )
+        data = res.get("data", [{}])[0]
+        image_b64 = data.get("b64_json")
+        image_url = data.get("url")
+        if not image_b64 and not image_url:
             raise RuntimeError(f"Unexpected response: {json.dumps(res)[:400]}")
-        png = base64.b64decode(b64)
-        filename = f"{idx:03d}-{slugify(prompt)[:40]}.png"
-        (out_dir / filename).write_bytes(png)
+
+        filename = f"{idx:03d}-{slugify(prompt)[:40]}.{file_ext}"
+        filepath = out_dir / filename
+        if image_b64:
+            filepath.write_bytes(base64.b64decode(image_b64))
+        else:
+            try:
+                urllib.request.urlretrieve(image_url, filepath)
+            except urllib.error.URLError as e:
+                raise RuntimeError(f"Failed to download image from {image_url}: {e}") from e
+
         items.append({"prompt": prompt, "file": filename})
 
     (out_dir / "prompts.json").write_text(json.dumps(items, indent=2), encoding="utf-8")

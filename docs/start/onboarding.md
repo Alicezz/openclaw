@@ -1,197 +1,91 @@
 ---
-summary: "Planned first-run onboarding flow for Clawdbot (local vs remote, OAuth auth, workspace bootstrap ritual)"
+summary: "First-run setup flow for OpenClaw (macOS app)"
 read_when:
   - Designing the macOS onboarding assistant
-  - Implementing Anthropic/OpenAI auth or identity setup
+  - Implementing auth or identity setup
+title: "Onboarding (macOS App)"
+sidebarTitle: "Onboarding: macOS App"
 ---
-# Onboarding (macOS app)
 
-This doc describes the intended **first-run onboarding** for Clawdbot. The goal is a good “day 0” experience: pick where the Gateway runs, bind subscription auth (Anthropic or OpenAI) for the embedded agent runtime, and then let the **agent bootstrap itself** via a first-run ritual in the workspace.
+# Onboarding (macOS App)
 
-## Page order (high level)
+This doc describes the **current** first‑run setup flow. The goal is a
+smooth “day 0” experience: pick where the Gateway runs, connect auth, run the
+wizard, and let the agent bootstrap itself.
+For a general overview of onboarding paths, see [Onboarding Overview](/start/onboarding-overview).
 
-1) **Local vs Remote**
-2) **(Local only)** Connect subscription auth (Anthropic / OpenAI OAuth) — optional, but recommended
-3) **Connect Gmail (optional)** — run `clawdbot hooks gmail setup` to configure Pub/Sub hooks
-4) **Onboarding chat** — dedicated session where the agent introduces itself and guides setup
+<Steps>
+<Step title="Approve macOS warning">
+<Frame>
+<img src="/assets/macos-onboarding/01-macos-warning.jpeg" alt="" />
+</Frame>
+</Step>
+<Step title="Approve find local networks">
+<Frame>
+<img src="/assets/macos-onboarding/02-local-networks.jpeg" alt="" />
+</Frame>
+</Step>
+<Step title="Welcome and security notice">
+<Frame caption="Read the security notice displayed and decide accordingly">
+<img src="/assets/macos-onboarding/03-security-notice.png" alt="" />
+</Frame>
 
-## 1) Local vs Remote
+Security trust model:
 
-First question: where does the **Gateway** run?
+- By default, OpenClaw is a personal agent: one trusted operator boundary.
+- Shared/multi-user setups require lock-down (split trust boundaries, keep tool access minimal, and follow [Security](/gateway/security)).
+- Local onboarding now defaults new configs to `tools.profile: "coding"` so fresh local setups keep filesystem/runtime tools without forcing the unrestricted `full` profile.
+- If hooks/webhooks or other untrusted content feeds are enabled, use a strong modern model tier and keep strict tool policy/sandboxing.
 
-- **Local (this Mac):** onboarding can run OAuth flows and write OAuth credentials locally.
-- **Remote (over SSH/tailnet):** onboarding must not run OAuth locally, because credentials must exist on the **gateway host**.
+</Step>
+<Step title="Local vs Remote">
+<Frame>
+<img src="/assets/macos-onboarding/04-choose-gateway.png" alt="" />
+</Frame>
 
-Gateway auth tip:
-- If you only use Clawdbot on this Mac (loopback gateway), keep auth **Off**.
-- Use **Token** for multi-machine access or non-loopback binds.
+Where does the **Gateway** run?
 
-Implementation note (2025-12-19): in local mode, the macOS app bundles the Gateway and enables it via a per-user launchd LaunchAgent (no global npm install/Node requirement for the user).
+- **This Mac (Local only):** onboarding can configure auth and write credentials
+  locally.
+- **Remote (over SSH/Tailnet):** onboarding does **not** configure local auth;
+  credentials must exist on the gateway host.
+- **Configure later:** skip setup and leave the app unconfigured.
 
-## 2) Local-only: Connect subscription auth (Anthropic / OpenAI OAuth)
+<Tip>
+**Gateway auth tip:**
 
-This is the “bind Clawdbot to subscription auth” step. It is explicitly the **Anthropic (Claude Pro/Max)** or **OpenAI (ChatGPT/Codex)** OAuth flow, not a generic “login”.
+- The wizard now generates a **token** even for loopback, so local WS clients must authenticate.
+- If you disable auth, any local process can connect; use that only on fully trusted machines.
+- Use a **token** for multi‑machine access or non‑loopback binds.
 
-### Recommended: OAuth (Anthropic)
+</Tip>
+</Step>
+<Step title="Permissions">
+<Frame caption="Choose what permissions do you want to give OpenClaw">
+<img src="/assets/macos-onboarding/05-permissions.png" alt="" />
+</Frame>
 
-The macOS app should:
-- Start the Anthropic OAuth (PKCE) flow in the user’s browser.
-- Ask the user to paste the `code#state` value.
-- Exchange it for tokens and write credentials to:
-  - `~/.clawdbot/credentials/oauth.json` (file mode `0600`, directory mode `0700`)
+Onboarding requests TCC permissions needed for:
 
-Why this location matters: it’s the Clawdbot-owned OAuth store.
-Clawdbot also imports `oauth.json` into the agent auth profile store (`~/.clawdbot/agents/<agentId>/agent/auth-profiles.json`) on first use.
+- Automation (AppleScript)
+- Notifications
+- Accessibility
+- Screen Recording
+- Microphone
+- Speech Recognition
+- Camera
+- Location
 
-### Recommended: OAuth (OpenAI Codex)
-
-The macOS app should:
-- Start the OpenAI Codex OAuth (PKCE) flow in the user’s browser.
-- Auto-capture the callback on `http://127.0.0.1:1455/auth/callback` when possible.
-- If the callback fails, prompt the user to paste the redirect URL or code.
-- Store credentials in `~/.clawdbot/credentials/oauth.json` (same OAuth store as Anthropic).
-- Set `agent.model` to `openai-codex/gpt-5.2` when the model is unset or `openai/*`.
-
-### Alternative: API key (instructions only)
-
-Offer an “API key” option, but for now it is **instructions only**:
-- Get an Anthropic API key.
-- Provide it to Clawdbot via your preferred mechanism (env/config).
-
-Note: environment variables are often confusing when the Gateway is launched by a GUI app (launchd environment != your shell).
-
-### Model safety rule
-
-Clawdbot should **always pass** `--model` when invoking the embedded agent (don’t rely on defaults).
-
-Example (CLI):
-
-```bash
-clawdbot agent --mode rpc --model anthropic/claude-opus-4-5 "<message>"
-```
-
-If the user skips auth, onboarding should be clear: the agent likely won’t respond until auth is configured.
-
-## 4) Onboarding chat (dedicated session)
-
-The onboarding flow now embeds the SwiftUI chat view directly. It uses a **special session key**
-(`onboarding`) so the “newborn agent” ritual stays separate from the main chat.
-
-This onboarding chat is where the agent:
-- does the BOOTSTRAP.md identity ritual (one question at a time)
-- visits **soul.md** with the user and writes `SOUL.md` (values, tone, boundaries)
-- asks how the user wants to talk (web-only / WhatsApp / Telegram)
-- guides linking steps (including showing a QR inline for WhatsApp via the `whatsapp_login` tool)
-
-If the workspace bootstrap is already complete (BOOTSTRAP.md removed), the onboarding chat step is skipped.
-
-## 2.5) Optional: Connect Gmail
-
-The macOS onboarding includes an optional Gmail step. It runs:
-
-```bash
-clawdbot hooks gmail setup --account you@gmail.com
-```
-
-This writes the full `hooks.gmail` config, installs `gcloud` / `gog` / `tailscale`
-via Homebrew if needed, and configures the Pub/Sub push endpoint. After setup,
-restart the gateway so the internal Gmail watcher starts.
-
-Once setup is complete, the user can switch to the normal chat (`main`) via the menu bar panel.
-
-## 5) Agent bootstrap ritual (outside onboarding)
-
-We no longer collect identity in the onboarding wizard. Instead, the **first agent run** performs a playful bootstrap ritual using files in the workspace:
-
-- Workspace is created implicitly (default `~/clawd`, configurable via `agent.workspace`) when local is selected,
-  but only if the folder is empty or already contains `AGENTS.md`.
-- Files are seeded: `AGENTS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`.
-- `BOOTSTRAP.md` tells the agent to keep it conversational:
-  - open with a cute hello
-  - ask **one question at a time** (no multi-question bombardment)
-  - offer a small set of suggestions where helpful (name, creature, emoji)
-  - wait for the user’s reply before asking the next question
-- The agent writes results to:
-  - `IDENTITY.md` (agent name, vibe/creature, emoji)
-  - `USER.md` (who the user is + how they want to be addressed)
-  - `SOUL.md` (identity, tone, boundaries — crafted from the soul.md prompt)
-  - `~/.clawdbot/clawdbot.json` (structured identity defaults)
-- After the ritual, the agent **deletes `BOOTSTRAP.md`** so it only runs once.
-
-Identity data still feeds the same defaults as before:
-
-- outbound prefix emoji (`messages.responsePrefix`)
-- group mention patterns / wake words
-- default session intro (“You are Samantha…”)
-- macOS UI labels
-
-## 6) Workspace notes (no explicit onboarding step)
-
-The workspace is created automatically as part of agent bootstrap (no dedicated onboarding screen).
-
-Recommendation: treat the workspace as the agent’s “memory” and make it a git repo (ideally private) so identity + memories are backed up:
-
-```bash
-cd ~/clawd
-git init
-git add AGENTS.md
-git commit -m "Add agent workspace"
-```
-
-Daily memory lives under `memory/` in the workspace:
-- one file per day: `memory/YYYY-MM-DD.md`
-- read today + yesterday on session start
-- keep it short (durable facts, preferences, decisions; avoid secrets)
-
-## Remote mode note (why OAuth is hidden)
-
-If the Gateway runs on another machine, OAuth credentials must be created/stored on that host (where the agent runtime runs).
-
-For now, remote onboarding should:
-- explain why OAuth isn't shown
-- point the user at the credential location (`~/.clawdbot/credentials/oauth.json`) and the auth profile store (`~/.clawdbot/agents/<agentId>/agent/auth-profiles.json`) on the gateway host
-- mention that the **bootstrap ritual happens on the gateway host** (same BOOTSTRAP/IDENTITY/USER files)
-
-### Manual credential setup
-
-On the gateway host, create `~/.clawdbot/credentials/oauth.json` with this exact format:
-
-```json
-{
-  "anthropic": { "type": "oauth", "access": "sk-ant-oat01-...", "refresh": "sk-ant-ort01-...", "expires": 1767304352803 },
-  "openai-codex": { "type": "oauth", "access": "eyJhbGciOi...", "refresh": "oai-refresh-...", "expires": 1767304352803, "accountId": "acct_..." }
-}
-```
-
-Set permissions: `chmod 600 ~/.clawdbot/credentials/oauth.json`
-
-**Note:** Clawdbot auto-imports from legacy pi-coding-agent paths (`~/.pi/agent/oauth.json`, etc.) but this does NOT work with Claude Code credentials — different file and format.
-
-### Using Claude Code credentials
-
-If Claude Code is installed on the gateway host, convert its credentials:
-
-```bash
-cat ~/.claude/.credentials.json | jq '{
-  anthropic: {
-    access: .claudeAiOauth.accessToken,
-    refresh: .claudeAiOauth.refreshToken,
-    expires: .claudeAiOauth.expiresAt
-  }
-}' > ~/.clawdbot/credentials/oauth.json
-chmod 600 ~/.clawdbot/credentials/oauth.json
-```
-
-| Claude Code field | Clawdbot field |
-|-------------------|---------------|
-| `accessToken` | `access` |
-| `refreshToken` | `refresh` |
-| `expiresAt` | `expires` |
-
-## Workspace backup (recommended)
-
-We suggest creating a **private GitHub repository** to back up the agent
-workspace. The agent is really good at keeping a git repo in shape, and GitHub
-is the perfect place for it. Keep it **private**.
-
-Setup steps: https://docs.clawd.bot/concepts/agent-workspace
+</Step>
+<Step title="CLI">
+  <Info>This step is optional</Info>
+  The app can install the global `openclaw` CLI via npm/pnpm so terminal
+  workflows and launchd tasks work out of the box.
+</Step>
+<Step title="Onboarding Chat (dedicated session)">
+  After setup, the app opens a dedicated onboarding chat session so the agent can
+  introduce itself and guide next steps. This keeps first‑run guidance separate
+  from your normal conversation. See [Bootstrapping](/start/bootstrapping) for
+  what happens on the gateway host during the first agent run.
+</Step>
+</Steps>

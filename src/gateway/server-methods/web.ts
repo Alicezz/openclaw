@@ -1,8 +1,4 @@
-import { loadConfig } from "../../config/config.js";
-import { defaultRuntime } from "../../runtime.js";
-import { resolveWhatsAppAccount } from "../../web/accounts.js";
-import { startWebLoginWithQr, waitForWebLogin } from "../../web/login-qr.js";
-import { logoutWeb } from "../../web/session.js";
+import { listChannelPlugins } from "../../channels/plugins/index.js";
 import {
   ErrorCodes,
   errorShape,
@@ -11,7 +7,36 @@ import {
   validateWebLoginWaitParams,
 } from "../protocol/index.js";
 import { formatForLog } from "../ws-log.js";
-import type { GatewayRequestHandlers } from "./types.js";
+import type { GatewayRequestHandlers, RespondFn } from "./types.js";
+
+const WEB_LOGIN_METHODS = new Set(["web.login.start", "web.login.wait"]);
+
+const resolveWebLoginProvider = () =>
+  listChannelPlugins().find((plugin) =>
+    (plugin.gatewayMethods ?? []).some((method) => WEB_LOGIN_METHODS.has(method)),
+  ) ?? null;
+
+function resolveAccountId(params: unknown): string | undefined {
+  return typeof (params as { accountId?: unknown }).accountId === "string"
+    ? (params as { accountId?: string }).accountId
+    : undefined;
+}
+
+function respondProviderUnavailable(respond: RespondFn) {
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.INVALID_REQUEST, "web login provider is not available"),
+  );
+}
+
+function respondProviderUnsupported(respond: RespondFn, providerId: string) {
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.INVALID_REQUEST, `web login is not supported by provider ${providerId}`),
+  );
+}
 
 export const webHandlers: GatewayRequestHandlers = {
   "web.login.start": async ({ params, respond, context }) => {
@@ -27,12 +52,18 @@ export const webHandlers: GatewayRequestHandlers = {
       return;
     }
     try {
-      const accountId =
-        typeof (params as { accountId?: unknown }).accountId === "string"
-          ? (params as { accountId?: string }).accountId
-          : undefined;
-      await context.stopWhatsAppProvider(accountId);
-      const result = await startWebLoginWithQr({
+      const accountId = resolveAccountId(params);
+      const provider = resolveWebLoginProvider();
+      if (!provider) {
+        respondProviderUnavailable(respond);
+        return;
+      }
+      await context.stopChannel(provider.id, accountId);
+      if (!provider.gateway?.loginWithQrStart) {
+        respondProviderUnsupported(respond, provider.id);
+        return;
+      }
+      const result = await provider.gateway.loginWithQrStart({
         force: Boolean((params as { force?: boolean }).force),
         timeoutMs:
           typeof (params as { timeoutMs?: unknown }).timeoutMs === "number"
@@ -43,11 +74,7 @@ export const webHandlers: GatewayRequestHandlers = {
       });
       respond(true, result, undefined);
     } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)),
-      );
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
   },
   "web.login.wait": async ({ params, respond, context }) => {
@@ -63,11 +90,17 @@ export const webHandlers: GatewayRequestHandlers = {
       return;
     }
     try {
-      const accountId =
-        typeof (params as { accountId?: unknown }).accountId === "string"
-          ? (params as { accountId?: string }).accountId
-          : undefined;
-      const result = await waitForWebLogin({
+      const accountId = resolveAccountId(params);
+      const provider = resolveWebLoginProvider();
+      if (!provider) {
+        respondProviderUnavailable(respond);
+        return;
+      }
+      if (!provider.gateway?.loginWithQrWait) {
+        respondProviderUnsupported(respond, provider.id);
+        return;
+      }
+      const result = await provider.gateway.loginWithQrWait({
         timeoutMs:
           typeof (params as { timeoutMs?: unknown }).timeoutMs === "number"
             ? (params as { timeoutMs?: number }).timeoutMs
@@ -75,44 +108,11 @@ export const webHandlers: GatewayRequestHandlers = {
         accountId,
       });
       if (result.connected) {
-        await context.startWhatsAppProvider(accountId);
+        await context.startChannel(provider.id, accountId);
       }
       respond(true, result, undefined);
     } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)),
-      );
-    }
-  },
-  "web.logout": async ({ params, respond, context }) => {
-    try {
-      const rawAccountId =
-        params && typeof params === "object" && "accountId" in params
-          ? (params as { accountId?: unknown }).accountId
-          : undefined;
-      const accountId =
-        typeof rawAccountId === "string" ? rawAccountId.trim() : "";
-      const cfg = loadConfig();
-      const account = resolveWhatsAppAccount({
-        cfg,
-        accountId: accountId || undefined,
-      });
-      await context.stopWhatsAppProvider(account.accountId);
-      const cleared = await logoutWeb({
-        authDir: account.authDir,
-        isLegacyAuthDir: account.isLegacyAuthDir,
-        runtime: defaultRuntime,
-      });
-      context.markWhatsAppLoggedOut(cleared, account.accountId);
-      respond(true, { cleared }, undefined);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)),
-      );
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
   },
 };

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 import SwabbleKit
+import Testing
 
 @Suite struct WakeWordGateTests {
     @Test func matchRequiresGapAfterTrigger() {
@@ -45,6 +45,25 @@ import SwabbleKit
         let config = WakeWordGateConfig(triggers: ["hey clawd"], minPostTriggerGap: 0.3)
         let match = WakeWordGate.match(transcript: transcript, segments: segments, config: config)
         #expect(match?.command == "do it")
+    }
+
+    @Test func commandTextHandlesForeignRangeIndices() {
+        let transcript = "hey clawd do thing"
+        let other = "do thing"
+        let foreignRange = other.range(of: "do")
+        let segments = [
+            WakeWordSegment(text: "hey", start: 0.0, duration: 0.1, range: transcript.range(of: "hey")),
+            WakeWordSegment(text: "clawd", start: 0.2, duration: 0.1, range: transcript.range(of: "clawd")),
+            WakeWordSegment(text: "do", start: 0.9, duration: 0.1, range: foreignRange),
+            WakeWordSegment(text: "thing", start: 1.1, duration: 0.1, range: nil),
+        ]
+
+        let command = WakeWordGate.commandText(
+            transcript: transcript,
+            segments: segments,
+            triggerEndTime: 0.3)
+
+        #expect(command == "do thing")
     }
 }
 

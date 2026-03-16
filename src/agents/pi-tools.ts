@@ -1,608 +1,623 @@
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import {
-  codingTools,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-  readTool,
-} from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import type { ClawdbotConfig } from "../config/config.js";
-import { detectMime } from "../media/mime.js";
+import { codingTools, createReadTool, readTool } from "@mariozechner/pi-coding-agent";
+import type { OpenClawConfig } from "../config/config.js";
+import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
+import { resolveMergedSafeBinProfileFixtures } from "../infra/exec-safe-bin-runtime-policy.js";
+import { logWarn } from "../logger.js";
+import { getPluginToolMeta } from "../plugins/tools.js";
 import { isSubagentSessionKey } from "../routing/session-key.js";
-import { startWebLoginWithQr, waitForWebLogin } from "../web/login-qr.js";
+import { resolveGatewayMessageChannel } from "../utils/message-channel.js";
+import { resolveAgentConfig } from "./agent-scope.js";
+import { createApplyPatchTool } from "./apply-patch.js";
 import {
-  type BashToolDefaults,
-  createBashTool,
+  createExecTool,
   createProcessTool,
+  type ExecToolDefaults,
   type ProcessToolDefaults,
 } from "./bash-tools.js";
-import { createClawdbotTools } from "./clawdbot-tools.js";
-import type { SandboxContext, SandboxToolPolicy } from "./sandbox.js";
-import { assertSandboxPath } from "./sandbox-paths.js";
-import { sanitizeToolResultImages } from "./tool-images.js";
+import { listChannelAgentTools } from "./channel-tools.js";
+import { resolveImageSanitizationLimits } from "./image-sanitization.js";
+import type { ModelAuthMode } from "./model-auth.js";
+import { createOpenClawTools } from "./openclaw-tools.js";
+import { wrapToolWithAbortSignal } from "./pi-tools.abort.js";
+import { wrapToolWithBeforeToolCallHook } from "./pi-tools.before-tool-call.js";
+import {
+  isToolAllowedByPolicies,
+  resolveEffectiveToolPolicy,
+  resolveGroupToolPolicy,
+  resolveSubagentToolPolicyForSession,
+} from "./pi-tools.policy.js";
+import {
+  assertRequiredParams,
+  createHostWorkspaceEditTool,
+  createHostWorkspaceWriteTool,
+  createOpenClawReadTool,
+  createSandboxedEditTool,
+  createSandboxedReadTool,
+  createSandboxedWriteTool,
+  normalizeToolParams,
+  patchToolSchemaForClaudeCompatibility,
+  wrapToolMemoryFlushAppendOnlyWrite,
+  wrapToolWorkspaceRootGuard,
+  wrapToolWorkspaceRootGuardWithOptions,
+  wrapToolParamNormalization,
+} from "./pi-tools.read.js";
+import { cleanToolSchemaForGemini, normalizeToolParameters } from "./pi-tools.schema.js";
+import type { AnyAgentTool } from "./pi-tools.types.js";
+import type { SandboxContext } from "./sandbox.js";
+import { isXaiProvider } from "./schema/clean-for-xai.js";
+import { createToolFsPolicy, resolveToolFsConfig } from "./tool-fs-policy.js";
+import {
+  applyToolPolicyPipeline,
+  buildDefaultToolPolicyPipelineSteps,
+} from "./tool-policy-pipeline.js";
+import {
+  applyOwnerOnlyToolPolicy,
+  collectExplicitAllowlist,
+  mergeAlsoAllowPolicy,
+  resolveToolProfilePolicy,
+} from "./tool-policy.js";
+import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
-// NOTE(steipete): Upstream read now does file-magic MIME detection; we keep the wrapper
-// to normalize payloads and sanitize oversized images before they hit providers.
-type ToolContentBlock = AgentToolResult<unknown>["content"][number];
-type ImageContentBlock = Extract<ToolContentBlock, { type: "image" }>;
-type TextContentBlock = Extract<ToolContentBlock, { type: "text" }>;
-
-async function sniffMimeFromBase64(
-  base64: string,
-): Promise<string | undefined> {
-  const trimmed = base64.trim();
-  if (!trimmed) return undefined;
-
-  const take = Math.min(256, trimmed.length);
-  const sliceLen = take - (take % 4);
-  if (sliceLen < 8) return undefined;
-
-  try {
-    const head = Buffer.from(trimmed.slice(0, sliceLen), "base64");
-    return await detectMime({ buffer: head });
-  } catch {
-    return undefined;
-  }
+function isOpenAIProvider(provider?: string) {
+  const normalized = provider?.trim().toLowerCase();
+  return normalized === "openai" || normalized === "openai-codex";
 }
 
-function rewriteReadImageHeader(text: string, mimeType: string): string {
-  // pi-coding-agent uses: "Read image file [image/png]"
-  if (text.startsWith("Read image file [") && text.endsWith("]")) {
-    return `Read image file [${mimeType}]`;
-  }
-  return text;
+const TOOL_DENY_BY_MESSAGE_PROVIDER: Readonly<Record<string, readonly string[]>> = {
+  voice: ["tts"],
+};
+const TOOL_DENY_FOR_XAI_PROVIDERS = new Set(["web_search"]);
+const MEMORY_FLUSH_ALLOWED_TOOL_NAMES = new Set(["read", "write"]);
+
+function normalizeMessageProvider(messageProvider?: string): string | undefined {
+  const normalized = messageProvider?.trim().toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
-async function normalizeReadImageResult(
-  result: AgentToolResult<unknown>,
-  filePath: string,
-): Promise<AgentToolResult<unknown>> {
-  const content = Array.isArray(result.content) ? result.content : [];
-
-  const image = content.find(
-    (b): b is ImageContentBlock =>
-      !!b &&
-      typeof b === "object" &&
-      (b as { type?: unknown }).type === "image" &&
-      typeof (b as { data?: unknown }).data === "string" &&
-      typeof (b as { mimeType?: unknown }).mimeType === "string",
-  );
-  if (!image) return result;
-
-  if (!image.data.trim()) {
-    throw new Error(`read: image payload is empty (${filePath})`);
-  }
-
-  const sniffed = await sniffMimeFromBase64(image.data);
-  if (!sniffed) return result;
-
-  if (!sniffed.startsWith("image/")) {
-    throw new Error(
-      `read: file looks like ${sniffed} but was treated as ${image.mimeType} (${filePath})`,
-    );
-  }
-
-  if (sniffed === image.mimeType) return result;
-
-  const nextContent = content.map((block) => {
-    if (
-      block &&
-      typeof block === "object" &&
-      (block as { type?: unknown }).type === "image"
-    ) {
-      const b = block as ImageContentBlock & { mimeType: string };
-      return { ...b, mimeType: sniffed } satisfies ImageContentBlock;
-    }
-    if (
-      block &&
-      typeof block === "object" &&
-      (block as { type?: unknown }).type === "text" &&
-      typeof (block as { text?: unknown }).text === "string"
-    ) {
-      const b = block as TextContentBlock & { text: string };
-      return {
-        ...b,
-        text: rewriteReadImageHeader(b.text, sniffed),
-      } satisfies TextContentBlock;
-    }
-    return block;
-  });
-
-  return { ...result, content: nextContent };
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: TypeBox schema type from pi-agent-core uses a different module instance.
-type AnyAgentTool = AgentTool<any, unknown>;
-
-function extractEnumValues(schema: unknown): unknown[] | undefined {
-  if (!schema || typeof schema !== "object") return undefined;
-  const record = schema as Record<string, unknown>;
-  if (Array.isArray(record.enum)) return record.enum;
-  if ("const" in record) return [record.const];
-  return undefined;
-}
-
-function mergePropertySchemas(existing: unknown, incoming: unknown): unknown {
-  if (!existing) return incoming;
-  if (!incoming) return existing;
-
-  const existingEnum = extractEnumValues(existing);
-  const incomingEnum = extractEnumValues(incoming);
-  if (existingEnum || incomingEnum) {
-    const values = Array.from(
-      new Set([...(existingEnum ?? []), ...(incomingEnum ?? [])]),
-    );
-    const merged: Record<string, unknown> = {};
-    for (const source of [existing, incoming]) {
-      if (!source || typeof source !== "object") continue;
-      const record = source as Record<string, unknown>;
-      for (const key of ["title", "description", "default"]) {
-        if (!(key in merged) && key in record) merged[key] = record[key];
-      }
-    }
-    const types = new Set(values.map((value) => typeof value));
-    if (types.size === 1) merged.type = Array.from(types)[0];
-    merged.enum = values;
-    return merged;
-  }
-
-  return existing;
-}
-
-function cleanSchemaForGemini(schema: unknown): unknown {
-  if (!schema || typeof schema !== "object") return schema;
-  if (Array.isArray(schema)) return schema.map(cleanSchemaForGemini);
-
-  const obj = schema as Record<string, unknown>;
-  const hasAnyOf = "anyOf" in obj && Array.isArray(obj.anyOf);
-  const cleaned: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(obj)) {
-    // Skip unsupported schema features for Gemini:
-    // - patternProperties: not in OpenAPI 3.0 subset
-    // - const: convert to enum with single value instead
-    if (key === "patternProperties") {
-      // Gemini doesn't support patternProperties - skip it
-      continue;
-    }
-
-    // Convert const to enum (Gemini doesn't support const)
-    if (key === "const") {
-      cleaned.enum = [value];
-      continue;
-    }
-
-    // Skip 'type' if we have 'anyOf' — Gemini doesn't allow both
-    if (key === "type" && hasAnyOf) {
-      continue;
-    }
-
-    if (key === "properties" && value && typeof value === "object") {
-      // Recursively clean nested properties
-      const props = value as Record<string, unknown>;
-      cleaned[key] = Object.fromEntries(
-        Object.entries(props).map(([k, v]) => [k, cleanSchemaForGemini(v)]),
-      );
-    } else if (key === "items" && value && typeof value === "object") {
-      // Recursively clean array items schema
-      cleaned[key] = cleanSchemaForGemini(value);
-    } else if (key === "anyOf" && Array.isArray(value)) {
-      // Clean each anyOf variant
-      cleaned[key] = value.map((variant) => cleanSchemaForGemini(variant));
-    } else if (key === "oneOf" && Array.isArray(value)) {
-      // Clean each oneOf variant
-      cleaned[key] = value.map((variant) => cleanSchemaForGemini(variant));
-    } else if (key === "allOf" && Array.isArray(value)) {
-      // Clean each allOf variant
-      cleaned[key] = value.map((variant) => cleanSchemaForGemini(variant));
-    } else if (
-      key === "additionalProperties" &&
-      value &&
-      typeof value === "object"
-    ) {
-      // Recursively clean additionalProperties schema
-      cleaned[key] = cleanSchemaForGemini(value);
-    } else {
-      cleaned[key] = value;
-    }
-  }
-
-  return cleaned;
-}
-
-function normalizeToolParameters(tool: AnyAgentTool): AnyAgentTool {
-  const schema =
-    tool.parameters && typeof tool.parameters === "object"
-      ? (tool.parameters as Record<string, unknown>)
-      : undefined;
-  if (!schema) return tool;
-
-  // Provider quirks:
-  // - Gemini rejects several JSON Schema keywords, so we scrub those.
-  // - OpenAI rejects function tool schemas unless the *top-level* is `type: "object"`.
-  //   (TypeBox root unions compile to `{ anyOf: [...] }` without `type`).
-  //
-  // Normalize once here so callers can always pass `tools` through unchanged.
-
-  // If schema already has type + properties (no top-level anyOf to merge),
-  // still clean it for Gemini compatibility
-  if (
-    "type" in schema &&
-    "properties" in schema &&
-    !Array.isArray(schema.anyOf)
-  ) {
-    return {
-      ...tool,
-      parameters: cleanSchemaForGemini(schema),
-    };
-  }
-
-  // Some tool schemas (esp. unions) may omit `type` at the top-level. If we see
-  // object-ish fields, force `type: "object"` so OpenAI accepts the schema.
-  if (
-    !("type" in schema) &&
-    (typeof schema.properties === "object" || Array.isArray(schema.required)) &&
-    !Array.isArray(schema.anyOf) &&
-    !Array.isArray(schema.oneOf)
-  ) {
-    return {
-      ...tool,
-      parameters: cleanSchemaForGemini({ ...schema, type: "object" }),
-    };
-  }
-
-  const variantKey = Array.isArray(schema.anyOf)
-    ? "anyOf"
-    : Array.isArray(schema.oneOf)
-      ? "oneOf"
-      : null;
-  if (!variantKey) return tool;
-  const variants = schema[variantKey] as unknown[];
-  const mergedProperties: Record<string, unknown> = {};
-  const requiredCounts = new Map<string, number>();
-  let objectVariants = 0;
-
-  for (const entry of variants) {
-    if (!entry || typeof entry !== "object") continue;
-    const props = (entry as { properties?: unknown }).properties;
-    if (!props || typeof props !== "object") continue;
-    objectVariants += 1;
-    for (const [key, value] of Object.entries(
-      props as Record<string, unknown>,
-    )) {
-      if (!(key in mergedProperties)) {
-        mergedProperties[key] = value;
-        continue;
-      }
-      mergedProperties[key] = mergePropertySchemas(
-        mergedProperties[key],
-        value,
-      );
-    }
-    const required = Array.isArray((entry as { required?: unknown }).required)
-      ? (entry as { required: unknown[] }).required
-      : [];
-    for (const key of required) {
-      if (typeof key !== "string") continue;
-      requiredCounts.set(key, (requiredCounts.get(key) ?? 0) + 1);
-    }
-  }
-
-  const baseRequired = Array.isArray(schema.required)
-    ? schema.required.filter((key) => typeof key === "string")
-    : undefined;
-  const mergedRequired =
-    baseRequired && baseRequired.length > 0
-      ? baseRequired
-      : objectVariants > 0
-        ? Array.from(requiredCounts.entries())
-            .filter(([, count]) => count === objectVariants)
-            .map(([key]) => key)
-        : undefined;
-
-  const nextSchema: Record<string, unknown> = { ...schema };
-  return {
-    ...tool,
-    // Flatten union schemas into a single object schema:
-    // - Gemini doesn't allow top-level `type` together with `anyOf`.
-    // - OpenAI rejects schemas without top-level `type: "object"`.
-    // Merging properties preserves useful enums like `action` while keeping schemas portable.
-    parameters: cleanSchemaForGemini({
-      type: "object",
-      ...(typeof nextSchema.title === "string"
-        ? { title: nextSchema.title }
-        : {}),
-      ...(typeof nextSchema.description === "string"
-        ? { description: nextSchema.description }
-        : {}),
-      properties:
-        Object.keys(mergedProperties).length > 0
-          ? mergedProperties
-          : (schema.properties ?? {}),
-      ...(mergedRequired && mergedRequired.length > 0
-        ? { required: mergedRequired }
-        : {}),
-      additionalProperties:
-        "additionalProperties" in schema ? schema.additionalProperties : true,
-    }),
-  };
-}
-
-function normalizeToolNames(list?: string[]) {
-  if (!list) return [];
-  return list.map((entry) => entry.trim().toLowerCase()).filter(Boolean);
-}
-
-const DEFAULT_SUBAGENT_TOOL_DENY = [
-  "sessions_list",
-  "sessions_history",
-  "sessions_send",
-  "sessions_spawn",
-];
-
-function resolveSubagentToolPolicy(cfg?: ClawdbotConfig): SandboxToolPolicy {
-  const configured = cfg?.agent?.subagents?.tools;
-  const deny = [
-    ...DEFAULT_SUBAGENT_TOOL_DENY,
-    ...(Array.isArray(configured?.deny) ? configured.deny : []),
-  ];
-  const allow = Array.isArray(configured?.allow) ? configured.allow : undefined;
-  return { allow, deny };
-}
-
-function filterToolsByPolicy(
+function applyMessageProviderToolPolicy(
   tools: AnyAgentTool[],
-  policy?: SandboxToolPolicy,
-) {
-  if (!policy) return tools;
-  const deny = new Set(normalizeToolNames(policy.deny));
-  const allowRaw = normalizeToolNames(policy.allow);
-  const allow = allowRaw.length > 0 ? new Set(allowRaw) : null;
-  return tools.filter((tool) => {
-    const name = tool.name.toLowerCase();
-    if (deny.has(name)) return false;
-    if (allow) return allow.has(name);
+  messageProvider?: string,
+): AnyAgentTool[] {
+  const normalizedProvider = normalizeMessageProvider(messageProvider);
+  if (!normalizedProvider) {
+    return tools;
+  }
+  const deniedTools = TOOL_DENY_BY_MESSAGE_PROVIDER[normalizedProvider];
+  if (!deniedTools || deniedTools.length === 0) {
+    return tools;
+  }
+  const deniedSet = new Set(deniedTools);
+  return tools.filter((tool) => !deniedSet.has(tool.name));
+}
+
+function applyModelProviderToolPolicy(
+  tools: AnyAgentTool[],
+  params?: { modelProvider?: string; modelId?: string },
+): AnyAgentTool[] {
+  if (!isXaiProvider(params?.modelProvider, params?.modelId)) {
+    return tools;
+  }
+  // xAI/Grok providers expose a native web_search tool; sending OpenClaw's
+  // web_search alongside it causes duplicate-name request failures.
+  return tools.filter((tool) => !TOOL_DENY_FOR_XAI_PROVIDERS.has(tool.name));
+}
+
+function isApplyPatchAllowedForModel(params: {
+  modelProvider?: string;
+  modelId?: string;
+  allowModels?: string[];
+}) {
+  const allowModels = Array.isArray(params.allowModels) ? params.allowModels : [];
+  if (allowModels.length === 0) {
     return true;
+  }
+  const modelId = params.modelId?.trim();
+  if (!modelId) {
+    return false;
+  }
+  const normalizedModelId = modelId.toLowerCase();
+  const provider = params.modelProvider?.trim().toLowerCase();
+  const normalizedFull =
+    provider && !normalizedModelId.includes("/")
+      ? `${provider}/${normalizedModelId}`
+      : normalizedModelId;
+  return allowModels.some((entry) => {
+    const normalized = entry.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    return normalized === normalizedModelId || normalized === normalizedFull;
   });
 }
 
-function wrapSandboxPathGuard(tool: AnyAgentTool, root: string): AnyAgentTool {
+function resolveExecConfig(params: { cfg?: OpenClawConfig; agentId?: string }) {
+  const cfg = params.cfg;
+  const globalExec = cfg?.tools?.exec;
+  const agentExec =
+    cfg && params.agentId ? resolveAgentConfig(cfg, params.agentId)?.tools?.exec : undefined;
   return {
-    ...tool,
-    execute: async (toolCallId, args, signal, onUpdate) => {
-      const record =
-        args && typeof args === "object"
-          ? (args as Record<string, unknown>)
-          : undefined;
-      const filePath = record?.path;
-      if (typeof filePath === "string" && filePath.trim()) {
-        await assertSandboxPath({ filePath, cwd: root, root });
-      }
-      return tool.execute(toolCallId, args, signal, onUpdate);
-    },
-  };
-}
-
-function createSandboxedReadTool(root: string) {
-  const base = createReadTool(root);
-  return wrapSandboxPathGuard(createClawdbotReadTool(base), root);
-}
-
-function createSandboxedWriteTool(root: string) {
-  const base = createWriteTool(root);
-  return wrapSandboxPathGuard(base as unknown as AnyAgentTool, root);
-}
-
-function createSandboxedEditTool(root: string) {
-  const base = createEditTool(root);
-  return wrapSandboxPathGuard(base as unknown as AnyAgentTool, root);
-}
-
-function createWhatsAppLoginTool(): AnyAgentTool {
-  return {
-    label: "WhatsApp Login",
-    name: "whatsapp_login",
-    description:
-      "Generate a WhatsApp QR code for linking, or wait for the scan to complete.",
-    parameters: Type.Object({
-      action: Type.Union([Type.Literal("start"), Type.Literal("wait")]),
-      timeoutMs: Type.Optional(Type.Number()),
-      force: Type.Optional(Type.Boolean()),
+    host: agentExec?.host ?? globalExec?.host,
+    security: agentExec?.security ?? globalExec?.security,
+    ask: agentExec?.ask ?? globalExec?.ask,
+    node: agentExec?.node ?? globalExec?.node,
+    pathPrepend: agentExec?.pathPrepend ?? globalExec?.pathPrepend,
+    safeBins: agentExec?.safeBins ?? globalExec?.safeBins,
+    safeBinTrustedDirs: agentExec?.safeBinTrustedDirs ?? globalExec?.safeBinTrustedDirs,
+    safeBinProfiles: resolveMergedSafeBinProfileFixtures({
+      global: globalExec,
+      local: agentExec,
     }),
-    execute: async (_toolCallId, args) => {
-      const action = (args as { action?: string })?.action ?? "start";
-      if (action === "wait") {
-        const result = await waitForWebLogin({
-          timeoutMs:
-            typeof (args as { timeoutMs?: unknown }).timeoutMs === "number"
-              ? (args as { timeoutMs?: number }).timeoutMs
-              : undefined,
-        });
-        return {
-          content: [{ type: "text", text: result.message }],
-          details: { connected: result.connected },
-        };
-      }
-
-      const result = await startWebLoginWithQr({
-        timeoutMs:
-          typeof (args as { timeoutMs?: unknown }).timeoutMs === "number"
-            ? (args as { timeoutMs?: number }).timeoutMs
-            : undefined,
-        force:
-          typeof (args as { force?: unknown }).force === "boolean"
-            ? (args as { force?: boolean }).force
-            : false,
-      });
-
-      if (!result.qrDataUrl) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: result.message,
-            },
-          ],
-          details: { qr: false },
-        };
-      }
-
-      const text = [
-        result.message,
-        "",
-        "Open WhatsApp → Linked Devices and scan:",
-        "",
-        `![whatsapp-qr](${result.qrDataUrl})`,
-      ].join("\n");
-      return {
-        content: [{ type: "text", text }],
-        details: { qr: true },
-      };
-    },
+    backgroundMs: agentExec?.backgroundMs ?? globalExec?.backgroundMs,
+    timeoutSec: agentExec?.timeoutSec ?? globalExec?.timeoutSec,
+    approvalRunningNoticeMs:
+      agentExec?.approvalRunningNoticeMs ?? globalExec?.approvalRunningNoticeMs,
+    cleanupMs: agentExec?.cleanupMs ?? globalExec?.cleanupMs,
+    notifyOnExit: agentExec?.notifyOnExit ?? globalExec?.notifyOnExit,
+    notifyOnExitEmptySuccess:
+      agentExec?.notifyOnExitEmptySuccess ?? globalExec?.notifyOnExitEmptySuccess,
+    applyPatch: agentExec?.applyPatch ?? globalExec?.applyPatch,
   };
 }
 
-function createClawdbotReadTool(base: AnyAgentTool): AnyAgentTool {
+export function resolveToolLoopDetectionConfig(params: {
+  cfg?: OpenClawConfig;
+  agentId?: string;
+}): ToolLoopDetectionConfig | undefined {
+  const global = params.cfg?.tools?.loopDetection;
+  const agent =
+    params.agentId && params.cfg
+      ? resolveAgentConfig(params.cfg, params.agentId)?.tools?.loopDetection
+      : undefined;
+
+  if (!agent) {
+    return global;
+  }
+  if (!global) {
+    return agent;
+  }
+
   return {
-    ...base,
-    execute: async (toolCallId, params, signal) => {
-      const result = (await base.execute(
-        toolCallId,
-        params,
-        signal,
-      )) as AgentToolResult<unknown>;
-      const record =
-        params && typeof params === "object"
-          ? (params as Record<string, unknown>)
-          : undefined;
-      const filePath =
-        typeof record?.path === "string" ? String(record.path) : "<unknown>";
-      const normalized = await normalizeReadImageResult(result, filePath);
-      return sanitizeToolResultImages(normalized, `read:${filePath}`);
+    ...global,
+    ...agent,
+    detectors: {
+      ...global.detectors,
+      ...agent.detectors,
     },
   };
 }
 
-function normalizeMessageProvider(
-  messageProvider?: string,
-): string | undefined {
-  const trimmed = messageProvider?.trim().toLowerCase();
-  return trimmed ? trimmed : undefined;
-}
+export const __testing = {
+  cleanToolSchemaForGemini,
+  normalizeToolParams,
+  patchToolSchemaForClaudeCompatibility,
+  wrapToolParamNormalization,
+  assertRequiredParams,
+  applyModelProviderToolPolicy,
+} as const;
 
-function shouldIncludeDiscordTool(messageProvider?: string): boolean {
-  const normalized = normalizeMessageProvider(messageProvider);
-  if (!normalized) return false;
-  return normalized === "discord" || normalized.startsWith("discord:");
-}
-
-function shouldIncludeSlackTool(messageProvider?: string): boolean {
-  const normalized = normalizeMessageProvider(messageProvider);
-  if (!normalized) return false;
-  return normalized === "slack" || normalized.startsWith("slack:");
-}
-
-function shouldIncludeTelegramTool(messageProvider?: string): boolean {
-  const normalized = normalizeMessageProvider(messageProvider);
-  if (!normalized) return false;
-  return normalized === "telegram" || normalized.startsWith("telegram:");
-}
-
-function shouldIncludeWhatsAppTool(messageProvider?: string): boolean {
-  const normalized = normalizeMessageProvider(messageProvider);
-  if (!normalized) return false;
-  return normalized === "whatsapp" || normalized.startsWith("whatsapp:");
-}
-
-export function createClawdbotCodingTools(options?: {
-  bash?: BashToolDefaults & ProcessToolDefaults;
+export function createOpenClawCodingTools(options?: {
+  agentId?: string;
+  exec?: ExecToolDefaults & ProcessToolDefaults;
   messageProvider?: string;
+  agentAccountId?: string;
+  messageTo?: string;
+  messageThreadId?: string | number;
   sandbox?: SandboxContext | null;
   sessionKey?: string;
+  /** Ephemeral session UUID — regenerated on /new and /reset. */
+  sessionId?: string;
+  /** Stable run identifier for this agent invocation. */
+  runId?: string;
+  /** What initiated this run (for trigger-specific tool restrictions). */
+  trigger?: string;
+  /** Relative workspace path that memory-triggered writes may append to. */
+  memoryFlushWritePath?: string;
   agentDir?: string;
-  config?: ClawdbotConfig;
+  workspaceDir?: string;
+  /**
+   * Workspace directory that spawned subagents should inherit.
+   * When sandboxing uses a copied workspace (`ro` or `none`), workspaceDir is the
+   * sandbox copy but subagents should inherit the real agent workspace instead.
+   * Defaults to workspaceDir when not set.
+   */
+  spawnWorkspaceDir?: string;
+  config?: OpenClawConfig;
+  abortSignal?: AbortSignal;
+  /**
+   * Provider of the currently selected model (used for provider-specific tool quirks).
+   * Example: "anthropic", "openai", "google", "openai-codex".
+   */
+  modelProvider?: string;
+  /** Model id for the current provider (used for model-specific tool gating). */
+  modelId?: string;
+  /** Model context window in tokens (used to scale read-tool output budget). */
+  modelContextWindowTokens?: number;
+  /**
+   * Auth mode for the current provider. We only need this for Anthropic OAuth
+   * tool-name blocking quirks.
+   */
+  modelAuthMode?: ModelAuthMode;
+  /** Current channel ID for auto-threading (Slack). */
+  currentChannelId?: string;
+  /** Current thread timestamp for auto-threading (Slack). */
+  currentThreadTs?: string;
+  /** Current inbound message id for action fallbacks (e.g. Telegram react). */
+  currentMessageId?: string | number;
+  /** Group id for channel-level tool policy resolution. */
+  groupId?: string | null;
+  /** Group channel label (e.g. #general) for channel-level tool policy resolution. */
+  groupChannel?: string | null;
+  /** Group space label (e.g. guild/team id) for channel-level tool policy resolution. */
+  groupSpace?: string | null;
+  /** Parent session key for subagent group policy inheritance. */
+  spawnedBy?: string | null;
+  senderId?: string | null;
+  senderName?: string | null;
+  senderUsername?: string | null;
+  senderE164?: string | null;
+  /** Reply-to mode for Slack auto-threading. */
+  replyToMode?: "off" | "first" | "all";
+  /** Mutable ref to track if a reply was sent (for "first" mode). */
+  hasRepliedRef?: { value: boolean };
+  /** Allow plugin tools for this run to late-bind the gateway subagent. */
+  allowGatewaySubagentBinding?: boolean;
+  /** If true, the model has native vision capability */
+  modelHasVision?: boolean;
+  /** Require explicit message targets (no implicit last-route sends). */
+  requireExplicitMessageTarget?: boolean;
+  /** If true, omit the message tool from the tool list. */
+  disableMessageTool?: boolean;
+  /** Whether the sender is an owner (required for owner-only tools). */
+  senderIsOwner?: boolean;
+  /** Callback invoked when sessions_yield tool is called. */
+  onYield?: (message: string) => Promise<void> | void;
 }): AnyAgentTool[] {
-  const bashToolName = "bash";
+  const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
+  const isMemoryFlushRun = options?.trigger === "memory";
+  if (isMemoryFlushRun && !options?.memoryFlushWritePath) {
+    throw new Error("memoryFlushWritePath required for memory-triggered tool runs");
+  }
+  const memoryFlushWritePath = isMemoryFlushRun ? options.memoryFlushWritePath : undefined;
+  const {
+    agentId,
+    globalPolicy,
+    globalProviderPolicy,
+    agentPolicy,
+    agentProviderPolicy,
+    profile,
+    providerProfile,
+    profileAlsoAllow,
+    providerProfileAlsoAllow,
+  } = resolveEffectiveToolPolicy({
+    config: options?.config,
+    sessionKey: options?.sessionKey,
+    agentId: options?.agentId,
+    modelProvider: options?.modelProvider,
+    modelId: options?.modelId,
+  });
+  const groupPolicy = resolveGroupToolPolicy({
+    config: options?.config,
+    sessionKey: options?.sessionKey,
+    spawnedBy: options?.spawnedBy,
+    messageProvider: options?.messageProvider,
+    groupId: options?.groupId,
+    groupChannel: options?.groupChannel,
+    groupSpace: options?.groupSpace,
+    accountId: options?.agentAccountId,
+    senderId: options?.senderId,
+    senderName: options?.senderName,
+    senderUsername: options?.senderUsername,
+    senderE164: options?.senderE164,
+  });
+  const profilePolicy = resolveToolProfilePolicy(profile);
+  const providerProfilePolicy = resolveToolProfilePolicy(providerProfile);
+
+  const profilePolicyWithAlsoAllow = mergeAlsoAllowPolicy(profilePolicy, profileAlsoAllow);
+  const providerProfilePolicyWithAlsoAllow = mergeAlsoAllowPolicy(
+    providerProfilePolicy,
+    providerProfileAlsoAllow,
+  );
+  // Prefer sessionKey for process isolation scope to prevent cross-session process visibility/killing.
+  // Fallback to agentId if no sessionKey is available (e.g. legacy or global contexts).
+  const scopeKey =
+    options?.exec?.scopeKey ?? options?.sessionKey ?? (agentId ? `agent:${agentId}` : undefined);
+  const subagentPolicy =
+    isSubagentSessionKey(options?.sessionKey) && options?.sessionKey
+      ? resolveSubagentToolPolicyForSession(options.config, options.sessionKey)
+      : undefined;
+  const allowBackground = isToolAllowedByPolicies("process", [
+    profilePolicyWithAlsoAllow,
+    providerProfilePolicyWithAlsoAllow,
+    globalPolicy,
+    globalProviderPolicy,
+    agentPolicy,
+    agentProviderPolicy,
+    groupPolicy,
+    sandbox?.tools,
+    subagentPolicy,
+  ]);
+  const execConfig = resolveExecConfig({ cfg: options?.config, agentId });
+  const fsConfig = resolveToolFsConfig({ cfg: options?.config, agentId });
+  const fsPolicy = createToolFsPolicy({
+    workspaceOnly: isMemoryFlushRun || fsConfig.workspaceOnly,
+  });
   const sandboxRoot = sandbox?.workspaceDir;
+  const sandboxFsBridge = sandbox?.fsBridge;
   const allowWorkspaceWrites = sandbox?.workspaceAccess !== "ro";
+  const workspaceRoot = resolveWorkspaceRoot(options?.workspaceDir);
+  const workspaceOnly = fsPolicy.workspaceOnly;
+  const applyPatchConfig = execConfig.applyPatch;
+  // Secure by default: apply_patch is workspace-contained unless explicitly disabled.
+  // (tools.fs.workspaceOnly is a separate umbrella flag for read/write/edit/apply_patch.)
+  const applyPatchWorkspaceOnly = workspaceOnly || applyPatchConfig?.workspaceOnly !== false;
+  const applyPatchEnabled =
+    !!applyPatchConfig?.enabled &&
+    isOpenAIProvider(options?.modelProvider) &&
+    isApplyPatchAllowedForModel({
+      modelProvider: options?.modelProvider,
+      modelId: options?.modelId,
+      allowModels: applyPatchConfig?.allowModels,
+    });
+
+  if (sandboxRoot && !sandboxFsBridge) {
+    throw new Error("Sandbox filesystem bridge is unavailable.");
+  }
+  const imageSanitization = resolveImageSanitizationLimits(options?.config);
+
   const base = (codingTools as unknown as AnyAgentTool[]).flatMap((tool) => {
     if (tool.name === readTool.name) {
-      return sandboxRoot
-        ? [createSandboxedReadTool(sandboxRoot)]
-        : [createClawdbotReadTool(tool)];
+      if (sandboxRoot) {
+        const sandboxed = createSandboxedReadTool({
+          root: sandboxRoot,
+          bridge: sandboxFsBridge!,
+          modelContextWindowTokens: options?.modelContextWindowTokens,
+          imageSanitization,
+        });
+        return [
+          workspaceOnly
+            ? wrapToolWorkspaceRootGuardWithOptions(sandboxed, sandboxRoot, {
+                containerWorkdir: sandbox.containerWorkdir,
+              })
+            : sandboxed,
+        ];
+      }
+      const freshReadTool = createReadTool(workspaceRoot);
+      const wrapped = createOpenClawReadTool(freshReadTool, {
+        modelContextWindowTokens: options?.modelContextWindowTokens,
+        imageSanitization,
+      });
+      return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
     }
-    if (tool.name === bashToolName) return [];
-    if (sandboxRoot && (tool.name === "write" || tool.name === "edit")) {
+    if (tool.name === "bash" || tool.name === execToolName) {
       return [];
     }
-    return [tool as AnyAgentTool];
+    if (tool.name === "write") {
+      if (sandboxRoot) {
+        return [];
+      }
+      const wrapped = createHostWorkspaceWriteTool(workspaceRoot, { workspaceOnly });
+      return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
+    }
+    if (tool.name === "edit") {
+      if (sandboxRoot) {
+        return [];
+      }
+      const wrapped = createHostWorkspaceEditTool(workspaceRoot, { workspaceOnly });
+      return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
+    }
+    return [tool];
   });
-  const bashTool = createBashTool({
-    ...options?.bash,
+  const { cleanupMs: cleanupMsOverride, ...execDefaults } = options?.exec ?? {};
+  const execTool = createExecTool({
+    ...execDefaults,
+    host: options?.exec?.host ?? execConfig.host,
+    security: options?.exec?.security ?? execConfig.security,
+    ask: options?.exec?.ask ?? execConfig.ask,
+    node: options?.exec?.node ?? execConfig.node,
+    pathPrepend: options?.exec?.pathPrepend ?? execConfig.pathPrepend,
+    safeBins: options?.exec?.safeBins ?? execConfig.safeBins,
+    safeBinTrustedDirs: options?.exec?.safeBinTrustedDirs ?? execConfig.safeBinTrustedDirs,
+    safeBinProfiles: options?.exec?.safeBinProfiles ?? execConfig.safeBinProfiles,
+    agentId,
+    cwd: workspaceRoot,
+    allowBackground,
+    scopeKey,
+    sessionKey: options?.sessionKey,
+    messageProvider: options?.messageProvider,
+    currentChannelId: options?.currentChannelId,
+    currentThreadTs: options?.currentThreadTs,
+    accountId: options?.agentAccountId,
+    backgroundMs: options?.exec?.backgroundMs ?? execConfig.backgroundMs,
+    timeoutSec: options?.exec?.timeoutSec ?? execConfig.timeoutSec,
+    approvalRunningNoticeMs:
+      options?.exec?.approvalRunningNoticeMs ?? execConfig.approvalRunningNoticeMs,
+    notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
+    notifyOnExitEmptySuccess:
+      options?.exec?.notifyOnExitEmptySuccess ?? execConfig.notifyOnExitEmptySuccess,
     sandbox: sandbox
       ? {
           containerName: sandbox.containerName,
           workspaceDir: sandbox.workspaceDir,
           containerWorkdir: sandbox.containerWorkdir,
-          env: sandbox.docker.env,
+          env: sandbox.backend?.env ?? sandbox.docker.env,
+          buildExecSpec: sandbox.backend?.buildExecSpec.bind(sandbox.backend),
+          finalizeExec: sandbox.backend?.finalizeExec?.bind(sandbox.backend),
         }
       : undefined,
   });
   const processTool = createProcessTool({
-    cleanupMs: options?.bash?.cleanupMs,
+    cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
+    scopeKey,
   });
+  const applyPatchTool =
+    !applyPatchEnabled || (sandboxRoot && !allowWorkspaceWrites)
+      ? null
+      : createApplyPatchTool({
+          cwd: sandboxRoot ?? workspaceRoot,
+          sandbox:
+            sandboxRoot && allowWorkspaceWrites
+              ? { root: sandboxRoot, bridge: sandboxFsBridge! }
+              : undefined,
+          workspaceOnly: applyPatchWorkspaceOnly,
+        });
   const tools: AnyAgentTool[] = [
     ...base,
     ...(sandboxRoot
       ? allowWorkspaceWrites
         ? [
-            createSandboxedEditTool(sandboxRoot),
-            createSandboxedWriteTool(sandboxRoot),
+            workspaceOnly
+              ? wrapToolWorkspaceRootGuardWithOptions(
+                  createSandboxedEditTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+                  sandboxRoot,
+                  {
+                    containerWorkdir: sandbox.containerWorkdir,
+                  },
+                )
+              : createSandboxedEditTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+            workspaceOnly
+              ? wrapToolWorkspaceRootGuardWithOptions(
+                  createSandboxedWriteTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+                  sandboxRoot,
+                  {
+                    containerWorkdir: sandbox.containerWorkdir,
+                  },
+                )
+              : createSandboxedWriteTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
           ]
         : []
       : []),
-    bashTool as unknown as AnyAgentTool,
+    ...(applyPatchTool ? [applyPatchTool as unknown as AnyAgentTool] : []),
+    execTool as unknown as AnyAgentTool,
     processTool as unknown as AnyAgentTool,
-    createWhatsAppLoginTool(),
-    ...createClawdbotTools({
-      browserControlUrl: sandbox?.browser?.controlUrl,
+    // Channel docking: include channel-defined agent tools (login, etc.).
+    ...listChannelAgentTools({ cfg: options?.config }),
+    ...createOpenClawTools({
+      sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
+      allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
       agentSessionKey: options?.sessionKey,
-      agentProvider: options?.messageProvider,
+      agentChannel: resolveGatewayMessageChannel(options?.messageProvider),
+      agentAccountId: options?.agentAccountId,
+      agentTo: options?.messageTo,
+      agentThreadId: options?.messageThreadId,
+      agentGroupId: options?.groupId ?? null,
+      agentGroupChannel: options?.groupChannel ?? null,
+      agentGroupSpace: options?.groupSpace ?? null,
       agentDir: options?.agentDir,
+      sandboxRoot,
+      sandboxFsBridge,
+      fsPolicy,
+      workspaceDir: workspaceRoot,
+      spawnWorkspaceDir: options?.spawnWorkspaceDir
+        ? resolveWorkspaceRoot(options.spawnWorkspaceDir)
+        : undefined,
       sandboxed: !!sandbox,
       config: options?.config,
+      pluginToolAllowlist: collectExplicitAllowlist([
+        profilePolicy,
+        providerProfilePolicy,
+        globalPolicy,
+        globalProviderPolicy,
+        agentPolicy,
+        agentProviderPolicy,
+        groupPolicy,
+        sandbox?.tools,
+        subagentPolicy,
+      ]),
+      currentChannelId: options?.currentChannelId,
+      currentThreadTs: options?.currentThreadTs,
+      currentMessageId: options?.currentMessageId,
+      replyToMode: options?.replyToMode,
+      hasRepliedRef: options?.hasRepliedRef,
+      modelHasVision: options?.modelHasVision,
+      requireExplicitMessageTarget: options?.requireExplicitMessageTarget,
+      disableMessageTool: options?.disableMessageTool,
+      requesterAgentIdOverride: agentId,
+      requesterSenderId: options?.senderId,
+      senderIsOwner: options?.senderIsOwner,
+      sessionId: options?.sessionId,
+      onYield: options?.onYield,
+      allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
     }),
   ];
-  const allowDiscord = shouldIncludeDiscordTool(options?.messageProvider);
-  const allowSlack = shouldIncludeSlackTool(options?.messageProvider);
-  const allowTelegram = shouldIncludeTelegramTool(options?.messageProvider);
-  const allowWhatsApp = shouldIncludeWhatsAppTool(options?.messageProvider);
-  const filtered = tools.filter((tool) => {
-    if (tool.name === "discord") return allowDiscord;
-    if (tool.name === "slack") return allowSlack;
-    if (tool.name === "telegram") return allowTelegram;
-    if (tool.name === "whatsapp") return allowWhatsApp;
-    return true;
+  const toolsForMemoryFlush =
+    isMemoryFlushRun && memoryFlushWritePath
+      ? tools.flatMap((tool) => {
+          if (!MEMORY_FLUSH_ALLOWED_TOOL_NAMES.has(tool.name)) {
+            return [];
+          }
+          if (tool.name === "write") {
+            return [
+              wrapToolMemoryFlushAppendOnlyWrite(tool, {
+                root: sandboxRoot ?? workspaceRoot,
+                relativePath: memoryFlushWritePath,
+                containerWorkdir: sandbox?.containerWorkdir,
+                sandbox:
+                  sandboxRoot && sandboxFsBridge
+                    ? { root: sandboxRoot, bridge: sandboxFsBridge }
+                    : undefined,
+              }),
+            ];
+          }
+          return [tool];
+        })
+      : tools;
+  const toolsForMessageProvider = applyMessageProviderToolPolicy(
+    toolsForMemoryFlush,
+    options?.messageProvider,
+  );
+  const toolsForModelProvider = applyModelProviderToolPolicy(toolsForMessageProvider, {
+    modelProvider: options?.modelProvider,
+    modelId: options?.modelId,
   });
-  const globallyFiltered =
-    options?.config?.agent?.tools &&
-    (options.config.agent.tools.allow?.length ||
-      options.config.agent.tools.deny?.length)
-      ? filterToolsByPolicy(filtered, options.config.agent.tools)
-      : filtered;
-  const sandboxed = sandbox
-    ? filterToolsByPolicy(globallyFiltered, sandbox.tools)
-    : globallyFiltered;
-  const subagentFiltered =
-    isSubagentSessionKey(options?.sessionKey) && options?.sessionKey
-      ? filterToolsByPolicy(
-          sandboxed,
-          resolveSubagentToolPolicy(options.config),
-        )
-      : sandboxed;
+  // Security: treat unknown/undefined as unauthorized (opt-in, not opt-out)
+  const senderIsOwner = options?.senderIsOwner === true;
+  const toolsByAuthorization = applyOwnerOnlyToolPolicy(toolsForModelProvider, senderIsOwner);
+  const subagentFiltered = applyToolPolicyPipeline({
+    tools: toolsByAuthorization,
+    toolMeta: (tool) => getPluginToolMeta(tool),
+    warn: logWarn,
+    steps: [
+      ...buildDefaultToolPolicyPipelineSteps({
+        profilePolicy: profilePolicyWithAlsoAllow,
+        profile,
+        providerProfilePolicy: providerProfilePolicyWithAlsoAllow,
+        providerProfile,
+        globalPolicy,
+        globalProviderPolicy,
+        agentPolicy,
+        agentProviderPolicy,
+        groupPolicy,
+        agentId,
+      }),
+      { policy: sandbox?.tools, label: "sandbox tools.allow" },
+      { policy: subagentPolicy, label: "subagent tools.allow" },
+    ],
+  });
   // Always normalize tool JSON Schemas before handing them to pi-agent/pi-ai.
   // Without this, some providers (notably OpenAI) will reject root-level union schemas.
-  return subagentFiltered.map(normalizeToolParameters);
+  // Provider-specific cleaning: Gemini needs constraint keywords stripped, but Anthropic expects them.
+  const normalized = subagentFiltered.map((tool) =>
+    normalizeToolParameters(tool, {
+      modelProvider: options?.modelProvider,
+      modelId: options?.modelId,
+    }),
+  );
+  const withHooks = normalized.map((tool) =>
+    wrapToolWithBeforeToolCallHook(tool, {
+      agentId,
+      sessionKey: options?.sessionKey,
+      sessionId: options?.sessionId,
+      runId: options?.runId,
+      loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
+    }),
+  );
+  const withAbort = options?.abortSignal
+    ? withHooks.map((tool) => wrapToolWithAbortSignal(tool, options.abortSignal))
+    : withHooks;
+
+  // NOTE: Keep canonical (lowercase) tool names here.
+  // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names
+  // on the wire and maps them back for tool dispatch.
+  return withAbort;
 }

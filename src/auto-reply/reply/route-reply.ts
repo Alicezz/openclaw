@@ -7,15 +7,29 @@
  * across multiple providers.
  */
 
-import type { ClawdbotConfig } from "../../config/config.js";
-import { sendMessageDiscord } from "../../discord/send.js";
-import { sendMessageIMessage } from "../../imessage/send.js";
-import { sendMessageSignal } from "../../signal/send.js";
-import { sendMessageSlack } from "../../slack/send.js";
-import { sendMessageTelegram } from "../../telegram/send.js";
-import { sendMessageWhatsApp } from "../../web/outbound.js";
+import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { resolveEffectiveMessagesConfig } from "../../agents/identity.js";
+import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
+import type { OpenClawConfig } from "../../config/config.js";
+import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
+import { hasReplyContent } from "../../interactive/payload.js";
+import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
+import { normalizeReplyPayload } from "./normalize-reply.js";
+import {
+  formatBtwTextForExternalDelivery,
+  shouldSuppressReasoningPayload,
+} from "./reply-payloads.js";
+
+let deliverRuntimePromise: Promise<
+  typeof import("../../infra/outbound/deliver-runtime.js")
+> | null = null;
+
+function loadDeliverRuntime() {
+  deliverRuntimePromise ??= import("../../infra/outbound/deliver-runtime.js");
+  return deliverRuntimePromise;
+}
 
 export type RouteReplyParams = {
   /** The reply payload to send. */
@@ -24,12 +38,22 @@ export type RouteReplyParams = {
   channel: OriginatingChannelType;
   /** The destination chat/channel/user ID. */
   to: string;
+  /** Session key for deriving agent identity defaults (multi-agent). */
+  sessionKey?: string;
   /** Provider account id (multi-account). */
   accountId?: string;
-  /** Telegram message thread id (forum topics). */
-  threadId?: number;
+  /** Thread id for replies (Telegram topic id or Matrix thread event id). */
+  threadId?: string | number;
   /** Config for provider-specific settings. */
-  cfg: ClawdbotConfig;
+  cfg: OpenClawConfig;
+  /** Optional abort signal for cooperative cancellation. */
+  abortSignal?: AbortSignal;
+  /** Mirror reply into session transcript (default: true when sessionKey is set). */
+  mirror?: boolean;
+  /** Whether this message is being sent in a group/channel context */
+  isGroup?: boolean;
+  /** Group or channel identifier for correlation with received events */
+  groupId?: string;
 };
 
 export type RouteReplyResult = {
@@ -49,102 +73,133 @@ export type RouteReplyResult = {
  * back to the originating channel when OriginatingChannel/OriginatingTo
  * are set.
  */
-export async function routeReply(
-  params: RouteReplyParams,
-): Promise<RouteReplyResult> {
-  const { payload, channel, to, accountId, threadId } = params;
+export async function routeReply(params: RouteReplyParams): Promise<RouteReplyResult> {
+  const { payload, channel, to, accountId, threadId, cfg, abortSignal } = params;
+  if (shouldSuppressReasoningPayload(payload)) {
+    return { ok: true };
+  }
+  const normalizedChannel = normalizeMessageChannel(channel);
+  const channelId = normalizeChannelId(channel) ?? null;
+  const plugin = channelId ? getChannelPlugin(channelId) : undefined;
+  const resolvedAgentId = params.sessionKey
+    ? resolveSessionAgentId({
+        sessionKey: params.sessionKey,
+        config: cfg,
+      })
+    : undefined;
 
   // Debug: `pnpm test src/auto-reply/reply/route-reply.test.ts`
-  const text = payload.text ?? "";
-  const mediaUrls = (payload.mediaUrls?.filter(Boolean) ?? []).length
-    ? (payload.mediaUrls?.filter(Boolean) as string[])
-    : payload.mediaUrl
-      ? [payload.mediaUrl]
+  const responsePrefix = params.sessionKey
+    ? resolveEffectiveMessagesConfig(
+        cfg,
+        resolvedAgentId ?? resolveSessionAgentId({ config: cfg }),
+        { channel: normalizedChannel, accountId },
+      ).responsePrefix
+    : cfg.messages?.responsePrefix === "auto"
+      ? undefined
+      : cfg.messages?.responsePrefix;
+  const normalized = normalizeReplyPayload(payload, {
+    responsePrefix,
+    enableSlackInteractiveReplies: plugin?.messaging?.enableInteractiveReplies?.({
+      cfg,
+      accountId,
+    }),
+  });
+  if (!normalized) {
+    return { ok: true };
+  }
+  const externalPayload: ReplyPayload = {
+    ...normalized,
+    text: formatBtwTextForExternalDelivery(normalized),
+  };
+
+  let text = externalPayload.text ?? "";
+  let mediaUrls = (externalPayload.mediaUrls?.filter(Boolean) ?? []).length
+    ? (externalPayload.mediaUrls?.filter(Boolean) as string[])
+    : externalPayload.mediaUrl
+      ? [externalPayload.mediaUrl]
       : [];
-  const replyToId = payload.replyToId;
+  const replyToId = externalPayload.replyToId;
+  const hasChannelData = plugin?.messaging?.hasStructuredReplyPayload?.({
+    payload: externalPayload,
+  });
 
   // Skip empty replies.
-  if (!text.trim() && mediaUrls.length === 0) {
+  if (
+    !hasReplyContent({
+      text,
+      mediaUrls,
+      interactive: externalPayload.interactive,
+      hasChannelData,
+    })
+  ) {
     return { ok: true };
   }
 
-  const sendOne = async (params: {
-    text: string;
-    mediaUrl?: string;
-  }): Promise<RouteReplyResult> => {
-    const { text, mediaUrl } = params;
-    switch (channel) {
-      case "telegram": {
-        const result = await sendMessageTelegram(to, text, {
-          mediaUrl,
-          messageThreadId: threadId,
-        });
-        return { ok: true, messageId: result.messageId };
-      }
+  if (channel === INTERNAL_MESSAGE_CHANNEL) {
+    return {
+      ok: false,
+      error: "Webchat routing not supported for queued replies",
+    };
+  }
 
-      case "slack": {
-        const result = await sendMessageSlack(to, text, {
-          mediaUrl,
-          threadTs: replyToId,
-        });
-        return { ok: true, messageId: result.messageId };
-      }
+  if (!channelId) {
+    return { ok: false, error: `Unknown channel: ${String(channel)}` };
+  }
+  if (abortSignal?.aborted) {
+    return { ok: false, error: "Reply routing aborted" };
+  }
 
-      case "discord": {
-        const result = await sendMessageDiscord(to, text, {
-          mediaUrl,
-          replyTo: replyToId,
-        });
-        return { ok: true, messageId: result.messageId };
-      }
-
-      case "signal": {
-        const result = await sendMessageSignal(to, text, { mediaUrl });
-        return { ok: true, messageId: result.messageId };
-      }
-
-      case "imessage": {
-        const result = await sendMessageIMessage(to, text, { mediaUrl });
-        return { ok: true, messageId: result.messageId };
-      }
-
-      case "whatsapp": {
-        const result = await sendMessageWhatsApp(to, text, {
-          verbose: false,
-          mediaUrl,
-          accountId,
-        });
-        return { ok: true, messageId: result.messageId };
-      }
-
-      case "webchat": {
-        return {
-          ok: false,
-          error: `Webchat routing not supported for queued replies`,
-        };
-      }
-
-      default: {
-        const _exhaustive: never = channel;
-        return { ok: false, error: `Unknown channel: ${String(_exhaustive)}` };
-      }
-    }
-  };
+  const replyTransport =
+    plugin?.threading?.resolveReplyTransport?.({
+      cfg,
+      accountId,
+      threadId,
+      replyToId,
+    }) ?? null;
+  const resolvedReplyToId =
+    replyTransport?.replyToId ??
+    replyToId ??
+    ((channelId === "slack" || channelId === "mattermost") && threadId != null && threadId !== ""
+      ? String(threadId)
+      : undefined);
+  const resolvedThreadId =
+    replyTransport?.threadId ?? (channelId === "slack" ? null : (threadId ?? null));
 
   try {
-    if (mediaUrls.length === 0) {
-      return await sendOne({ text });
-    }
+    // Provider docking: this is an execution boundary (we're about to send).
+    // Keep the module cheap to import by loading outbound plumbing lazily.
+    const { deliverOutboundPayloads } = await loadDeliverRuntime();
+    const outboundSession = buildOutboundSessionContext({
+      cfg,
+      agentId: resolvedAgentId,
+      sessionKey: params.sessionKey,
+    });
+    const results = await deliverOutboundPayloads({
+      cfg,
+      channel: channelId,
+      to,
+      accountId: accountId ?? undefined,
+      payloads: [externalPayload],
+      replyToId: resolvedReplyToId ?? null,
+      threadId: resolvedThreadId,
+      session: outboundSession,
+      abortSignal,
+      mirror:
+        params.mirror !== false && params.sessionKey
+          ? {
+              sessionKey: params.sessionKey,
+              agentId: resolvedAgentId,
+              text,
+              mediaUrls,
+              ...(params.isGroup != null ? { isGroup: params.isGroup } : {}),
+              ...(params.groupId ? { groupId: params.groupId } : {}),
+            }
+          : undefined,
+    });
 
-    let last: RouteReplyResult | undefined;
-    for (let i = 0; i < mediaUrls.length; i++) {
-      const mediaUrl = mediaUrls[i];
-      const caption = i === 0 ? text : "";
-      last = await sendOne({ text: caption, mediaUrl });
-      if (!last.ok) return last;
-    }
-
-    return last ?? { ok: true };
+    const last = results.at(-1);
+    return { ok: true, messageId: last?.messageId };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -162,20 +217,9 @@ export async function routeReply(
  */
 export function isRoutableChannel(
   channel: OriginatingChannelType | undefined,
-): channel is
-  | "telegram"
-  | "slack"
-  | "discord"
-  | "signal"
-  | "imessage"
-  | "whatsapp" {
-  if (!channel) return false;
-  return [
-    "telegram",
-    "slack",
-    "discord",
-    "signal",
-    "imessage",
-    "whatsapp",
-  ].includes(channel);
+): channel is Exclude<OriginatingChannelType, typeof INTERNAL_MESSAGE_CHANNEL> {
+  if (!channel || channel === INTERNAL_MESSAGE_CHANNEL) {
+    return false;
+  }
+  return normalizeChannelId(channel) !== null;
 }

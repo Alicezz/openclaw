@@ -1,87 +1,124 @@
-export type ThinkLevel = "off" | "minimal" | "low" | "medium" | "high";
-export type VerboseLevel = "off" | "on";
-export type ElevatedLevel = "off" | "on";
-export type ReasoningLevel = "off" | "on" | "stream";
+import {
+  formatThinkingLevels as formatThinkingLevelsFallback,
+  isBinaryThinkingProvider as isBinaryThinkingProviderFallback,
+  listThinkingLevelLabels as listThinkingLevelLabelsFallback,
+  listThinkingLevels as listThinkingLevelsFallback,
+  normalizeProviderId,
+  resolveThinkingDefaultForModel as resolveThinkingDefaultForModelFallback,
+} from "./thinking.shared.js";
+import type { ThinkLevel, ThinkingCatalogEntry } from "./thinking.shared.js";
+export {
+  formatXHighModelHint,
+  normalizeElevatedLevel,
+  normalizeFastMode,
+  normalizeNoticeLevel,
+  normalizeReasoningLevel,
+  normalizeThinkLevel,
+  normalizeUsageDisplay,
+  normalizeVerboseLevel,
+  resolveResponseUsageMode,
+  resolveElevatedMode,
+} from "./thinking.shared.js";
+export type {
+  ElevatedLevel,
+  ElevatedMode,
+  NoticeLevel,
+  ReasoningLevel,
+  ThinkLevel,
+  ThinkingCatalogEntry,
+  UsageDisplayLevel,
+  VerboseLevel,
+} from "./thinking.shared.js";
+import {
+  resolveProviderBinaryThinking,
+  resolveProviderDefaultThinkingLevel,
+  resolveProviderXHighThinking,
+} from "../plugins/provider-runtime.js";
 
-// Normalize user-provided thinking level strings to the canonical enum.
-export function normalizeThinkLevel(
-  raw?: string | null,
-): ThinkLevel | undefined {
-  if (!raw) return undefined;
-  const key = raw.toLowerCase();
-  if (["off"].includes(key)) return "off";
-  if (["min", "minimal"].includes(key)) return "minimal";
-  if (["low", "thinkhard", "think-hard", "think_hard"].includes(key))
-    return "low";
-  if (
-    ["mid", "med", "medium", "thinkharder", "think-harder", "harder"].includes(
-      key,
-    )
-  )
-    return "medium";
-  if (
-    [
-      "high",
-      "ultra",
-      "ultrathink",
-      "think-hard",
-      "thinkhardest",
-      "highest",
-      "max",
-    ].includes(key)
-  )
-    return "high";
-  if (["think"].includes(key)) return "minimal";
-  return undefined;
+export function isBinaryThinkingProvider(provider?: string | null, model?: string | null): boolean {
+  const normalizedProvider = normalizeProviderId(provider);
+  if (!normalizedProvider) {
+    return false;
+  }
+
+  const pluginDecision = resolveProviderBinaryThinking({
+    provider: normalizedProvider,
+    context: {
+      provider: normalizedProvider,
+      modelId: model?.trim() ?? "",
+    },
+  });
+  if (typeof pluginDecision === "boolean") {
+    return pluginDecision;
+  }
+  return isBinaryThinkingProviderFallback(provider);
 }
 
-// Normalize verbose flags used to toggle agent verbosity.
-export function normalizeVerboseLevel(
-  raw?: string | null,
-): VerboseLevel | undefined {
-  if (!raw) return undefined;
-  const key = raw.toLowerCase();
-  if (["off", "false", "no", "0"].includes(key)) return "off";
-  if (["on", "full", "true", "yes", "1"].includes(key)) return "on";
-  return undefined;
+export function supportsXHighThinking(provider?: string | null, model?: string | null): boolean {
+  const modelKey = model?.trim().toLowerCase();
+  if (!modelKey) {
+    return false;
+  }
+  const providerKey = normalizeProviderId(provider);
+  if (providerKey) {
+    const pluginDecision = resolveProviderXHighThinking({
+      provider: providerKey,
+      context: {
+        provider: providerKey,
+        modelId: modelKey,
+      },
+    });
+    if (typeof pluginDecision === "boolean") {
+      return pluginDecision;
+    }
+  }
+  return false;
 }
 
-// Normalize elevated flags used to toggle elevated bash permissions.
-export function normalizeElevatedLevel(
-  raw?: string | null,
-): ElevatedLevel | undefined {
-  if (!raw) return undefined;
-  const key = raw.toLowerCase();
-  if (["off", "false", "no", "0"].includes(key)) return "off";
-  if (["on", "true", "yes", "1"].includes(key)) return "on";
-  return undefined;
+export function listThinkingLevels(provider?: string | null, model?: string | null): ThinkLevel[] {
+  const levels = listThinkingLevelsFallback(provider, model);
+  if (supportsXHighThinking(provider, model)) {
+    levels.splice(levels.length - 1, 0, "xhigh");
+  }
+  return levels;
 }
 
-// Normalize reasoning visibility flags used to toggle reasoning exposure.
-export function normalizeReasoningLevel(
-  raw?: string | null,
-): ReasoningLevel | undefined {
-  if (!raw) return undefined;
-  const key = raw.toLowerCase();
-  if (
-    [
-      "off",
-      "false",
-      "no",
-      "0",
-      "hide",
-      "hidden",
-      "disable",
-      "disabled",
-    ].includes(key)
-  )
-    return "off";
-  if (
-    ["on", "true", "yes", "1", "show", "visible", "enable", "enabled"].includes(
-      key,
-    )
-  )
-    return "on";
-  if (["stream", "streaming", "draft", "live"].includes(key)) return "stream";
-  return undefined;
+export function listThinkingLevelLabels(provider?: string | null, model?: string | null): string[] {
+  if (isBinaryThinkingProvider(provider, model)) {
+    return ["off", "on"];
+  }
+  return listThinkingLevelLabelsFallback(provider, model);
+}
+
+export function formatThinkingLevels(
+  provider?: string | null,
+  model?: string | null,
+  separator = ", ",
+): string {
+  return supportsXHighThinking(provider, model)
+    ? listThinkingLevelLabels(provider, model).join(separator)
+    : formatThinkingLevelsFallback(provider, model, separator);
+}
+
+export function resolveThinkingDefaultForModel(params: {
+  provider: string;
+  model: string;
+  catalog?: ThinkingCatalogEntry[];
+}): ThinkLevel {
+  const normalizedProvider = normalizeProviderId(params.provider);
+  const candidate = params.catalog?.find(
+    (entry) => entry.provider === params.provider && entry.id === params.model,
+  );
+  const pluginDecision = resolveProviderDefaultThinkingLevel({
+    provider: normalizedProvider,
+    context: {
+      provider: normalizedProvider,
+      modelId: params.model,
+      reasoning: candidate?.reasoning,
+    },
+  });
+  if (pluginDecision) {
+    return pluginDecision;
+  }
+  return resolveThinkingDefaultForModelFallback(params);
 }

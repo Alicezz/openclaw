@@ -1,20 +1,15 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-
-import type { ClawdbotConfig } from "../../config/config.js";
-import { sendReactionWhatsApp } from "../../web/outbound.js";
-import {
-  createActionGate,
-  jsonResult,
-  readReactionParams,
-  readStringParam,
-} from "./common.js";
+import type { OpenClawConfig } from "../../config/config.js";
+import { sendReactionWhatsApp } from "../../plugin-sdk-internal/whatsapp.js";
+import { createActionGate, jsonResult, readReactionParams, readStringParam } from "./common.js";
+import { resolveAuthorizedWhatsAppOutboundTarget } from "./whatsapp-target-auth.js";
 
 export async function handleWhatsAppAction(
   params: Record<string, unknown>,
-  cfg: ClawdbotConfig,
+  cfg: OpenClawConfig,
 ): Promise<AgentToolResult<unknown>> {
   const action = readStringParam(params, "action", { required: true });
-  const isActionEnabled = createActionGate(cfg.whatsapp?.actions);
+  const isActionEnabled = createActionGate(cfg.channels?.whatsapp?.actions);
 
   if (action === "react") {
     if (!isActionEnabled("reactions")) {
@@ -29,12 +24,21 @@ export async function handleWhatsAppAction(
     const accountId = readStringParam(params, "accountId");
     const fromMeRaw = params.fromMe;
     const fromMe = typeof fromMeRaw === "boolean" ? fromMeRaw : undefined;
+
+    // Resolve account + allowFrom via shared account logic so auth and routing stay aligned.
+    const resolved = resolveAuthorizedWhatsAppOutboundTarget({
+      cfg,
+      chatJid,
+      accountId,
+      actionLabel: "reaction",
+    });
+
     const resolvedEmoji = remove ? "" : emoji;
-    await sendReactionWhatsApp(chatJid, messageId, resolvedEmoji, {
+    await sendReactionWhatsApp(resolved.to, messageId, resolvedEmoji, {
       verbose: false,
       fromMe,
       participant: participant ?? undefined,
-      accountId: accountId ?? undefined,
+      accountId: resolved.accountId,
     });
     if (!remove && !isEmpty) {
       return jsonResult({ ok: true, added: emoji });

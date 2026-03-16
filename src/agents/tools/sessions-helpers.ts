@@ -1,36 +1,94 @@
-import type { ClawdbotConfig } from "../../config/config.js";
+export type {
+  AgentToAgentPolicy,
+  SessionAccessAction,
+  SessionAccessResult,
+  SessionToolsVisibility,
+} from "./sessions-access.js";
+export {
+  createAgentToAgentPolicy,
+  createSessionVisibilityGuard,
+  resolveEffectiveSessionToolsVisibility,
+  resolveSandboxSessionToolsVisibility,
+  resolveSandboxedSessionToolContext,
+  resolveSessionToolsVisibility,
+} from "./sessions-access.js";
+import { resolveSandboxedSessionToolContext } from "./sessions-access.js";
+export type { SessionReferenceResolution } from "./sessions-resolution.js";
+export {
+  isRequesterSpawnedSessionVisible,
+  isResolvedSessionVisibleToRequester,
+  listSpawnedSessionKeys,
+  looksLikeSessionId,
+  looksLikeSessionKey,
+  resolveDisplaySessionKey,
+  resolveInternalSessionKey,
+  resolveMainSessionAlias,
+  resolveSessionReference,
+  resolveVisibleSessionReference,
+  shouldResolveSessionIdInput,
+  shouldVerifyRequesterSpawnedSessionVisibility,
+} from "./sessions-resolution.js";
+import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+import { extractTextFromChatContent } from "../../shared/chat-content.js";
+import { sanitizeUserFacingText } from "../pi-embedded-helpers.js";
+import {
+  stripDowngradedToolCallText,
+  stripMinimaxToolCallXml,
+  stripModelSpecialTokens,
+  stripThinkingTagsFromText,
+} from "../pi-embedded-utils.js";
 
 export type SessionKind = "main" | "group" | "cron" | "hook" | "node" | "other";
+
+export type SessionListDeliveryContext = {
+  channel?: string;
+  to?: string;
+  accountId?: string;
+};
+
+export type SessionListRow = {
+  key: string;
+  kind: SessionKind;
+  channel: string;
+  label?: string;
+  displayName?: string;
+  deliveryContext?: SessionListDeliveryContext;
+  updatedAt?: number | null;
+  sessionId?: string;
+  model?: string;
+  contextTokens?: number | null;
+  totalTokens?: number | null;
+  thinkingLevel?: string;
+  verboseLevel?: string;
+  systemSent?: boolean;
+  abortedLastRun?: boolean;
+  sendPolicy?: string;
+  lastChannel?: string;
+  lastTo?: string;
+  lastAccountId?: string;
+  transcriptPath?: string;
+  messages?: unknown[];
+};
 
 function normalizeKey(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
 
-export function resolveMainSessionAlias(cfg: ClawdbotConfig) {
-  const mainKey = normalizeKey(cfg.session?.mainKey) ?? "main";
-  const scope = cfg.session?.scope ?? "per-sender";
-  const alias = scope === "global" ? "global" : mainKey;
-  return { mainKey, alias, scope };
-}
-
-export function resolveDisplaySessionKey(params: {
-  key: string;
-  alias: string;
-  mainKey: string;
+export function resolveSessionToolContext(opts?: {
+  agentSessionKey?: string;
+  sandboxed?: boolean;
+  config?: OpenClawConfig;
 }) {
-  if (params.key === params.alias) return "main";
-  if (params.key === params.mainKey) return "main";
-  return params.key;
-}
-
-export function resolveInternalSessionKey(params: {
-  key: string;
-  alias: string;
-  mainKey: string;
-}) {
-  if (params.key === "main") return params.alias;
-  return params.key;
+  const cfg = opts?.config ?? loadConfig();
+  return {
+    cfg,
+    ...resolveSandboxedSessionToolContext({
+      cfg,
+      agentSessionKey: opts?.agentSessionKey,
+      sandboxed: opts?.sandboxed,
+    }),
+  };
 }
 
 export function classifySessionKind(params: {
@@ -40,37 +98,44 @@ export function classifySessionKind(params: {
   mainKey: string;
 }): SessionKind {
   const key = params.key;
-  if (key === params.alias || key === params.mainKey) return "main";
-  if (key.startsWith("cron:")) return "cron";
-  if (key.startsWith("hook:")) return "hook";
-  if (key.startsWith("node-") || key.startsWith("node:")) return "node";
-  if (params.gatewayKind === "group") return "group";
-  if (
-    key.startsWith("group:") ||
-    key.includes(":group:") ||
-    key.includes(":channel:")
-  ) {
+  if (key === params.alias || key === params.mainKey) {
+    return "main";
+  }
+  if (key.startsWith("cron:")) {
+    return "cron";
+  }
+  if (key.startsWith("hook:")) {
+    return "hook";
+  }
+  if (key.startsWith("node-") || key.startsWith("node:")) {
+    return "node";
+  }
+  if (params.gatewayKind === "group") {
+    return "group";
+  }
+  if (key.includes(":group:") || key.includes(":channel:")) {
     return "group";
   }
   return "other";
 }
 
-export function deriveProvider(params: {
+export function deriveChannel(params: {
   key: string;
   kind: SessionKind;
-  provider?: string | null;
-  lastProvider?: string | null;
+  channel?: string | null;
+  lastChannel?: string | null;
 }): string {
-  if (
-    params.kind === "cron" ||
-    params.kind === "hook" ||
-    params.kind === "node"
-  )
+  if (params.kind === "cron" || params.kind === "hook" || params.kind === "node") {
     return "internal";
-  const provider = normalizeKey(params.provider ?? undefined);
-  if (provider) return provider;
-  const lastProvider = normalizeKey(params.lastProvider ?? undefined);
-  if (lastProvider) return lastProvider;
+  }
+  const channel = normalizeKey(params.channel ?? undefined);
+  if (channel) {
+    return channel;
+  }
+  const lastChannel = normalizeKey(params.lastChannel ?? undefined);
+  if (lastChannel) {
+    return lastChannel;
+  }
   const parts = params.key.split(":").filter(Boolean);
   if (parts.length >= 3 && (parts[1] === "group" || parts[1] === "channel")) {
     return parts[0];
@@ -80,26 +145,48 @@ export function deriveProvider(params: {
 
 export function stripToolMessages(messages: unknown[]): unknown[] {
   return messages.filter((msg) => {
-    if (!msg || typeof msg !== "object") return true;
+    if (!msg || typeof msg !== "object") {
+      return true;
+    }
     const role = (msg as { role?: unknown }).role;
-    return role !== "toolResult";
+    return role !== "toolResult" && role !== "tool";
   });
 }
 
-export function extractAssistantText(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") return undefined;
-  if ((message as { role?: unknown }).role !== "assistant") return undefined;
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return undefined;
-  const chunks: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    if ((block as { type?: unknown }).type !== "text") continue;
-    const text = (block as { text?: unknown }).text;
-    if (typeof text === "string" && text.trim()) {
-      chunks.push(text);
-    }
+/**
+ * Sanitize text content to strip tool call markers and thinking tags.
+ * This ensures user-facing text doesn't leak internal tool representations.
+ */
+export function sanitizeTextContent(text: string): string {
+  if (!text) {
+    return text;
   }
-  const joined = chunks.join("").trim();
-  return joined ? joined : undefined;
+  return stripThinkingTagsFromText(
+    stripDowngradedToolCallText(stripModelSpecialTokens(stripMinimaxToolCallXml(text))),
+  );
+}
+
+export function extractAssistantText(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+  if ((message as { role?: unknown }).role !== "assistant") {
+    return undefined;
+  }
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+  const joined =
+    extractTextFromChatContent(content, {
+      sanitizeText: sanitizeTextContent,
+      joinWith: "",
+      normalizeText: (text) => text.trim(),
+    }) ?? "";
+  const stopReason = (message as { stopReason?: unknown }).stopReason;
+  // Gate on stopReason only — a non-error response with a stale/background errorMessage
+  // should not have its content rewritten with error templates (#13935).
+  const errorContext = stopReason === "error";
+
+  return joined ? sanitizeUserFacingText(joined, { errorContext }) : undefined;
 }

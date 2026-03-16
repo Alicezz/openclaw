@@ -1,198 +1,125 @@
 ---
-summary: "CLI onboarding wizard: guided setup for gateway, workspace, providers, and skills"
+summary: "CLI setup wizard: guided setup for gateway, workspace, channels, and skills"
 read_when:
-  - Running or configuring the onboarding wizard
+  - Running or configuring the setup wizard
   - Setting up a new machine
+title: "Setup Wizard (CLI)"
+sidebarTitle: "Onboarding: CLI"
 ---
 
-# Onboarding Wizard (CLI)
+# Setup Wizard (CLI)
 
-The onboarding wizard is the **recommended** way to set up Clawdbot on macOS,
+The setup wizard is the **recommended** way to set up OpenClaw on macOS,
 Linux, or Windows (via WSL2; strongly recommended).
-It configures a local Gateway or a remote Gateway connection, plus providers, skills,
+It configures a local Gateway or a remote Gateway connection, plus channels, skills,
 and workspace defaults in one guided flow.
 
-Primary entrypoint:
-
 ```bash
-clawdbot onboard
+openclaw onboard
 ```
 
-Follow‑up reconfiguration:
+<Info>
+Fastest first chat: open the Control UI (no channel setup needed). Run
+`openclaw dashboard` and chat in the browser. Docs: [Dashboard](/web/dashboard).
+</Info>
+
+To reconfigure later:
 
 ```bash
-clawdbot configure
+openclaw configure
+openclaw agents add <name>
 ```
 
-## What the wizard does
+<Note>
+`--json` does not imply non-interactive mode. For scripts, use `--non-interactive`.
+</Note>
 
-**Local mode (default)** walks you through:
-- Model/auth (Anthropic or OpenAI Codex OAuth recommended, API key optional, Minimax M2.1 via LM Studio)
-- Workspace location + bootstrap files
-- Gateway settings (port/bind/auth/tailscale)
-- Providers (WhatsApp, Telegram, Discord, Signal)
-- Daemon install (LaunchAgent / systemd user unit)
-- Health check
-- Skills (recommended)
+<Tip>
+The setup wizard includes a web search step where you can pick a provider
+(Perplexity, Brave, Gemini, Grok, or Kimi) and paste your API key so the agent
+can use `web_search`. You can also configure this later with
+`openclaw configure --section web`. Docs: [Web tools](/tools/web).
+</Tip>
+
+## QuickStart vs Advanced
+
+The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
+
+<Tabs>
+  <Tab title="QuickStart (defaults)">
+    - Local gateway (loopback)
+    - Workspace default (or existing workspace)
+    - Gateway port **18789**
+    - Gateway auth **Token** (auto‑generated, even on loopback)
+    - Tool policy default for new local setups: `tools.profile: "coding"` (existing explicit profile is preserved)
+    - DM isolation default: local onboarding writes `session.dmScope: "per-channel-peer"` when unset. Details: [CLI Setup Reference](/start/wizard-cli-reference#outputs-and-internals)
+    - Tailscale exposure **Off**
+    - Telegram + WhatsApp DMs default to **allowlist** (you'll be prompted for your phone number)
+  </Tab>
+  <Tab title="Advanced (full control)">
+    - Exposes every step (mode, workspace, gateway, channels, daemon, skills).
+  </Tab>
+</Tabs>
+
+## What the wizard configures
+
+**Local mode (default)** walks you through these steps:
+
+1. **Model/Auth** — choose any supported provider/auth flow (API key, OAuth, or setup-token), including Custom Provider
+   (OpenAI-compatible, Anthropic-compatible, or Unknown auto-detect). Pick a default model.
+   Security note: if this agent will run tools or process webhook/hooks content, prefer the strongest latest-generation model available and keep tool policy strict. Weaker/older tiers are easier to prompt-inject.
+   For non-interactive runs, `--secret-input-mode ref` stores env-backed refs in auth profiles instead of plaintext API key values.
+   In non-interactive `ref` mode, the provider env var must be set; passing inline key flags without that env var fails fast.
+   In interactive runs, choosing secret reference mode lets you point at either an environment variable or a configured provider ref (`file` or `exec`), with a fast preflight validation before saving.
+2. **Workspace** — Location for agent files (default `~/.openclaw/workspace`). Seeds bootstrap files.
+3. **Gateway** — Port, bind address, auth mode, Tailscale exposure.
+   In interactive token mode, choose default plaintext token storage or opt into SecretRef.
+   Non-interactive token SecretRef path: `--gateway-token-ref-env <ENV_VAR>`.
+4. **Channels** — WhatsApp, Telegram, Discord, Google Chat, Mattermost, Signal, BlueBubbles, or iMessage.
+5. **Daemon** — Installs a LaunchAgent (macOS) or systemd user unit (Linux/WSL2).
+   If token auth requires a token and `gateway.auth.token` is SecretRef-managed, daemon install validates it but does not persist the resolved token into supervisor service environment metadata.
+   If token auth requires a token and the configured token SecretRef is unresolved, daemon install is blocked with actionable guidance.
+   If both `gateway.auth.token` and `gateway.auth.password` are configured and `gateway.auth.mode` is unset, daemon install is blocked until mode is set explicitly.
+6. **Health check** — Starts the Gateway and verifies it's running.
+7. **Skills** — Installs recommended skills and optional dependencies.
+
+<Note>
+Re-running the wizard does **not** wipe anything unless you explicitly choose **Reset** (or pass `--reset`).
+CLI `--reset` defaults to config, credentials, and sessions; use `--reset-scope full` to include workspace.
+If the config is invalid or contains legacy keys, the wizard asks you to run `openclaw doctor` first.
+</Note>
 
 **Remote mode** only configures the local client to connect to a Gateway elsewhere.
 It does **not** install or change anything on the remote host.
 
-To add more isolated agents (separate workspace + sessions + auth), use:
-
-```bash
-clawdbot agents add <name>
-```
-
-## Flow details (local)
-
-1) **Existing config detection**
-   - If `~/.clawdbot/clawdbot.json` exists, choose **Keep / Modify / Reset**.
-   - Reset uses `trash` (never `rm`) and offers scopes:
-     - Config only
-     - Config + credentials + sessions
-     - Full reset (also removes workspace)
-
-2) **Model/Auth**
-   - **Anthropic OAuth (recommended)**: browser flow; paste the `code#state`.
-   - **OpenAI Codex OAuth**: browser flow; paste the `code#state`.
-     - Sets `agent.model` to `openai-codex/gpt-5.2` when model is unset or `openai/*`.
-   - **API key**: stores the key for you.
-   - **Minimax M2.1 (LM Studio)**: config is auto‑written for the LM Studio endpoint.
-   - **Skip**: no auth configured yet.
-   - Wizard runs a model check and warns if the configured model is unknown or missing auth.
-  - OAuth credentials live in `~/.clawdbot/credentials/oauth.json`; auth profiles live in `~/.clawdbot/agents/<agentId>/agent/auth-profiles.json` (API keys + OAuth).
-
-3) **Workspace**
-   - Default `~/clawd` (configurable).
-   - Seeds the workspace files needed for the agent bootstrap ritual.
-   - Full workspace layout + backup guide: [`docs/agent-workspace.md`](/concepts/agent-workspace)
-
-4) **Gateway**
-   - Port, bind, auth mode, tailscale exposure.
-   - Auth recommendation: keep **Off** for single-machine loopback setups. Use **Token** for multi-machine access or non-loopback binds.
-   - Non‑loopback binds require auth.
-
-5) **Providers**
-   - WhatsApp: optional QR login.
-   - Telegram: bot token.
-   - Discord: bot token.
-   - Signal: optional `signal-cli` install + account config.
-   - iMessage: local `imsg` CLI path + DB access.
-   - DM security: default is pairing (unknown DMs get a pairing code). Approve via `clawdbot pairing approve --provider <provider> <code>`.
-
-6) **Daemon install**
-   - macOS: LaunchAgent
-     - Requires a logged-in user session; for headless, use a custom LaunchDaemon (not shipped).
-   - Linux (and Windows via WSL2): systemd user unit
-     - Wizard attempts to enable lingering via `loginctl enable-linger <user>` so the Gateway stays up after logout.
-     - May prompt for sudo (writes `/var/lib/systemd/linger`); it tries without sudo first.
-   - **Runtime selection:** Node (recommended; required for WhatsApp) or Bun (faster, but incompatible with WhatsApp).
-
-7) **Health check**
-   - Starts the Gateway (if needed) and runs `clawdbot health`.
-
-8) **Skills (recommended)**
-   - Reads the available skills and checks requirements.
-   - Lets you choose a node manager: **npm / pnpm / bun**.
-   - Installs optional dependencies (some use Homebrew on macOS).
-
-9) **Finish**
-   - Summary + next steps, including iOS/Android/macOS apps for extra features.
-   - If no GUI is detected, the wizard prints SSH port-forward instructions for the Control UI instead of opening a browser.
-
-## Remote mode
-
-Remote mode configures a local client to connect to a Gateway elsewhere.
-
-What you’ll set:
-- Remote Gateway URL (`ws://...`)
-- Optional token
-
-Notes:
-- No remote installs or daemon changes are performed.
-- If the Gateway is loopback‑only, use SSH tunneling or a tailnet.
-- Discovery hints:
-  - macOS: Bonjour (`dns-sd`)
-  - Linux: Avahi (`avahi-browse`)
-
 ## Add another agent
 
-Use `clawdbot agents add <name>` to create a separate agent with its own workspace,
+Use `openclaw agents add <name>` to create a separate agent with its own workspace,
 sessions, and auth profiles. Running without `--workspace` launches the wizard.
 
 What it sets:
-- `routing.agents.<agentId>.name`
-- `routing.agents.<agentId>.workspace`
-- `routing.agents.<agentId>.agentDir`
+
+- `agents.list[].name`
+- `agents.list[].workspace`
+- `agents.list[].agentDir`
 
 Notes:
-- Default workspaces follow `~/clawd-<agentId>`.
-- Add `routing.bindings` to route inbound messages (the wizard can do this).
 
-## Non‑interactive mode
+- Default workspaces follow `~/.openclaw/workspace-<agentId>`.
+- Add `bindings` to route inbound messages (the wizard can do this).
+- Non-interactive flags: `--model`, `--agent-dir`, `--bind`, `--non-interactive`.
 
-Use `--non-interactive` to automate or script onboarding:
+## Full reference
 
-```bash
-clawdbot onboard --non-interactive \
-  --mode local \
-  --auth-choice apiKey \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --gateway-port 18789 \
-  --gateway-bind loopback \
-  --install-daemon \
-  --daemon-runtime node \
-  --skip-skills
-```
-
-Add `--json` for a machine‑readable summary.
-
-Add agent (non‑interactive) example:
-
-```bash
-clawdbot agents add work --workspace ~/clawd-work
-```
-
-## Gateway wizard RPC
-
-The Gateway exposes the wizard flow over RPC (`wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`).
-Clients (macOS app, Control UI) can render steps without re‑implementing onboarding logic.
-
-## Signal setup (signal-cli)
-
-The wizard can install `signal-cli` from GitHub releases:
-- Downloads the appropriate release asset.
-- Stores it under `~/.clawdbot/tools/signal-cli/<version>/`.
-- Writes `signal.cliPath` to your config.
-
-Notes:
-- JVM builds require **Java 21**.
-- Native builds are used when available.
-- Windows uses WSL2; signal-cli install follows the Linux flow inside WSL.
-
-## What the wizard writes
-
-Typical fields in `~/.clawdbot/clawdbot.json`:
-- `agent.workspace`
-- `agent.model` / `models.providers` (if Minimax chosen)
-- `gateway.*` (mode, bind, auth, tailscale)
-- `telegram.botToken`, `discord.token`, `signal.*`, `imessage.*`
-- `skills.install.nodeManager`
-- `wizard.lastRunAt`
-- `wizard.lastRunVersion`
-- `wizard.lastRunCommit`
-- `wizard.lastRunCommand`
-- `wizard.lastRunMode`
-
-`clawdbot agents add` writes `routing.agents.<agentId>` and optional `routing.bindings`.
-
-WhatsApp credentials go under `~/.clawdbot/credentials/whatsapp/<accountId>/`.
-Sessions are stored under `~/.clawdbot/agents/<agentId>/sessions/`.
+For detailed step-by-step breakdowns and config outputs, see
+[CLI Setup Reference](/start/wizard-cli-reference).
+For non-interactive examples, see [CLI Automation](/start/wizard-cli-automation).
+For the deeper technical reference, including RPC details, see
+[Wizard Reference](/reference/wizard).
 
 ## Related docs
 
-- macOS app onboarding: [`docs/onboarding.md`](/start/onboarding)
-- Config reference: [`docs/configuration.md`](/gateway/configuration)
-- Providers: [`docs/whatsapp.md`](/providers/whatsapp), [`docs/telegram.md`](/providers/telegram), [`docs/discord.md`](/providers/discord), [`docs/signal.md`](/providers/signal), [`docs/imessage.md`](/providers/imessage)
-- Skills: [`docs/skills.md`](/tools/skills), [`docs/skills-config.md`](/tools/skills-config)
+- CLI command reference: [`openclaw onboard`](/cli/onboard)
+- Onboarding overview: [Onboarding Overview](/start/onboarding-overview)
+- macOS app onboarding: [Onboarding](/start/onboarding)
+- Agent first-run ritual: [Agent Bootstrapping](/start/bootstrapping)

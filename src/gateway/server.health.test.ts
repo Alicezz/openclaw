@@ -1,42 +1,50 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, test } from "vitest";
-import { WebSocket } from "ws";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { emitHeartbeatEvent } from "../infra/heartbeat-events.js";
-import {
-  connectOk,
-  getFreePort,
-  installGatewayTestHooks,
-  onceMessage,
-  startGatewayServer,
-  startServerWithClient,
-} from "./test-helpers.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
+import { startGatewayServerHarness, type GatewayServerHarness } from "./server.e2e-ws-harness.js";
+import { installGatewayTestHooks, onceMessage } from "./test-helpers.js";
 
-installGatewayTestHooks();
+installGatewayTestHooks({ scope: "suite" });
+const HEALTH_E2E_TIMEOUT_MS = 20_000;
+const PRESENCE_EVENT_TIMEOUT_MS = 6_000;
+const SHUTDOWN_EVENT_TIMEOUT_MS = 3_000;
+const FINGERPRINT_TIMEOUT_MS = 3_000;
+const CLI_PRESENCE_TIMEOUT_MS = 3_000;
+
+let harness: GatewayServerHarness;
+
+type GatewayFrame = {
+  type?: string;
+  id?: string;
+  ok?: boolean;
+  event?: string;
+  payload?: Record<string, unknown> | null;
+  seq?: number;
+  stateVersion?: { presence?: number; [key: string]: unknown };
+};
+
+beforeAll(async () => {
+  harness = await startGatewayServerHarness();
+});
+
+afterAll(async () => {
+  await harness.close();
+});
 
 describe("gateway server health/presence", () => {
   test(
     "connect + health + presence + status succeed",
-    { timeout: 8000 },
+    { timeout: HEALTH_E2E_TIMEOUT_MS },
     async () => {
-      const { server, ws } = await startServerWithClient();
-      await connectOk(ws);
+      const { ws } = await harness.openClient();
 
-      const healthP = onceMessage(
-        ws,
-        (o) => o.type === "res" && o.id === "health1",
-      );
-      const statusP = onceMessage(
-        ws,
-        (o) => o.type === "res" && o.id === "status1",
-      );
-      const presenceP = onceMessage(
+      const healthP = onceMessage<GatewayFrame>(ws, (o) => o.type === "res" && o.id === "health1");
+      const statusP = onceMessage<GatewayFrame>(ws, (o) => o.type === "res" && o.id === "status1");
+      const presenceP = onceMessage<GatewayFrame>(
         ws,
         (o) => o.type === "res" && o.id === "presence1",
-      );
-      const providersP = onceMessage(
-        ws,
-        (o) => o.type === "res" && o.id === "providers1",
       );
 
       const sendReq = (id: string, method: string) =>
@@ -44,20 +52,16 @@ describe("gateway server health/presence", () => {
       sendReq("health1", "health");
       sendReq("status1", "status");
       sendReq("presence1", "system-presence");
-      sendReq("providers1", "providers.status");
 
       const health = await healthP;
       const status = await statusP;
       const presence = await presenceP;
-      const providers = await providersP;
       expect(health.ok).toBe(true);
       expect(status.ok).toBe(true);
       expect(presence.ok).toBe(true);
-      expect(providers.ok).toBe(true);
       expect(Array.isArray(presence.payload)).toBe(true);
 
       ws.close();
-      await server.close();
     },
   );
 
@@ -76,15 +80,8 @@ describe("gateway server health/presence", () => {
       event: string;
       payload?: HeartbeatPayload | null;
     };
-    type ResFrame = {
-      type: "res";
-      id: string;
-      ok: boolean;
-      payload?: unknown;
-    };
 
-    const { server, ws } = await startServerWithClient();
-    await connectOk(ws);
+    const { ws } = await harness.openClient();
 
     const waitHeartbeat = onceMessage<EventFrame>(
       ws,
@@ -102,10 +99,7 @@ describe("gateway server health/presence", () => {
         method: "last-heartbeat",
       }),
     );
-    const last = await onceMessage<ResFrame>(
-      ws,
-      (o) => o.type === "res" && o.id === "hb-last",
-    );
+    const last = await onceMessage<GatewayFrame>(ws, (o) => o.type === "res" && o.id === "hb-last");
     expect(last.ok).toBe(true);
     const lastPayload = last.payload as HeartbeatPayload | null | undefined;
     expect(lastPayload?.status).toBe("sent");
@@ -119,27 +113,23 @@ describe("gateway server health/presence", () => {
         params: { enabled: false },
       }),
     );
-    const toggle = await onceMessage<ResFrame>(
+    const toggle = await onceMessage<GatewayFrame>(
       ws,
       (o) => o.type === "res" && o.id === "hb-toggle-off",
     );
     expect(toggle.ok).toBe(true);
-    expect((toggle.payload as { enabled?: boolean } | undefined)?.enabled).toBe(
-      false,
-    );
+    expect((toggle.payload as { enabled?: boolean } | undefined)?.enabled).toBe(false);
 
     ws.close();
-    await server.close();
   });
 
   test(
     "presence events carry seq + stateVersion",
-    { timeout: 8000 },
+    { timeout: PRESENCE_EVENT_TIMEOUT_MS },
     async () => {
-      const { server, ws } = await startServerWithClient();
-      await connectOk(ws);
+      const { ws } = await harness.openClient();
 
-      const presenceEventP = onceMessage(
+      const presenceEventP = onceMessage<GatewayFrame>(
         ws,
         (o) => o.type === "event" && o.event === "presence",
       );
@@ -155,19 +145,18 @@ describe("gateway server health/presence", () => {
       const evt = await presenceEventP;
       expect(typeof evt.seq).toBe("number");
       expect(evt.stateVersion?.presence).toBeGreaterThan(0);
-      expect(Array.isArray(evt.payload?.presence)).toBe(true);
+      const evtPayload = evt.payload as { presence?: unknown } | undefined;
+      expect(Array.isArray(evtPayload?.presence)).toBe(true);
 
       ws.close();
-      await server.close();
     },
   );
 
-  test("agent events stream with seq", { timeout: 8000 }, async () => {
-    const { server, ws } = await startServerWithClient();
-    await connectOk(ws);
+  test("agent events stream with seq", { timeout: PRESENCE_EVENT_TIMEOUT_MS }, async () => {
+    const { ws } = await harness.openClient();
 
     const runId = randomUUID();
-    const evtPromise = onceMessage(
+    const evtPromise = onceMessage<GatewayFrame>(
       ws,
       (o) =>
         o.type === "event" &&
@@ -177,46 +166,42 @@ describe("gateway server health/presence", () => {
     );
     emitAgentEvent({ runId, stream: "lifecycle", data: { msg: "hi" } });
     const evt = await evtPromise;
-    expect(evt.payload.runId).toBe(runId);
+    const payload = evt.payload as Record<string, unknown> | undefined;
+    expect(payload?.runId).toBe(runId);
     expect(typeof evt.seq).toBe("number");
-    expect(evt.payload.data.msg).toBe("hi");
+    const data = payload?.data as Record<string, unknown> | undefined;
+    expect(data?.msg).toBe("hi");
 
     ws.close();
-    await server.close();
   });
 
-  test("shutdown event is broadcast on close", { timeout: 8000 }, async () => {
-    const { server, ws } = await startServerWithClient();
-    await connectOk(ws);
-
-    const shutdownP = onceMessage(
+  test("shutdown event is broadcast on close", { timeout: PRESENCE_EVENT_TIMEOUT_MS }, async () => {
+    const localHarness = await startGatewayServerHarness();
+    const { ws } = await localHarness.openClient();
+    const shutdownP = onceMessage<GatewayFrame>(
       ws,
       (o) => o.type === "event" && o.event === "shutdown",
-      5000,
+      SHUTDOWN_EVENT_TIMEOUT_MS,
     );
-    await server.close();
+    await localHarness.close();
     const evt = await shutdownP;
-    expect(evt.payload?.reason).toBeDefined();
+    const evtPayload = evt.payload as { reason?: unknown } | undefined;
+    expect(evtPayload?.reason).toBeDefined();
   });
 
   test(
     "presence broadcast reaches multiple clients",
-    { timeout: 8000 },
+    { timeout: PRESENCE_EVENT_TIMEOUT_MS },
     async () => {
-      const port = await getFreePort();
-      const server = await startGatewayServer(port);
-      const mkClient = async () => {
-        const c = new WebSocket(`ws://127.0.0.1:${port}`);
-        await new Promise<void>((resolve) => c.once("open", resolve));
-        await connectOk(c);
-        return c;
-      };
-
-      const clients = await Promise.all([mkClient(), mkClient(), mkClient()]);
-      const waits = clients.map((c) =>
-        onceMessage(c, (o) => o.type === "event" && o.event === "presence"),
+      const clients = await Promise.all([
+        harness.openClient(),
+        harness.openClient(),
+        harness.openClient(),
+      ]);
+      const waits = clients.map(({ ws }) =>
+        onceMessage<GatewayFrame>(ws, (o) => o.type === "event" && o.event === "presence"),
       );
-      clients[0].send(
+      clients[0].ws.send(
         JSON.stringify({
           type: "req",
           id: "broadcast",
@@ -226,32 +211,37 @@ describe("gateway server health/presence", () => {
       );
       const events = await Promise.all(waits);
       for (const evt of events) {
-        expect(evt.payload?.presence?.length).toBeGreaterThan(0);
+        const evtPayload = evt.payload as { presence?: unknown[] } | undefined;
+        expect(evtPayload?.presence?.length).toBeGreaterThan(0);
         expect(typeof evt.seq).toBe("number");
       }
-      for (const c of clients) c.close();
-      await server.close();
+      for (const { ws } of clients) {
+        ws.close();
+      }
     },
   );
 
   test("presence includes client fingerprint", async () => {
-    const { server, ws } = await startServerWithClient();
-    await connectOk(ws, {
+    const role = "operator";
+    const scopes: string[] = ["operator.admin"];
+    const { ws } = await harness.openClient({
+      role,
+      scopes,
       client: {
-        name: "fingerprint",
+        id: GATEWAY_CLIENT_NAMES.FINGERPRINT,
         version: "9.9.9",
         platform: "test",
         deviceFamily: "iPad",
         modelIdentifier: "iPad16,6",
-        mode: "ui",
+        mode: GATEWAY_CLIENT_MODES.UI,
         instanceId: "abc",
       },
     });
 
-    const presenceP = onceMessage(
+    const presenceP = onceMessage<GatewayFrame>(
       ws,
       (o) => o.type === "res" && o.id === "fingerprint",
-      4000,
+      FINGERPRINT_TIMEOUT_MS,
     );
     ws.send(
       JSON.stringify({
@@ -261,36 +251,42 @@ describe("gateway server health/presence", () => {
       }),
     );
 
-    const presenceRes = await presenceP;
-    const entries = presenceRes.payload as Array<Record<string, unknown>>;
-    const clientEntry = entries.find((e) => e.instanceId === "abc");
-    expect(clientEntry?.host).toBe("fingerprint");
+    const presenceRes = (await presenceP) as { ok?: boolean; payload?: unknown };
+    expect(presenceRes.ok).toBe(true);
+    const presencePayload = presenceRes.payload;
+    const entries = Array.isArray(presencePayload)
+      ? presencePayload
+      : Array.isArray((presencePayload as { presence?: unknown } | undefined)?.presence)
+        ? ((presencePayload as { presence: Array<Record<string, unknown>> }).presence ?? [])
+        : [];
+    const clientEntry = entries.find(
+      (e) => e.host === GATEWAY_CLIENT_NAMES.FINGERPRINT && e.version === "9.9.9",
+    );
+    expect(clientEntry?.host).toBe(GATEWAY_CLIENT_NAMES.FINGERPRINT);
     expect(clientEntry?.version).toBe("9.9.9");
     expect(clientEntry?.mode).toBe("ui");
     expect(clientEntry?.deviceFamily).toBe("iPad");
     expect(clientEntry?.modelIdentifier).toBe("iPad16,6");
 
     ws.close();
-    await server.close();
   });
 
   test("cli connections are not tracked as instances", async () => {
-    const { server, ws } = await startServerWithClient();
     const cliId = `cli-${randomUUID()}`;
-    await connectOk(ws, {
+    const { ws } = await harness.openClient({
       client: {
-        name: "cli",
+        id: GATEWAY_CLIENT_NAMES.CLI,
         version: "dev",
         platform: "test",
-        mode: "cli",
+        mode: GATEWAY_CLIENT_MODES.CLI,
         instanceId: cliId,
       },
     });
 
-    const presenceP = onceMessage(
+    const presenceP = onceMessage<GatewayFrame>(
       ws,
       (o) => o.type === "res" && o.id === "cli-presence",
-      4000,
+      CLI_PRESENCE_TIMEOUT_MS,
     );
     ws.send(
       JSON.stringify({
@@ -301,10 +297,9 @@ describe("gateway server health/presence", () => {
     );
 
     const presenceRes = await presenceP;
-    const entries = presenceRes.payload as Array<Record<string, unknown>>;
+    const entries = (presenceRes.payload ?? []) as Array<Record<string, unknown>>;
     expect(entries.some((e) => e.instanceId === cliId)).toBe(false);
 
     ws.close();
-    await server.close();
   });
 });

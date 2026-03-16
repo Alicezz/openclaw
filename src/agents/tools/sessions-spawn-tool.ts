@@ -1,294 +1,212 @@
-import crypto from "node:crypto";
-
 import { Type } from "@sinclair/typebox";
-
-import { loadConfig } from "../../config/config.js";
-import { callGateway } from "../../gateway/call.js";
-import {
-  isSubagentSessionKey,
-  normalizeAgentId,
-  parseAgentSessionKey,
-} from "../../routing/session-key.js";
-import {
-  buildSubagentSystemPrompt,
-  runSubagentAnnounceFlow,
-} from "../subagent-announce.js";
-import {
-  beginSubagentAnnounce,
-  registerSubagentRun,
-} from "../subagent-registry.js";
-import { readLatestAssistantReply } from "./agent-step.js";
+import type { GatewayMessageChannel } from "../../utils/message-channel.js";
+import { ACP_SPAWN_MODES, ACP_SPAWN_STREAM_TARGETS, spawnAcpDirect } from "../acp-spawn.js";
+import { optionalStringEnum } from "../schema/typebox.js";
+import type { SpawnedToolContext } from "../spawned-context.js";
+import { SUBAGENT_SPAWN_MODES, spawnSubagentDirect } from "../subagent-spawn.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readStringParam } from "./common.js";
-import {
-  resolveDisplaySessionKey,
-  resolveInternalSessionKey,
-  resolveMainSessionAlias,
-} from "./sessions-helpers.js";
+import { jsonResult, readStringParam, ToolInputError } from "./common.js";
+
+const SESSIONS_SPAWN_RUNTIMES = ["subagent", "acp"] as const;
+const SESSIONS_SPAWN_SANDBOX_MODES = ["inherit", "require"] as const;
+const UNSUPPORTED_SESSIONS_SPAWN_PARAM_KEYS = [
+  "target",
+  "transport",
+  "channel",
+  "to",
+  "threadId",
+  "thread_id",
+  "replyTo",
+  "reply_to",
+] as const;
 
 const SessionsSpawnToolSchema = Type.Object({
   task: Type.String(),
   label: Type.Optional(Type.String()),
+  runtime: optionalStringEnum(SESSIONS_SPAWN_RUNTIMES),
+  agentId: Type.Optional(Type.String()),
+  resumeSessionId: Type.Optional(
+    Type.String({
+      description:
+        'Resume an existing agent session by its ID (e.g. a Codex session UUID from ~/.codex/sessions/). Requires runtime="acp". The agent replays conversation history via session/load instead of starting fresh.',
+    }),
+  ),
   model: Type.Optional(Type.String()),
-  timeoutSeconds: Type.Optional(Type.Integer({ minimum: 0 })),
-  cleanup: Type.Optional(
-    Type.Union([Type.Literal("delete"), Type.Literal("keep")]),
+  thinking: Type.Optional(Type.String()),
+  cwd: Type.Optional(Type.String()),
+  runTimeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+  // Back-compat: older callers used timeoutSeconds for this tool.
+  timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+  thread: Type.Optional(Type.Boolean()),
+  mode: optionalStringEnum(SUBAGENT_SPAWN_MODES),
+  cleanup: optionalStringEnum(["delete", "keep"] as const),
+  sandbox: optionalStringEnum(SESSIONS_SPAWN_SANDBOX_MODES),
+  streamTo: optionalStringEnum(ACP_SPAWN_STREAM_TARGETS),
+
+  // Inline attachments (snapshot-by-value).
+  // NOTE: Attachment contents are redacted from transcript persistence by sanitizeToolCallInputs.
+  attachments: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        content: Type.String(),
+        encoding: Type.Optional(optionalStringEnum(["utf8", "base64"] as const)),
+        mimeType: Type.Optional(Type.String()),
+      }),
+      { maxItems: 50 },
+    ),
+  ),
+  attachAs: Type.Optional(
+    Type.Object({
+      // Where the spawned agent should look for attachments.
+      // Kept as a hint; implementation materializes into the child workspace.
+      mountPath: Type.Optional(Type.String()),
+    }),
   ),
 });
 
-export function createSessionsSpawnTool(opts?: {
-  agentSessionKey?: string;
-  agentProvider?: string;
-  sandboxed?: boolean;
-}): AnyAgentTool {
+export function createSessionsSpawnTool(
+  opts?: {
+    agentSessionKey?: string;
+    agentChannel?: GatewayMessageChannel;
+    agentAccountId?: string;
+    agentTo?: string;
+    agentThreadId?: string | number;
+    sandboxed?: boolean;
+    /** Explicit agent ID override for cron/hook sessions where session key parsing may not work. */
+    requesterAgentIdOverride?: string;
+  } & SpawnedToolContext,
+): AnyAgentTool {
   return {
     label: "Sessions",
     name: "sessions_spawn",
     description:
-      "Spawn a background sub-agent run in an isolated session and announce the result back to the requester chat.",
+      'Spawn an isolated session (runtime="subagent" or runtime="acp"). mode="run" is one-shot and mode="session" is persistent/thread-bound. Subagents inherit the parent workspace directory automatically.',
     parameters: SessionsSpawnToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
+      const unsupportedParam = UNSUPPORTED_SESSIONS_SPAWN_PARAM_KEYS.find((key) =>
+        Object.hasOwn(params, key),
+      );
+      if (unsupportedParam) {
+        throw new ToolInputError(
+          `sessions_spawn does not support "${unsupportedParam}". Use "message" or "sessions_send" for channel delivery.`,
+        );
+      }
       const task = readStringParam(params, "task", { required: true });
       const label = typeof params.label === "string" ? params.label.trim() : "";
-      const model = readStringParam(params, "model");
+      const runtime = params.runtime === "acp" ? "acp" : "subagent";
+      const requestedAgentId = readStringParam(params, "agentId");
+      const resumeSessionId = readStringParam(params, "resumeSessionId");
+      const modelOverride = readStringParam(params, "model");
+      const thinkingOverrideRaw = readStringParam(params, "thinking");
+      const cwd = readStringParam(params, "cwd");
+      const mode = params.mode === "run" || params.mode === "session" ? params.mode : undefined;
       const cleanup =
-        params.cleanup === "keep" || params.cleanup === "delete"
-          ? (params.cleanup as "keep" | "delete")
-          : "keep";
-      const timeoutSeconds =
-        typeof params.timeoutSeconds === "number" &&
-        Number.isFinite(params.timeoutSeconds)
-          ? Math.max(0, Math.floor(params.timeoutSeconds))
-          : 0;
-      const timeoutMs = timeoutSeconds * 1000;
-      let modelWarning: string | undefined;
-      let modelApplied = false;
+        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
+      const sandbox = params.sandbox === "require" ? "require" : "inherit";
+      const streamTo = params.streamTo === "parent" ? "parent" : undefined;
+      // Back-compat: older callers used timeoutSeconds for this tool.
+      const timeoutSecondsCandidate =
+        typeof params.runTimeoutSeconds === "number"
+          ? params.runTimeoutSeconds
+          : typeof params.timeoutSeconds === "number"
+            ? params.timeoutSeconds
+            : undefined;
+      const runTimeoutSeconds =
+        typeof timeoutSecondsCandidate === "number" && Number.isFinite(timeoutSecondsCandidate)
+          ? Math.max(0, Math.floor(timeoutSecondsCandidate))
+          : undefined;
+      const thread = params.thread === true;
+      const attachments = Array.isArray(params.attachments)
+        ? (params.attachments as Array<{
+            name: string;
+            content: string;
+            encoding?: "utf8" | "base64";
+            mimeType?: string;
+          }>)
+        : undefined;
 
-      const cfg = loadConfig();
-      const { mainKey, alias } = resolveMainSessionAlias(cfg);
-      const requesterSessionKey = opts?.agentSessionKey;
-      if (
-        typeof requesterSessionKey === "string" &&
-        isSubagentSessionKey(requesterSessionKey)
-      ) {
-        return jsonResult({
-          status: "forbidden",
-          error: "sessions_spawn is not allowed from sub-agent sessions",
-        });
-      }
-      const requesterInternalKey = requesterSessionKey
-        ? resolveInternalSessionKey({
-            key: requesterSessionKey,
-            alias,
-            mainKey,
-          })
-        : alias;
-      const requesterDisplayKey = resolveDisplaySessionKey({
-        key: requesterInternalKey,
-        alias,
-        mainKey,
-      });
-
-      const requesterAgentId = normalizeAgentId(
-        parseAgentSessionKey(requesterInternalKey)?.agentId,
-      );
-      const childSessionKey = `agent:${requesterAgentId}:subagent:${crypto.randomUUID()}`;
-      if (opts?.sandboxed === true) {
-        try {
-          await callGateway({
-            method: "sessions.patch",
-            params: { key: childSessionKey, spawnedBy: requesterInternalKey },
-            timeoutMs: 10_000,
-          });
-        } catch {
-          // best-effort; scoping relies on this metadata but spawning still works without it
-        }
-      }
-      if (model) {
-        try {
-          await callGateway({
-            method: "sessions.patch",
-            params: { key: childSessionKey, model },
-            timeoutMs: 10_000,
-          });
-          modelApplied = true;
-        } catch (err) {
-          const messageText =
-            err instanceof Error
-              ? err.message
-              : typeof err === "string"
-                ? err
-                : "error";
-          const recoverable =
-            messageText.includes("invalid model") ||
-            messageText.includes("model not allowed");
-          if (!recoverable) {
-            return jsonResult({
-              status: "error",
-              error: messageText,
-              childSessionKey,
-            });
-          }
-          modelWarning = messageText;
-        }
-      }
-      const childSystemPrompt = buildSubagentSystemPrompt({
-        requesterSessionKey,
-        requesterProvider: opts?.agentProvider,
-        childSessionKey,
-        label: label || undefined,
-      });
-
-      const childIdem = crypto.randomUUID();
-      let childRunId: string = childIdem;
-      try {
-        const response = (await callGateway({
-          method: "agent",
-          params: {
-            message: task,
-            sessionKey: childSessionKey,
-            idempotencyKey: childIdem,
-            deliver: false,
-            lane: "subagent",
-            extraSystemPrompt: childSystemPrompt,
-          },
-          timeoutMs: 10_000,
-        })) as { runId?: string };
-        if (typeof response?.runId === "string" && response.runId) {
-          childRunId = response.runId;
-        }
-      } catch (err) {
-        const messageText =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-              ? err
-              : "error";
+      if (streamTo && runtime !== "acp") {
         return jsonResult({
           status: "error",
-          error: messageText,
-          childSessionKey,
-          runId: childRunId,
+          error: `streamTo is only supported for runtime=acp; got runtime=${runtime}`,
         });
       }
 
-      registerSubagentRun({
-        runId: childRunId,
-        childSessionKey,
-        requesterSessionKey: requesterInternalKey,
-        requesterProvider: opts?.agentProvider,
-        requesterDisplayKey,
-        task,
-        cleanup,
-      });
-
-      if (timeoutSeconds === 0) {
-        return jsonResult({
-          status: "accepted",
-          childSessionKey,
-          runId: childRunId,
-          modelApplied: model ? modelApplied : undefined,
-          warning: modelWarning,
-        });
-      }
-
-      let waitStatus: string | undefined;
-      let waitError: string | undefined;
-      let waitStartedAt: number | undefined;
-      let waitEndedAt: number | undefined;
-      try {
-        const wait = (await callGateway({
-          method: "agent.wait",
-          params: {
-            runId: childRunId,
-            timeoutMs,
-          },
-          timeoutMs: timeoutMs + 2000,
-        })) as {
-          status?: string;
-          error?: string;
-          startedAt?: number;
-          endedAt?: number;
-        };
-        waitStatus = typeof wait?.status === "string" ? wait.status : undefined;
-        waitError = typeof wait?.error === "string" ? wait.error : undefined;
-        waitStartedAt =
-          typeof wait?.startedAt === "number" ? wait.startedAt : undefined;
-        waitEndedAt =
-          typeof wait?.endedAt === "number" ? wait.endedAt : undefined;
-      } catch (err) {
-        const messageText =
-          err instanceof Error
-            ? err.message
-            : typeof err === "string"
-              ? err
-              : "error";
-        return jsonResult({
-          status: messageText.includes("gateway timeout") ? "timeout" : "error",
-          error: messageText,
-          childSessionKey,
-          runId: childRunId,
-        });
-      }
-
-      if (waitStatus === "timeout") {
-        try {
-          await callGateway({
-            method: "chat.abort",
-            params: { sessionKey: childSessionKey, runId: childRunId },
-            timeoutMs: 5_000,
-          });
-        } catch {
-          // best-effort
-        }
-        return jsonResult({
-          status: "timeout",
-          error: waitError,
-          childSessionKey,
-          runId: childRunId,
-          modelApplied: model ? modelApplied : undefined,
-          warning: modelWarning,
-        });
-      }
-      if (waitStatus === "error") {
+      if (resumeSessionId && runtime !== "acp") {
         return jsonResult({
           status: "error",
-          error: waitError ?? "agent error",
-          childSessionKey,
-          runId: childRunId,
-          modelApplied: model ? modelApplied : undefined,
-          warning: modelWarning,
+          error: `resumeSessionId is only supported for runtime=acp; got runtime=${runtime}`,
         });
       }
 
-      const replyText = await readLatestAssistantReply({
-        sessionKey: childSessionKey,
-      });
-      if (beginSubagentAnnounce(childRunId)) {
-        void runSubagentAnnounceFlow({
-          childSessionKey,
-          childRunId,
-          requesterSessionKey: requesterInternalKey,
-          requesterProvider: opts?.agentProvider,
-          requesterDisplayKey,
+      if (runtime === "acp") {
+        if (Array.isArray(attachments) && attachments.length > 0) {
+          return jsonResult({
+            status: "error",
+            error:
+              "attachments are currently unsupported for runtime=acp; use runtime=subagent or remove attachments",
+          });
+        }
+        const result = await spawnAcpDirect(
+          {
+            task,
+            label: label || undefined,
+            agentId: requestedAgentId,
+            resumeSessionId,
+            cwd,
+            mode: mode && ACP_SPAWN_MODES.includes(mode) ? mode : undefined,
+            thread,
+            sandbox,
+            streamTo,
+          },
+          {
+            agentSessionKey: opts?.agentSessionKey,
+            agentChannel: opts?.agentChannel,
+            agentAccountId: opts?.agentAccountId,
+            agentTo: opts?.agentTo,
+            agentThreadId: opts?.agentThreadId,
+            sandboxed: opts?.sandboxed,
+          },
+        );
+        return jsonResult(result);
+      }
+
+      const result = await spawnSubagentDirect(
+        {
           task,
-          timeoutMs: 30_000,
+          label: label || undefined,
+          agentId: requestedAgentId,
+          model: modelOverride,
+          thinking: thinkingOverrideRaw,
+          runTimeoutSeconds,
+          thread,
+          mode,
           cleanup,
-          roundOneReply: replyText,
-          startedAt: waitStartedAt,
-          endedAt: waitEndedAt,
-        });
-      }
+          sandbox,
+          expectsCompletionMessage: true,
+          attachments,
+          attachMountPath:
+            params.attachAs && typeof params.attachAs === "object"
+              ? readStringParam(params.attachAs as Record<string, unknown>, "mountPath")
+              : undefined,
+        },
+        {
+          agentSessionKey: opts?.agentSessionKey,
+          agentChannel: opts?.agentChannel,
+          agentAccountId: opts?.agentAccountId,
+          agentTo: opts?.agentTo,
+          agentThreadId: opts?.agentThreadId,
+          agentGroupId: opts?.agentGroupId,
+          agentGroupChannel: opts?.agentGroupChannel,
+          agentGroupSpace: opts?.agentGroupSpace,
+          requesterAgentIdOverride: opts?.requesterAgentIdOverride,
+          workspaceDir: opts?.workspaceDir,
+        },
+      );
 
-      return jsonResult({
-        status: "ok",
-        childSessionKey,
-        runId: childRunId,
-        reply: replyText,
-        modelApplied: model ? modelApplied : undefined,
-        warning: modelWarning,
-      });
+      return jsonResult(result);
     },
   };
 }

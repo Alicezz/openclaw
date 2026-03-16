@@ -1,143 +1,135 @@
 ---
-summary: "Beginner guide: from repo checkout to first message (wizard, auth, providers, pairing)"
+summary: "Get OpenClaw installed and run your first chat in minutes."
 read_when:
   - First time setup from zero
-  - You want the fastest path from checkout → onboarding → first message
+  - You want the fastest path to a working chat
+title: "Getting Started"
 ---
 
 # Getting Started
 
-Goal: go from **zero** → **first working chat** (with sane defaults) as quickly as possible.
+Goal: go from zero to a first working chat with minimal setup.
 
-Recommended path: use the **CLI onboarding wizard** (`clawdbot onboard`). It sets up:
-- model/auth (OAuth recommended)
-- gateway settings
-- providers (WhatsApp/Telegram/Discord/…)
-- pairing defaults (secure DMs)
-- workspace bootstrap + skills
-- optional background daemon
+<Info>
+Fastest chat: open the Control UI (no channel setup needed). Run `openclaw dashboard`
+and chat in the browser, or open `http://127.0.0.1:18789/` on the
+<Tooltip headline="Gateway host" tip="The machine running the OpenClaw gateway service.">gateway host</Tooltip>.
+Docs: [Dashboard](/web/dashboard) and [Control UI](/web/control-ui).
+</Info>
 
-If you want the deeper reference pages, jump to: [Wizard](/start/wizard), [Setup](/start/setup), [Pairing](/start/pairing), [Security](/gateway/security).
+## Prereqs
 
-## 0) Prereqs
+- Node 24 recommended (Node 22 LTS, currently `22.16+`, still supported for compatibility)
 
-- Node `>=22`
-- `pnpm` (recommended) or `bun` (optional)
-- Git
+<Tip>
+Check your Node version with `node --version` if you are unsure.
+</Tip>
 
-macOS: if you plan to build the apps, install Xcode / CLT. For the CLI + gateway only, Node is enough.
-Windows: use **WSL2** (Ubuntu recommended). WSL2 is strongly recommended; native Windows is untested and more problematic. Install WSL2 first, then run the Linux steps inside WSL. See [Windows (WSL2)](/platforms/windows).
+## Quick setup (CLI)
 
-## 1) Check out from source
+<Steps>
+  <Step title="Install OpenClaw (recommended)">
+    <Tabs>
+      <Tab title="macOS/Linux">
+        ```bash
+        curl -fsSL https://openclaw.ai/install.sh | bash
+        ```
+        <img
+  src="/assets/install-script.svg"
+  alt="Install Script Process"
+  className="rounded-lg"
+/>
+      </Tab>
+      <Tab title="Windows (PowerShell)">
+        ```powershell
+        iwr -useb https://openclaw.ai/install.ps1 | iex
+        ```
+      </Tab>
+    </Tabs>
 
-```bash
-git clone https://github.com/clawdbot/clawdbot.git
-cd clawdbot
-pnpm install
-```
+    <Note>
+    Other install methods and requirements: [Install](/install).
+    </Note>
 
-Note: Bun is optional if you prefer running TypeScript directly:
+  </Step>
+  <Step title="Run the setup wizard">
+    ```bash
+    openclaw onboard --install-daemon
+    ```
 
-```bash
-bun install
-```
+    The wizard configures auth, gateway settings, and optional channels.
+    See [Setup Wizard](/start/wizard) for details.
 
-## 2) Build the Control UI (recommended)
+  </Step>
+  <Step title="Check the Gateway">
+    If you installed the service, it should already be running:
 
-The Gateway serves the browser dashboard (Control UI) when assets exist.
+    ```bash
+    openclaw gateway status
+    ```
 
-```bash
-pnpm ui:install
-pnpm ui:build
-pnpm build
-```
+  </Step>
+  <Step title="Open the Control UI">
+    ```bash
+    openclaw dashboard
+    ```
+  </Step>
+</Steps>
 
-If you skip UI build, the gateway still works — you just won’t get the dashboard.
+<Check>
+If the Control UI loads, your Gateway is ready for use.
+</Check>
 
-## 3) Run the onboarding wizard
+## Optional checks and extras
 
-```bash
-pnpm clawdbot onboard
-```
+<AccordionGroup>
+  <Accordion title="Run the Gateway in the foreground">
+    Useful for quick tests or troubleshooting.
 
-What you’ll choose:
-- **Local vs Remote** gateway
-- **Auth**: Anthropic OAuth or OpenAI OAuth (recommended), API key (optional), or skip for now
-- **Providers**: WhatsApp QR login, bot tokens, etc.
-- **Daemon**: optional background install (launchd/systemd; WSL2 uses systemd)
-  - **Runtime**: Node (recommended; required for WhatsApp) or Bun (faster, but incompatible with WhatsApp)
+    ```bash
+    openclaw gateway --port 18789
+    ```
 
-Wizard doc: [Wizard](/start/wizard)
+  </Accordion>
+  <Accordion title="Send a test message">
+    Requires a configured channel.
 
-### Auth: where it lives (important)
+    ```bash
+    openclaw message send --target +15555550123 --message "Hello from OpenClaw"
+    ```
 
-- OAuth credentials (legacy import): `~/.clawdbot/credentials/oauth.json`
-- Auth profiles (OAuth + API keys): `~/.clawdbot/agents/<agentId>/agent/auth-profiles.json`
+  </Accordion>
+</AccordionGroup>
 
-Headless/server tip: do OAuth on a normal machine first, then copy `oauth.json` to the gateway host.
+## Useful environment variables
 
-## 4) Start the Gateway
+If you run OpenClaw as a service account or want custom config/state locations:
 
-If the wizard didn’t start it for you:
+- `OPENCLAW_HOME` sets the home directory used for internal path resolution.
+- `OPENCLAW_STATE_DIR` overrides the state directory.
+- `OPENCLAW_CONFIG_PATH` overrides the config file path.
 
-```bash
-# If you installed the CLI (npm/pnpm link --global):
-clawdbot gateway --port 18789 --verbose
-# From this repo:
-node dist/entry.js gateway --port 18789 --verbose
-```
+Full environment variable reference: [Environment vars](/help/environment).
 
-Dashboard (local loopback): `http://127.0.0.1:18789/`
+## Go deeper
 
-⚠️ **WhatsApp + Bun warning:** Baileys (WhatsApp Web library) uses a WebSocket
-path that is currently incompatible with Bun and can cause memory corruption on
-reconnect. If you use WhatsApp, run the Gateway with **Node** until this is
-resolved. Baileys: https://github.com/WhiskeySockets/Baileys · Bun issue:
-https://github.com/oven-sh/bun/issues/5951
-## 5) Pair + connect your first chat surface
+<Columns>
+  <Card title="Setup Wizard (details)" href="/start/wizard">
+    Full CLI wizard reference and advanced options.
+  </Card>
+  <Card title="macOS app onboarding" href="/start/onboarding">
+    First run flow for the macOS app.
+  </Card>
+</Columns>
 
-### WhatsApp (QR login)
+## What you will have
 
-```bash
-pnpm clawdbot login
-```
+- A running Gateway
+- Auth configured
+- Control UI access or a connected channel
 
-Scan via WhatsApp → Settings → Linked Devices.
+## Next steps
 
-WhatsApp doc: [WhatsApp](/providers/whatsapp)
-
-### Telegram / Discord / others
-
-The wizard can write tokens/config for you. If you prefer manual config, start with:
-- Telegram: [Telegram](/providers/telegram)
-- Discord: [Discord](/providers/discord)
-
-## 6) DM safety (pairing approvals)
-
-Default posture: unknown DMs get a short code and messages are not processed until approved.
-
-Approve:
-
-```bash
-pnpm clawdbot pairing list --provider telegram
-pnpm clawdbot pairing approve --provider telegram <CODE>
-```
-
-Pairing doc: [Pairing](/start/pairing)
-
-## 7) Verify end-to-end
-
-In a new terminal:
-
-```bash
-pnpm clawdbot health
-pnpm clawdbot send --to +15555550123 --message "Hello from Clawdbot"
-```
-
-If `health` shows “no auth configured”, go back to the wizard and set OAuth/key auth — the agent won’t be able to respond without it.
-
-## Next steps (optional, but great)
-
-- macOS menu bar app + voice wake: [macOS app](/platforms/macos)
-- iOS/Android nodes (Canvas/camera/voice): [Nodes](/nodes)
-- Remote access (SSH tunnel / Tailscale Serve): [Remote access](/gateway/remote) and [Tailscale](/gateway/tailscale)
+- DM safety and approvals: [Pairing](/channels/pairing)
+- Connect more channels: [Channels](/channels)
+- Advanced workflows and from source: [Setup](/start/setup)

@@ -3,32 +3,43 @@ summary: "Agent workspace: location, layout, and backup strategy"
 read_when:
   - You need to explain the agent workspace or its file layout
   - You want to back up or migrate an agent workspace
+title: "Agent Workspace"
 ---
+
 # Agent workspace
 
 The workspace is the agent's home. It is the only working directory used for
 file tools and for workspace context. Keep it private and treat it as memory.
 
-This is separate from `~/.clawdbot/`, which stores config, credentials, and
+This is separate from `~/.openclaw/`, which stores config, credentials, and
 sessions.
+
+**Important:** the workspace is the **default cwd**, not a hard sandbox. Tools
+resolve relative paths against the workspace, but absolute paths can still reach
+elsewhere on the host unless sandboxing is enabled. If you need isolation, use
+[`agents.defaults.sandbox`](/gateway/sandboxing) (and/or per‑agent sandbox config).
+When sandboxing is enabled and `workspaceAccess` is not `"rw"`, tools operate
+inside a sandbox workspace under `~/.openclaw/sandboxes`, not your host workspace.
 
 ## Default location
 
-- Default: `~/clawd`
-- If `CLAWDBOT_PROFILE` is set and not `"default"`, the default becomes
-  `~/clawd-<profile>`.
-- Override in `~/.clawdbot/clawdbot.json`:
+- Default: `~/.openclaw/workspace`
+- If `OPENCLAW_PROFILE` is set and not `"default"`, the default becomes
+  `~/.openclaw/workspace-<profile>`.
+- Override in `~/.openclaw/openclaw.json`:
 
 ```json5
 {
   agent: {
-    workspace: "~/clawd"
-  }
+    workspace: "~/.openclaw/workspace",
+  },
 }
 ```
 
-`clawdbot onboard`, `clawdbot configure`, or `clawdbot setup` will create the
+`openclaw onboard`, `openclaw configure`, or `openclaw setup` will create the
 workspace and seed the bootstrap files if they are missing.
+Sandbox seed copies only accept regular in-workspace files; symlink/hardlink
+aliases that resolve outside the source workspace are ignored.
 
 If you already manage the workspace files yourself, you can disable bootstrap
 file creation:
@@ -37,9 +48,22 @@ file creation:
 { agent: { skipBootstrap: true } }
 ```
 
+## Extra workspace folders
+
+Older installs may have created `~/openclaw`. Keeping multiple workspace
+directories around can cause confusing auth or state drift, because only one
+workspace is active at a time.
+
+**Recommendation:** keep a single active workspace. If you no longer use the
+extra folders, archive or move them to Trash (for example `trash ~/openclaw`).
+If you intentionally keep multiple workspaces, make sure
+`agents.defaults.workspace` points to the active one.
+
+`openclaw doctor` warns when it detects extra workspace directories.
+
 ## Workspace file map (what each file means)
 
-These are the standard files Clawdbot expects inside the workspace:
+These are the standard files OpenClaw expects inside the workspace:
 
 - `AGENTS.md`
   - Operating instructions for the agent and how it should use memory.
@@ -66,6 +90,10 @@ These are the standard files Clawdbot expects inside the workspace:
   - Optional tiny checklist for heartbeat runs.
   - Keep it short to avoid token burn.
 
+- `BOOT.md`
+  - Optional startup checklist executed on gateway restart when internal hooks are enabled.
+  - Keep it short; use the message tool for outbound sends.
+
 - `BOOTSTRAP.md`
   - One-time first-run ritual.
   - Only created for a brand-new workspace.
@@ -79,6 +107,8 @@ These are the standard files Clawdbot expects inside the workspace:
   - Curated long-term memory.
   - Only load in the main, private session (not shared/group contexts).
 
+See [Memory](/concepts/memory) for the workflow and automatic memory flush.
+
 - `skills/` (optional)
   - Workspace-specific skills.
   - Overrides managed/bundled skills when names collide.
@@ -86,18 +116,21 @@ These are the standard files Clawdbot expects inside the workspace:
 - `canvas/` (optional)
   - Canvas UI files for node displays (for example `canvas/index.html`).
 
-If any bootstrap file is missing, Clawdbot injects a "missing file" marker into
-the session and continues. `clawdbot setup` can recreate missing defaults
-without overwriting existing files.
+If any bootstrap file is missing, OpenClaw injects a "missing file" marker into
+the session and continues. Large bootstrap files are truncated when injected;
+adjust limits with `agents.defaults.bootstrapMaxChars` (default: 20000) and
+`agents.defaults.bootstrapTotalMaxChars` (default: 150000).
+`openclaw setup` can recreate missing defaults without overwriting existing
+files.
 
 ## What is NOT in the workspace
 
-These live under `~/.clawdbot/` and should NOT be committed to the workspace repo:
+These live under `~/.openclaw/` and should NOT be committed to the workspace repo:
 
-- `~/.clawdbot/clawdbot.json` (config)
-- `~/.clawdbot/credentials/` (OAuth tokens, API keys)
-- `~/.clawdbot/agents/<agentId>/sessions/` (session transcripts + metadata)
-- `~/.clawdbot/skills/` (managed skills)
+- `~/.openclaw/openclaw.json` (config)
+- `~/.openclaw/credentials/` (OAuth tokens, API keys)
+- `~/.openclaw/agents/<agentId>/sessions/` (session transcripts + metadata)
+- `~/.openclaw/skills/` (managed skills)
 
 If you need to migrate sessions or config, copy them separately and keep them
 out of version control.
@@ -112,8 +145,11 @@ workspace lives).
 
 ### 1) Initialize the repo
 
+If git is installed, brand-new workspaces are initialized automatically. If this
+workspace is not already a repo, run:
+
 ```bash
-cd ~/clawd
+cd ~/.openclaw/workspace
 git init
 git add AGENTS.md SOUL.md TOOLS.md IDENTITY.md USER.md HEARTBEAT.md memory/
 git commit -m "Add agent workspace"
@@ -138,7 +174,20 @@ Option B: GitHub CLI (`gh`)
 
 ```bash
 gh auth login
-gh repo create clawd-workspace --private --source . --remote origin --push
+gh repo create openclaw-workspace --private --source . --remote origin --push
+```
+
+Option C: GitLab web UI
+
+1. Create a new **private** repository on GitLab.
+2. Do not initialize with a README (avoids merge conflicts).
+3. Copy the HTTPS remote URL.
+4. Add the remote and push:
+
+```bash
+git branch -M main
+git remote add origin <https-url>
+git push -u origin main
 ```
 
 ### 3) Ongoing updates
@@ -155,11 +204,11 @@ git push
 Even in a private repo, avoid storing secrets in the workspace:
 
 - API keys, OAuth tokens, passwords, or private credentials.
-- Anything under `~/.clawdbot/`.
+- Anything under `~/.openclaw/`.
 - Raw dumps of chats or sensitive attachments.
 
 If you must store sensitive references, use placeholders and keep the real
-secret elsewhere (password manager, environment variables, or `~/.clawdbot/`).
+secret elsewhere (password manager, environment variables, or `~/.openclaw/`).
 
 Suggested `.gitignore` starter:
 
@@ -173,15 +222,15 @@ Suggested `.gitignore` starter:
 
 ## Moving the workspace to a new machine
 
-1. Clone the repo to the desired path (default `~/clawd`).
-2. Set `agent.workspace` to that path in `~/.clawdbot/clawdbot.json`.
-3. Run `clawdbot setup --workspace <path>` to seed any missing files.
-4. If you need sessions, copy `~/.clawdbot/agents/<agentId>/sessions/` from the
+1. Clone the repo to the desired path (default `~/.openclaw/workspace`).
+2. Set `agents.defaults.workspace` to that path in `~/.openclaw/openclaw.json`.
+3. Run `openclaw setup --workspace <path>` to seed any missing files.
+4. If you need sessions, copy `~/.openclaw/agents/<agentId>/sessions/` from the
    old machine separately.
 
 ## Advanced notes
 
 - Multi-agent routing can use different workspaces per agent. See
-  `docs/provider-routing.md` for routing configuration.
-- If `agent.sandbox` is enabled, non-main sessions can use per-session sandbox
-  workspaces under `agent.sandbox.workspaceRoot`.
+  [Channel routing](/channels/channel-routing) for routing configuration.
+- If `agents.defaults.sandbox` is enabled, non-main sessions can use per-session sandbox
+  workspaces under `agents.defaults.sandbox.workspaceRoot`.

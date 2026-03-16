@@ -1,14 +1,18 @@
-import type { ClawdbotConfig } from "../config/config.js";
+import { normalizeChatType } from "../channels/chat-type.js";
+import type { OpenClawConfig } from "../config/config.js";
 import type { SessionChatType, SessionEntry } from "../config/sessions.js";
+import { deriveSessionChatType } from "./session-key-utils.js";
 
 export type SessionSendPolicyDecision = "allow" | "deny";
 
-export function normalizeSendPolicy(
-  raw?: string | null,
-): SessionSendPolicyDecision | undefined {
+export function normalizeSendPolicy(raw?: string | null): SessionSendPolicyDecision | undefined {
   const value = raw?.trim().toLowerCase();
-  if (value === "allow") return "allow";
-  if (value === "deny") return "deny";
+  if (value === "allow") {
+    return "allow";
+  }
+  if (value === "deny") {
+    return "deny";
+  }
   return undefined;
 }
 
@@ -17,9 +21,24 @@ function normalizeMatchValue(raw?: string | null) {
   return value ? value : undefined;
 }
 
-function deriveProviderFromKey(key?: string) {
-  if (!key) return undefined;
+function stripAgentSessionKeyPrefix(key?: string): string | undefined {
+  if (!key) {
+    return undefined;
+  }
   const parts = key.split(":").filter(Boolean);
+  // Canonical agent session keys: agent:<agentId>:<sessionKey...>
+  if (parts.length >= 3 && parts[0] === "agent") {
+    return parts.slice(2).join(":");
+  }
+  return key;
+}
+
+function deriveChannelFromKey(key?: string) {
+  const normalizedKey = stripAgentSessionKeyPrefix(key);
+  if (!normalizedKey) {
+    return undefined;
+  }
+  const parts = normalizedKey.split(":").filter(Boolean);
   if (parts.length >= 3 && (parts[1] === "group" || parts[1] === "channel")) {
     return normalizeMatchValue(parts[0]);
   }
@@ -27,52 +46,77 @@ function deriveProviderFromKey(key?: string) {
 }
 
 function deriveChatTypeFromKey(key?: string): SessionChatType | undefined {
-  if (!key) return undefined;
-  if (key.startsWith("group:") || key.includes(":group:")) return "group";
-  if (key.includes(":channel:")) return "room";
-  return undefined;
+  const chatType = deriveSessionChatType(key);
+  return chatType === "unknown" ? undefined : chatType;
 }
 
 export function resolveSendPolicy(params: {
-  cfg: ClawdbotConfig;
+  cfg: OpenClawConfig;
   entry?: SessionEntry;
   sessionKey?: string;
-  provider?: string;
+  channel?: string;
   chatType?: SessionChatType;
 }): SessionSendPolicyDecision {
   const override = normalizeSendPolicy(params.entry?.sendPolicy);
-  if (override) return override;
+  if (override) {
+    return override;
+  }
 
   const policy = params.cfg.session?.sendPolicy;
-  if (!policy) return "allow";
+  if (!policy) {
+    return "allow";
+  }
 
-  const provider =
-    normalizeMatchValue(params.provider) ??
-    normalizeMatchValue(params.entry?.provider) ??
-    normalizeMatchValue(params.entry?.lastProvider) ??
-    deriveProviderFromKey(params.sessionKey);
+  const channel =
+    normalizeMatchValue(params.channel) ??
+    normalizeMatchValue(params.entry?.channel) ??
+    normalizeMatchValue(params.entry?.lastChannel) ??
+    deriveChannelFromKey(params.sessionKey);
   const chatType =
-    normalizeMatchValue(params.chatType ?? params.entry?.chatType) ??
-    normalizeMatchValue(deriveChatTypeFromKey(params.sessionKey));
-  const sessionKey = params.sessionKey ?? "";
+    normalizeChatType(params.chatType ?? params.entry?.chatType) ??
+    normalizeChatType(deriveChatTypeFromKey(params.sessionKey));
+  const rawSessionKey = params.sessionKey ?? "";
+  const strippedSessionKey = stripAgentSessionKeyPrefix(rawSessionKey) ?? "";
+  const rawSessionKeyNorm = rawSessionKey.toLowerCase();
+  const strippedSessionKeyNorm = strippedSessionKey.toLowerCase();
 
   let allowedMatch = false;
   for (const rule of policy.rules ?? []) {
-    if (!rule) continue;
+    if (!rule) {
+      continue;
+    }
     const action = normalizeSendPolicy(rule.action) ?? "allow";
     const match = rule.match ?? {};
-    const matchProvider = normalizeMatchValue(match.provider);
-    const matchChatType = normalizeMatchValue(match.chatType);
+    const matchChannel = normalizeMatchValue(match.channel);
+    const matchChatType = normalizeChatType(match.chatType);
     const matchPrefix = normalizeMatchValue(match.keyPrefix);
+    const matchRawPrefix = normalizeMatchValue(match.rawKeyPrefix);
 
-    if (matchProvider && matchProvider !== provider) continue;
-    if (matchChatType && matchChatType !== chatType) continue;
-    if (matchPrefix && !sessionKey.startsWith(matchPrefix)) continue;
-    if (action === "deny") return "deny";
+    if (matchChannel && matchChannel !== channel) {
+      continue;
+    }
+    if (matchChatType && matchChatType !== chatType) {
+      continue;
+    }
+    if (matchRawPrefix && !rawSessionKeyNorm.startsWith(matchRawPrefix)) {
+      continue;
+    }
+    if (
+      matchPrefix &&
+      !rawSessionKeyNorm.startsWith(matchPrefix) &&
+      !strippedSessionKeyNorm.startsWith(matchPrefix)
+    ) {
+      continue;
+    }
+    if (action === "deny") {
+      return "deny";
+    }
     allowedMatch = true;
   }
 
-  if (allowedMatch) return "allow";
+  if (allowedMatch) {
+    return "allow";
+  }
 
   const fallback = normalizeSendPolicy(policy.default);
   return fallback ?? "allow";

@@ -1,62 +1,81 @@
 ---
-summary: "Setup guide: keep your Clawdbot setup tailored while staying up-to-date"
+summary: "Advanced setup and development workflows for OpenClaw"
 read_when:
   - Setting up a new machine
   - You want “latest + greatest” without breaking your personal setup
+title: "Setup"
 ---
 
 # Setup
 
+<Note>
+If you are setting up for the first time, start with [Getting Started](/start/getting-started).
+For wizard details, see [Onboarding Wizard](/start/wizard).
+</Note>
+
 Last updated: 2026-01-01
 
 ## TL;DR
-- **Tailoring lives outside the repo:** `~/clawd` (workspace) + `~/.clawdbot/clawdbot.json` (config).
+
+- **Tailoring lives outside the repo:** `~/.openclaw/workspace` (workspace) + `~/.openclaw/openclaw.json` (config).
 - **Stable workflow:** install the macOS app; let it run the bundled Gateway.
-- **Bleeding edge workflow:** run the Gateway yourself via `pnpm gateway:watch`, then point the macOS app at it using **Debug Settings → Gateway → Attach only**.
+- **Bleeding edge workflow:** run the Gateway yourself via `pnpm gateway:watch`, then let the macOS app attach in Local mode.
 
 ## Prereqs (from source)
+
 - Node `>=22`
 - `pnpm`
-- Docker (optional; only for containerized setup/e2e — see [`docs/docker.md`](/install/docker))
+- Docker (optional; only for containerized setup/e2e — see [Docker](/install/docker))
 
 ## Tailoring strategy (so updates don’t hurt)
 
-If you want “100% tailored to me” *and* easy updates, keep your customization in:
+If you want “100% tailored to me” _and_ easy updates, keep your customization in:
 
-- **Config:** `~/.clawdbot/clawdbot.json` (JSON/JSON5-ish)
-- **Workspace:** `~/clawd` (skills, prompts, memories; make it a private git repo)
+- **Config:** `~/.openclaw/openclaw.json` (JSON/JSON5-ish)
+- **Workspace:** `~/.openclaw/workspace` (skills, prompts, memories; make it a private git repo)
 
 Bootstrap once:
 
 ```bash
-clawdbot setup
+openclaw setup
 ```
 
 From inside this repo, use the local CLI entry:
 
 ```bash
-pnpm clawdbot setup
+openclaw setup
+```
+
+If you don’t have a global install yet, run it via `pnpm openclaw setup`.
+
+## Run the Gateway from this repo
+
+After `pnpm build`, you can run the packaged CLI directly:
+
+```bash
+node openclaw.mjs gateway --port 18789 --verbose
 ```
 
 ## Stable workflow (macOS app first)
 
-1) Install + launch **Clawdbot.app** (menu bar).
-2) Complete the onboarding/permissions checklist (TCC prompts).
-3) Ensure Gateway is **Local** and running (the app manages it).
-4) Link surfaces (example: WhatsApp):
+1. Install + launch **OpenClaw.app** (menu bar).
+2. Complete the onboarding/permissions checklist (TCC prompts).
+3. Ensure Gateway is **Local** and running (the app manages it).
+4. Link surfaces (example: WhatsApp):
 
 ```bash
-clawdbot login
+openclaw channels login
 ```
 
-5) Sanity check:
+5. Sanity check:
 
 ```bash
-clawdbot health
+openclaw health
 ```
 
-If onboarding is still WIP/broken on your build:
-- Run `clawdbot setup`, then `clawdbot login`, then start the Gateway manually (`clawdbot gateway`).
+If onboarding is not available in your build:
+
+- Run `openclaw setup`, then `openclaw channels login`, then start the Gateway manually (`openclaw gateway`).
 
 ## Bleeding edge workflow (Gateway in a terminal)
 
@@ -77,16 +96,15 @@ pnpm install
 pnpm gateway:watch
 ```
 
-`gateway:watch` runs `src/entry.ts gateway --force` and reloads on [`src/**/*.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/**/*.ts) changes.
+`gateway:watch` runs the gateway in watch mode and reloads on relevant source,
+config, and bundled-plugin metadata changes.
 
 ### 2) Point the macOS app at your running Gateway
 
-In **Clawdbot.app**:
+In **OpenClaw.app**:
 
 - Connection Mode: **Local**
-- Settings → **Debug Settings** → **Gateway** → enable **Attach only**
-
-This makes the app **only connect to an already-running gateway** and **never spawn** its own.
+  The app will attach to the running gateway on the configured port.
 
 ### 3) Verify
 
@@ -94,20 +112,36 @@ This makes the app **only connect to an already-running gateway** and **never sp
 - Or via CLI:
 
 ```bash
-pnpm clawdbot health
+openclaw health
 ```
 
 ### Common footguns
-- **Attach only enabled, but nothing is running:** app shows “Attach-only enabled; no gateway to attach”.
+
 - **Wrong port:** Gateway WS defaults to `ws://127.0.0.1:18789`; keep app + CLI on the same port.
 - **Where state lives:**
-  - Credentials: `~/.clawdbot/credentials/`
-  - Sessions: `~/.clawdbot/agents/<agentId>/sessions/`
-  - Logs: `/tmp/clawdbot/`
+  - Credentials: `~/.openclaw/credentials/`
+  - Sessions: `~/.openclaw/agents/<agentId>/sessions/`
+  - Logs: `/tmp/openclaw/`
+
+## Credential storage map
+
+Use this when debugging auth or deciding what to back up:
+
+- **WhatsApp**: `~/.openclaw/credentials/whatsapp/<accountId>/creds.json`
+- **Telegram bot token**: config/env or `channels.telegram.tokenFile` (regular file only; symlinks rejected)
+- **Discord bot token**: config/env or SecretRef (env/file/exec providers)
+- **Slack tokens**: config/env (`channels.slack.*`)
+- **Pairing allowlists**:
+  - `~/.openclaw/credentials/<channel>-allowFrom.json` (default account)
+  - `~/.openclaw/credentials/<channel>-<accountId>-allowFrom.json` (non-default accounts)
+- **Model auth profiles**: `~/.openclaw/agents/<agentId>/agent/auth-profiles.json`
+- **File-backed secrets payload (optional)**: `~/.openclaw/secrets.json`
+- **Legacy OAuth import**: `~/.openclaw/credentials/oauth.json`
+  More detail: [Security](/gateway/security#credential-storage-map).
 
 ## Updating (without wrecking your setup)
 
-- Keep `~/clawd` and `~/.clawdbot/` as “your stuff”; don’t put personal prompts/config into the `clawdbot` repo.
+- Keep `~/.openclaw/workspace` and `~/.openclaw/` as “your stuff”; don’t put personal prompts/config into the `openclaw` repo.
 - Updating source: `git pull` + `pnpm install` (when lockfile changed) + keep using `pnpm gateway:watch`.
 
 ## Linux (systemd user service)
@@ -121,12 +155,12 @@ sudo loginctl enable-linger $USER
 ```
 
 For always-on or multi-user servers, consider a **system** service instead of a
-user service (no lingering needed). See [`docs/gateway.md`](/gateway) for the systemd notes.
+user service (no lingering needed). See [Gateway runbook](/gateway) for the systemd notes.
 
 ## Related docs
 
-- [`docs/gateway.md`](/gateway) (Gateway runbook; flags, supervision, ports)
-- [`docs/configuration.md`](/gateway/configuration) (config schema + examples)
-- [`docs/discord.md`](/providers/discord) and [`docs/telegram.md`](/providers/telegram) (reply tags + replyToMode settings)
-- [`docs/clawd.md`](/start/clawd) (personal assistant setup)
-- [`docs/macos.md`](/platforms/macos) (macOS app behavior; gateway lifecycle + “Attach only”)
+- [Gateway runbook](/gateway) (flags, supervision, ports)
+- [Gateway configuration](/gateway/configuration) (config schema + examples)
+- [Discord](/channels/discord) and [Telegram](/channels/telegram) (reply tags + replyToMode settings)
+- [OpenClaw assistant setup](/start/openclaw)
+- [macOS app](/platforms/macos) (gateway lifecycle)

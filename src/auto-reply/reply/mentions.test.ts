@@ -1,30 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { stripStructuralPrefixes } from "./mentions.js";
 
-import {
-  buildMentionRegexes,
-  matchesMentionPatterns,
-  normalizeMentionText,
-} from "./mentions.js";
-
-describe("mention helpers", () => {
-  it("builds regexes and skips invalid patterns", () => {
-    const regexes = buildMentionRegexes({
-      routing: {
-        groupChat: { mentionPatterns: ["\\bclawd\\b", "(invalid"] },
-      },
-    });
-    expect(regexes).toHaveLength(1);
-    expect(regexes[0]?.test("clawd")).toBe(true);
+describe("stripStructuralPrefixes", () => {
+  it("returns empty string for undefined input at runtime", () => {
+    expect(stripStructuralPrefixes(undefined as unknown as string)).toBe("");
   });
 
-  it("normalizes zero-width characters", () => {
-    expect(normalizeMentionText("cl\u200bawd")).toBe("clawd");
+  it("returns empty string for empty input", () => {
+    expect(stripStructuralPrefixes("")).toBe("");
   });
 
-  it("matches patterns case-insensitively", () => {
-    const regexes = buildMentionRegexes({
-      routing: { groupChat: { mentionPatterns: ["\\bclawd\\b"] } },
-    });
-    expect(matchesMentionPatterns("CLAWD: hi", regexes)).toBe(true);
+  it("strips sender prefix labels", () => {
+    expect(stripStructuralPrefixes("John: hello")).toBe("hello");
+  });
+
+  it("passes through plain text", () => {
+    expect(stripStructuralPrefixes("just a message")).toBe("just a message");
   });
 });

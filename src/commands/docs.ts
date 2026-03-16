@@ -1,10 +1,12 @@
 import { hasBinary } from "../agents/skills.js";
+import { formatCliCommand } from "../cli/command-format.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { formatDocsLink } from "../terminal/links.js";
+import { isRich, theme } from "../terminal/theme.js";
 
-const SEARCH_TOOL = "https://docs.clawd.bot/mcp.SearchClawdbot";
+const SEARCH_TOOL = "https://docs.openclaw.ai/mcp.SearchOpenClaw";
 const SEARCH_TIMEOUT_MS = 30_000;
-const RENDER_TIMEOUT_MS = 10_000;
 const DEFAULT_SNIPPET_MAX = 220;
 
 type DocResult = {
@@ -24,16 +26,16 @@ type ToolRunOptions = {
 };
 
 function resolveNodeRunner(): NodeRunner {
-  if (hasBinary("pnpm")) return { cmd: "pnpm", args: ["dlx"] };
-  if (hasBinary("npx")) return { cmd: "npx", args: ["-y"] };
+  if (hasBinary("pnpm")) {
+    return { cmd: "pnpm", args: ["dlx"] };
+  }
+  if (hasBinary("npx")) {
+    return { cmd: "npx", args: ["-y"] };
+  }
   throw new Error("Missing pnpm or npx; install a Node package runner.");
 }
 
-async function runNodeTool(
-  tool: string,
-  toolArgs: string[],
-  options: ToolRunOptions = {},
-) {
+async function runNodeTool(tool: string, toolArgs: string[], options: ToolRunOptions = {}) {
   const runner = resolveNodeRunner();
   const argv = [runner.cmd, ...runner.args, tool, ...toolArgs];
   return await runCommandWithTimeout(argv, {
@@ -42,11 +44,7 @@ async function runNodeTool(
   });
 }
 
-async function runTool(
-  tool: string,
-  toolArgs: string[],
-  options: ToolRunOptions = {},
-) {
+async function runTool(tool: string, toolArgs: string[], options: ToolRunOptions = {}) {
   if (hasBinary(tool)) {
     return await runCommandWithTimeout([tool, ...toolArgs], {
       timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS,
@@ -58,15 +56,21 @@ async function runTool(
 
 function extractLine(lines: string[], prefix: string): string | undefined {
   const line = lines.find((value) => value.startsWith(prefix));
-  if (!line) return undefined;
+  if (!line) {
+    return undefined;
+  }
   return line.slice(prefix.length).trim();
 }
 
 function normalizeSnippet(raw: string | undefined, fallback: string): string {
   const base = raw && raw.trim().length > 0 ? raw : fallback;
   const cleaned = base.replace(/\s+/g, " ").trim();
-  if (!cleaned) return "";
-  if (cleaned.length <= DEFAULT_SNIPPET_MAX) return cleaned;
+  if (!cleaned) {
+    return "";
+  }
+  if (cleaned.length <= DEFAULT_SNIPPET_MAX) {
+    return cleaned;
+  }
   return `${cleaned.slice(0, DEFAULT_SNIPPET_MAX - 3)}...`;
 }
 
@@ -90,7 +94,9 @@ function parseSearchOutput(raw: string): DocResult[] {
     const lines = block.split("\n");
     const title = extractLine(lines, "Title:");
     const link = extractLine(lines, "Link:");
-    if (!title || !link) continue;
+    if (!title || !link) {
+      continue;
+    }
     const content = extractLine(lines, "Content:");
     const contentIndex = lines.findIndex((line) => line.startsWith("Content:"));
     const body =
@@ -125,32 +131,43 @@ function buildMarkdown(query: string, results: DocResult[]): string {
   return lines.join("\n");
 }
 
-async function renderMarkdown(markdown: string, runtime: RuntimeEnv) {
-  const width = process.stdout.columns ?? 0;
-  const args = width > 0 ? ["--width", String(width)] : [];
-  try {
-    const res = await runTool("markdansi", args, {
-      timeoutMs: RENDER_TIMEOUT_MS,
-      input: markdown,
-    });
-    if (res.code === 0 && res.stdout.trim()) {
-      runtime.log(res.stdout.trimEnd());
-      return;
-    }
-  } catch {
-    // Fall back to plain Markdown if renderer fails or cannot be installed.
+function formatLinkLabel(link: string): string {
+  return link.replace(/^https?:\/\//i, "");
+}
+
+function renderRichResults(query: string, results: DocResult[], runtime: RuntimeEnv) {
+  runtime.log(`${theme.heading("Docs search:")} ${theme.info(query)}`);
+  if (results.length === 0) {
+    runtime.log(theme.muted("No results."));
+    return;
   }
+  for (const item of results) {
+    const linkLabel = formatLinkLabel(item.link);
+    const link = formatDocsLink(item.link, linkLabel);
+    runtime.log(
+      `${theme.muted("-")} ${theme.command(item.title)} ${theme.muted("(")}${link}${theme.muted(")")}`,
+    );
+    if (item.snippet) {
+      runtime.log(`  ${theme.muted(item.snippet)}`);
+    }
+  }
+}
+
+async function renderMarkdown(markdown: string, runtime: RuntimeEnv) {
   runtime.log(markdown.trimEnd());
 }
 
-export async function docsSearchCommand(
-  queryParts: string[],
-  runtime: RuntimeEnv,
-) {
+export async function docsSearchCommand(queryParts: string[], runtime: RuntimeEnv) {
   const query = queryParts.join(" ").trim();
   if (!query) {
-    runtime.log("Docs: https://docs.clawd.bot/");
-    runtime.log('Search: clawdbot docs "your query"');
+    const docs = formatDocsLink("/", "docs.openclaw.ai");
+    if (isRich()) {
+      runtime.log(`${theme.muted("Docs:")} ${docs}`);
+      runtime.log(`${theme.muted("Search:")} ${formatCliCommand('openclaw docs "your query"')}`);
+    } else {
+      runtime.log("Docs: https://docs.openclaw.ai/");
+      runtime.log(`Search: ${formatCliCommand('openclaw docs "your query"')}`);
+    }
     return;
   }
 
@@ -169,6 +186,10 @@ export async function docsSearchCommand(
   }
 
   const results = parseSearchOutput(res.stdout);
+  if (isRich()) {
+    renderRichResults(query, results, runtime);
+    return;
+  }
   const markdown = buildMarkdown(query, results);
   await renderMarkdown(markdown, runtime);
 }

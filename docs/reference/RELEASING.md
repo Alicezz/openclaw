@@ -1,64 +1,42 @@
 ---
-summary: "Step-by-step release checklist for npm + macOS app"
+title: "Release Policy"
+summary: "Public release channels, version naming, and cadence"
 read_when:
-  - Cutting a new npm release
-  - Cutting a new macOS app release
-  - Verifying metadata before publishing
+  - Looking for public release channel definitions
+  - Looking for version naming and cadence
 ---
 
-# Release Checklist (npm + macOS)
+# Release Policy
 
-Use `pnpm` (Node 22+) from the repo root. Keep the working tree clean before tagging/publishing.
+OpenClaw has three public release lanes:
 
-1) **Version & metadata**
-- [ ] Bump `package.json` version (e.g., `1.1.0`).
-- [ ] Update CLI/version strings: [`src/cli/program.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/cli/program.ts) and the Baileys user agent in [`src/provider-web.ts`](https://github.com/clawdbot/clawdbot/blob/main/src/provider-web.ts).
-- [ ] Confirm package metadata (name, description, repository, keywords, license) and `bin` map points to [`dist/entry.js`](https://github.com/clawdbot/clawdbot/blob/main/dist/entry.js) for `clawdbot`.
-- [ ] If dependencies changed, run `pnpm install` so `pnpm-lock.yaml` is current.
+- stable: tagged releases that publish to npm `latest`
+- beta: prerelease tags that publish to npm `beta`
+- dev: the moving head of `main`
 
-2) **Build & artifacts**
-- [ ] If A2UI inputs changed, run `pnpm canvas:a2ui:bundle` and commit any updated [`src/canvas-host/a2ui/a2ui.bundle.js`](https://github.com/clawdbot/clawdbot/blob/main/src/canvas-host/a2ui/a2ui.bundle.js).
-- [ ] `pnpm run build` (regenerates `dist/`).
-- [ ] Optional: `npm pack --pack-destination /tmp` after the build; inspect the tarball contents and keep it handy for the GitHub release (do **not** commit it).
+## Version naming
 
-3) **Changelog & docs**
-- [ ] Update `CHANGELOG.md` with user-facing highlights (create the file if missing); keep entries strictly descending by version.
-- [ ] Ensure README examples/flags match current CLI behavior (notably new commands or options).
+- Stable release version: `YYYY.M.D`
+  - Git tag: `vYYYY.M.D`
+- Beta prerelease version: `YYYY.M.D-beta.N`
+  - Git tag: `vYYYY.M.D-beta.N`
+- Do not zero-pad month or day
+- `latest` means the current stable npm release
+- `beta` means the current prerelease npm release
+- Beta releases may ship before the macOS app catches up
 
-4) **Validation**
-- [ ] `pnpm lint`
-- [ ] `pnpm test` (or `pnpm test:coverage` if you need coverage output)
-- [ ] `pnpm run build` (last sanity check after tests)
-- [ ] `pnpm release:check` (verifies npm pack contents)
-- [ ] (Optional) Spot-check the web gateway if your changes affect send/receive paths.
+## Release cadence
 
-5) **macOS app (Sparkle)**
-- [ ] Build + sign the macOS app, then zip it for distribution.
-- [ ] Generate the Sparkle appcast (HTML notes via [`scripts/make_appcast.sh`](https://github.com/clawdbot/clawdbot/blob/main/scripts/make_appcast.sh)) and update `appcast.xml`.
-- [ ] Keep the app zip (and optional dSYM zip) ready to attach to the GitHub release.
-- [ ] Follow [`docs/mac/release.md`](/platforms/mac/release) for the exact commands and required env vars.
-  - `APP_BUILD` must be numeric + monotonic (no `-beta`) so Sparkle compares versions correctly.
-  - If notarizing, use the `clawdbot-notary` keychain profile created from App Store Connect API env vars (see [`docs/mac/release.md`](/platforms/mac/release)).
+- Releases move beta-first
+- Stable follows only after the latest beta is validated
+- Detailed release procedure, approvals, credentials, and recovery notes are
+  maintainer-only
 
-6) **Publish (npm)**
-- [ ] Confirm git status is clean; commit and push as needed.
-- [ ] `npm login` (verify 2FA) if needed.
-- [ ] `npm publish --access public` (use `--tag beta` for pre-releases).
-- [ ] Verify the registry: `npm view clawdbot version` and `npx -y clawdbot@X.Y.Z --version` (or `--help`).
+## Public references
 
-### Troubleshooting (notes from 2.0.0-beta2 release)
-- **npm pack/publish hangs or produces huge tarball**: the macOS app bundle in `dist/Clawdbot.app` (and release zips) get swept into the package. Fix by whitelisting publish contents via `package.json` `files` (include dist subdirs, docs, skills; exclude app bundles). Confirm with `npm pack --dry-run` that `dist/Clawdbot.app` is not listed.
-- **npm auth web loop for dist-tags**: use legacy auth to get an OTP prompt:
-  - `NPM_CONFIG_AUTH_TYPE=legacy npm dist-tag add clawdbot@X.Y.Z latest`
-- **`npx` verification fails with `ECOMPROMISED: Lock compromised`**: retry with a fresh cache:
-  - `NPM_CONFIG_CACHE=/tmp/npm-cache-$(date +%s) npx -y clawdbot@X.Y.Z --version`
-- **Tag needs repointing after a late fix**: force-update and push the tag, then ensure the GitHub release assets still match:
-  - `git tag -f vX.Y.Z && git push -f origin vX.Y.Z`
+- [`.github/workflows/openclaw-npm-release.yml`](https://github.com/openclaw/openclaw/blob/main/.github/workflows/openclaw-npm-release.yml)
+- [`scripts/openclaw-npm-release-check.ts`](https://github.com/openclaw/openclaw/blob/main/scripts/openclaw-npm-release-check.ts)
 
-7) **GitHub release + appcast**
-- [ ] Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (or `git push --tags`).
-- [ ] Create/refresh the GitHub release for `vX.Y.Z` with **title `clawdbot X.Y.Z`** (not just the tag); body should inline the product-facing bullets from the changelog (no bare links) **and must not repeat the title inside the body**.
-- [ ] Attach artifacts: `npm pack` tarball (optional), `Clawdbot-X.Y.Z.zip`, and `Clawdbot-X.Y.Z.dSYM.zip` (if generated).
-- [ ] Commit the updated `appcast.xml` and push it (Sparkle feeds from main).
-- [ ] From a clean temp directory (no `package.json`), run `npx -y clawdbot@X.Y.Z send --help` to confirm install/CLI entrypoints work.
-- [ ] Announce/share release notes.
+Maintainers use the private release docs in
+[`openclaw/maintainers/release/README.md`](https://github.com/openclaw/maintainers/blob/main/release/README.md)
+for the actual runbook.

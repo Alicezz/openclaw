@@ -11,6 +11,9 @@ Generate images using Google's Nano Banana Pro (Gemini 3 Pro Image) API.
 
 Usage:
     uv run generate_image.py --prompt "your image description" --filename "output.png" [--resolution 1K|2K|4K] [--api-key KEY]
+
+Multi-image editing (up to 14 images):
+    uv run generate_image.py --prompt "combine these images" --filename "output.png" -i img1.png -i img2.png -i img3.png
 """
 
 import argparse
@@ -18,12 +21,52 @@ import os
 import sys
 from pathlib import Path
 
+SUPPORTED_ASPECT_RATIOS = [
+    "1:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "16:9",
+    "21:9",
+]
+
 
 def get_api_key(provided_key: str | None) -> str | None:
     """Get API key from argument first, then environment."""
     if provided_key:
         return provided_key
     return os.environ.get("GEMINI_API_KEY")
+
+
+def auto_detect_resolution(max_input_dim: int) -> str:
+    """Infer output resolution from the largest input image dimension."""
+    if max_input_dim >= 3000:
+        return "4K"
+    if max_input_dim >= 1500:
+        return "2K"
+    return "1K"
+
+
+def choose_output_resolution(
+    requested_resolution: str | None,
+    max_input_dim: int,
+    has_input_images: bool,
+) -> tuple[str, bool]:
+    """Choose final resolution and whether it was auto-detected.
+
+    Auto-detection is only applied when the user did not pass --resolution.
+    """
+    if requested_resolution is not None:
+        return requested_resolution, False
+
+    if has_input_images and max_input_dim > 0:
+        return auto_detect_resolution(max_input_dim), True
+
+    return "1K", False
 
 
 def main():
@@ -42,13 +85,22 @@ def main():
     )
     parser.add_argument(
         "--input-image", "-i",
-        help="Optional input image path for editing/modification"
+        action="append",
+        dest="input_images",
+        metavar="IMAGE",
+        help="Input image path(s) for editing/composition. Can be specified multiple times (up to 14 images)."
     )
     parser.add_argument(
         "--resolution", "-r",
         choices=["1K", "2K", "4K"],
-        default="1K",
-        help="Output resolution: 1K (default), 2K, or 4K"
+        default=None,
+        help="Output resolution: 1K, 2K, or 4K. If omitted with input images, auto-detect from largest image dimension."
+    )
+    parser.add_argument(
+        "--aspect-ratio", "-a",
+        choices=SUPPORTED_ASPECT_RATIOS,
+        default=None,
+        help=f"Output aspect ratio (default: model decides). Options: {', '.join(SUPPORTED_ASPECT_RATIOS)}"
     )
     parser.add_argument(
         "--api-key", "-k",
@@ -78,47 +130,60 @@ def main():
     output_path = Path(args.filename)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load input image if provided
-    input_image = None
-    output_resolution = args.resolution
-    if args.input_image:
-        try:
-            input_image = PILImage.open(args.input_image)
-            print(f"Loaded input image: {args.input_image}")
-
-            # Auto-detect resolution if not explicitly set by user
-            if args.resolution == "1K":  # Default value
-                # Map input image size to resolution
-                width, height = input_image.size
-                max_dim = max(width, height)
-                if max_dim >= 3000:
-                    output_resolution = "4K"
-                elif max_dim >= 1500:
-                    output_resolution = "2K"
-                else:
-                    output_resolution = "1K"
-                print(f"Auto-detected resolution: {output_resolution} (from input {width}x{height})")
-        except Exception as e:
-            print(f"Error loading input image: {e}", file=sys.stderr)
+    # Load input images if provided (up to 14 supported by Nano Banana Pro)
+    input_images = []
+    max_input_dim = 0
+    if args.input_images:
+        if len(args.input_images) > 14:
+            print(f"Error: Too many input images ({len(args.input_images)}). Maximum is 14.", file=sys.stderr)
             sys.exit(1)
 
-    # Build contents (image first if editing, prompt only if generating)
-    if input_image:
-        contents = [input_image, args.prompt]
-        print(f"Editing image with resolution {output_resolution}...")
+        for img_path in args.input_images:
+            try:
+                with PILImage.open(img_path) as img:
+                    copied = img.copy()
+                    width, height = copied.size
+                input_images.append(copied)
+                print(f"Loaded input image: {img_path}")
+
+                # Track largest dimension for auto-resolution
+                max_input_dim = max(max_input_dim, width, height)
+            except Exception as e:
+                print(f"Error loading input image '{img_path}': {e}", file=sys.stderr)
+                sys.exit(1)
+
+    output_resolution, auto_detected = choose_output_resolution(
+        requested_resolution=args.resolution,
+        max_input_dim=max_input_dim,
+        has_input_images=bool(input_images),
+    )
+    if auto_detected:
+        print(
+            f"Auto-detected resolution: {output_resolution} "
+            f"(from max input dimension {max_input_dim})"
+        )
+
+    # Build contents (images first if editing, prompt only if generating)
+    if input_images:
+        contents = [*input_images, args.prompt]
+        img_count = len(input_images)
+        print(f"Processing {img_count} image{'s' if img_count > 1 else ''} with resolution {output_resolution}...")
     else:
         contents = args.prompt
         print(f"Generating image with resolution {output_resolution}...")
 
     try:
+        # Build image config with optional aspect ratio
+        image_cfg_kwargs = {"image_size": output_resolution}
+        if args.aspect_ratio:
+            image_cfg_kwargs["aspect_ratio"] = args.aspect_ratio
+
         response = client.models.generate_content(
             model="gemini-3-pro-image-preview",
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
-                image_config=types.ImageConfig(
-                    image_size=output_resolution
-                )
+                image_config=types.ImageConfig(**image_cfg_kwargs)
             )
         )
 
@@ -154,8 +219,9 @@ def main():
         if image_saved:
             full_path = output_path.resolve()
             print(f"\nImage saved: {full_path}")
-            # Clawdbot parses MEDIA tokens and will attach the file on supported providers.
-            print(f"MEDIA: {full_path}")
+            # OpenClaw parses MEDIA: tokens and will attach the file on
+            # supported chat providers. Emit the canonical MEDIA:<path> form.
+            print(f"MEDIA:{full_path}")
         else:
             print("Error: No image was generated in the response.", file=sys.stderr)
             sys.exit(1)

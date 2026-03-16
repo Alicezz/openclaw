@@ -1,140 +1,133 @@
-import type { OAuthCredentials, OAuthProvider } from "@mariozechner/pi-ai";
-import { resolveDefaultAgentDir } from "../agents/agent-scope.js";
-import { upsertAuthProfile } from "../agents/auth-profiles.js";
-import type { ClawdbotConfig } from "../config/config.js";
+export {
+  SYNTHETIC_DEFAULT_MODEL_ID,
+  SYNTHETIC_DEFAULT_MODEL_REF,
+} from "../agents/synthetic-models.js";
+export { VENICE_DEFAULT_MODEL_ID, VENICE_DEFAULT_MODEL_REF } from "../agents/venice-models.js";
+export {
+  applyAuthProfileConfig,
+  applyCloudflareAiGatewayConfig,
+  applyCloudflareAiGatewayProviderConfig,
+  applyHuggingfaceConfig,
+  applyHuggingfaceProviderConfig,
+  applyKilocodeConfig,
+  applyKilocodeProviderConfig,
+  applyQianfanConfig,
+  applyQianfanProviderConfig,
+  applyKimiCodeConfig,
+  applyKimiCodeProviderConfig,
+  applyLitellmConfig,
+  applyLitellmProviderConfig,
+  applyMistralConfig,
+  applyMistralProviderConfig,
+  applyMoonshotConfig,
+  applyMoonshotConfigCn,
+  applyMoonshotProviderConfig,
+  applyMoonshotProviderConfigCn,
+  applyOpenrouterConfig,
+  applyOpenrouterProviderConfig,
+  applySyntheticConfig,
+  applySyntheticProviderConfig,
+  applyTogetherConfig,
+  applyTogetherProviderConfig,
+  applyVeniceConfig,
+  applyVeniceProviderConfig,
+  applyVercelAiGatewayConfig,
+  applyVercelAiGatewayProviderConfig,
+  applyXaiConfig,
+  applyXaiProviderConfig,
+  applyXiaomiConfig,
+  applyXiaomiProviderConfig,
+  applyZaiConfig,
+  applyZaiProviderConfig,
+  applyModelStudioConfig,
+  applyModelStudioConfigCn,
+  applyModelStudioProviderConfig,
+  applyModelStudioProviderConfigCn,
+  KILOCODE_BASE_URL,
+} from "./onboard-auth.config-core.js";
+export {
+  applyMinimaxApiConfig,
+  applyMinimaxApiConfigCn,
+  applyMinimaxApiProviderConfig,
+  applyMinimaxApiProviderConfigCn,
+} from "./onboard-auth.config-minimax.js";
 
-export async function writeOAuthCredentials(
-  provider: OAuthProvider,
-  creds: OAuthCredentials,
-  agentDir?: string,
-): Promise<void> {
-  // Write to the multi-agent path so gateway finds credentials on startup
-  upsertAuthProfile({
-    profileId: `${provider}:${creds.email ?? "default"}`,
-    credential: {
-      type: "oauth",
-      provider,
-      ...creds,
-    },
-    agentDir: agentDir ?? resolveDefaultAgentDir(),
-  });
-}
-
-export async function setAnthropicApiKey(key: string, agentDir?: string) {
-  // Write to the multi-agent path so gateway finds credentials on startup
-  upsertAuthProfile({
-    profileId: "anthropic:default",
-    credential: {
-      type: "api_key",
-      provider: "anthropic",
-      key,
-    },
-    agentDir: agentDir ?? resolveDefaultAgentDir(),
-  });
-}
-
-export function applyAuthProfileConfig(
-  cfg: ClawdbotConfig,
-  params: {
-    profileId: string;
-    provider: string;
-    mode: "api_key" | "oauth";
-    email?: string;
-  },
-): ClawdbotConfig {
-  const profiles = {
-    ...cfg.auth?.profiles,
-    [params.profileId]: {
-      provider: params.provider,
-      mode: params.mode,
-      ...(params.email ? { email: params.email } : {}),
-    },
-  };
-
-  // Only maintain `auth.order` when the user explicitly configured it.
-  // Default behavior: no explicit order -> resolveAuthProfileOrder can round-robin by lastUsed.
-  const existingProviderOrder = cfg.auth?.order?.[params.provider];
-  const order =
-    existingProviderOrder !== undefined
-      ? {
-          ...cfg.auth?.order,
-          [params.provider]: existingProviderOrder.includes(params.profileId)
-            ? existingProviderOrder
-            : [...existingProviderOrder, params.profileId],
-        }
-      : cfg.auth?.order;
-  return {
-    ...cfg,
-    auth: {
-      ...cfg.auth,
-      profiles,
-      ...(order ? { order } : {}),
-    },
-  };
-}
-
-export function applyMinimaxProviderConfig(
-  cfg: ClawdbotConfig,
-): ClawdbotConfig {
-  const models = { ...cfg.agent?.models };
-  models["anthropic/claude-opus-4-5"] = {
-    ...models["anthropic/claude-opus-4-5"],
-    alias: models["anthropic/claude-opus-4-5"]?.alias ?? "Opus",
-  };
-  models["lmstudio/minimax-m2.1-gs32"] = {
-    ...models["lmstudio/minimax-m2.1-gs32"],
-    alias: models["lmstudio/minimax-m2.1-gs32"]?.alias ?? "Minimax",
-  };
-
-  const providers = { ...cfg.models?.providers };
-  if (!providers.lmstudio) {
-    providers.lmstudio = {
-      baseUrl: "http://127.0.0.1:1234/v1",
-      apiKey: "lmstudio",
-      api: "openai-responses",
-      models: [
-        {
-          id: "minimax-m2.1-gs32",
-          name: "MiniMax M2.1 GS32",
-          reasoning: false,
-          input: ["text"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 196608,
-          maxTokens: 8192,
-        },
-      ],
-    };
-  }
-
-  return {
-    ...cfg,
-    agent: {
-      ...cfg.agent,
-      models,
-    },
-    models: {
-      mode: cfg.models?.mode ?? "merge",
-      providers,
-    },
-  };
-}
-
-export function applyMinimaxConfig(cfg: ClawdbotConfig): ClawdbotConfig {
-  const next = applyMinimaxProviderConfig(cfg);
-  return {
-    ...next,
-    agent: {
-      ...next.agent,
-      model: {
-        ...(next.agent?.model &&
-        "fallbacks" in (next.agent.model as Record<string, unknown>)
-          ? {
-              fallbacks: (next.agent.model as { fallbacks?: string[] })
-                .fallbacks,
-            }
-          : undefined),
-        primary: "lmstudio/minimax-m2.1-gs32",
-      },
-    },
-  };
-}
+export {
+  applyOpencodeZenConfig,
+  applyOpencodeZenProviderConfig,
+} from "./onboard-auth.config-opencode.js";
+export {
+  applyOpencodeGoConfig,
+  applyOpencodeGoProviderConfig,
+} from "./onboard-auth.config-opencode-go.js";
+export {
+  CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF,
+  KILOCODE_DEFAULT_MODEL_REF,
+  LITELLM_DEFAULT_MODEL_REF,
+  OPENROUTER_DEFAULT_MODEL_REF,
+  setOpenaiApiKey,
+  setAnthropicApiKey,
+  setCloudflareAiGatewayConfig,
+  setByteplusApiKey,
+  setQianfanApiKey,
+  setGeminiApiKey,
+  setKilocodeApiKey,
+  setLitellmApiKey,
+  setKimiCodingApiKey,
+  setMinimaxApiKey,
+  setMistralApiKey,
+  setMoonshotApiKey,
+  setOpencodeGoApiKey,
+  setOpencodeZenApiKey,
+  setOpenrouterApiKey,
+  setSyntheticApiKey,
+  setTogetherApiKey,
+  setHuggingfaceApiKey,
+  setVeniceApiKey,
+  setVercelAiGatewayApiKey,
+  setXiaomiApiKey,
+  setVolcengineApiKey,
+  setZaiApiKey,
+  setXaiApiKey,
+  setModelStudioApiKey,
+  writeOAuthCredentials,
+  HUGGINGFACE_DEFAULT_MODEL_REF,
+  VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
+  XIAOMI_DEFAULT_MODEL_REF,
+  ZAI_DEFAULT_MODEL_REF,
+  TOGETHER_DEFAULT_MODEL_REF,
+  MISTRAL_DEFAULT_MODEL_REF,
+  XAI_DEFAULT_MODEL_REF,
+  MODELSTUDIO_DEFAULT_MODEL_REF,
+} from "./onboard-auth.credentials.js";
+export {
+  buildKilocodeModelDefinition,
+  buildMinimaxApiModelDefinition,
+  buildMinimaxModelDefinition,
+  buildMistralModelDefinition,
+  buildMoonshotModelDefinition,
+  buildZaiModelDefinition,
+  DEFAULT_MINIMAX_BASE_URL,
+  KILOCODE_DEFAULT_MODEL_ID,
+  MOONSHOT_CN_BASE_URL,
+  QIANFAN_BASE_URL,
+  QIANFAN_DEFAULT_MODEL_ID,
+  QIANFAN_DEFAULT_MODEL_REF,
+  KIMI_CODING_MODEL_ID,
+  KIMI_CODING_MODEL_REF,
+  MINIMAX_API_BASE_URL,
+  MINIMAX_CN_API_BASE_URL,
+  MINIMAX_HOSTED_MODEL_ID,
+  MINIMAX_HOSTED_MODEL_REF,
+  MOONSHOT_BASE_URL,
+  MOONSHOT_DEFAULT_MODEL_ID,
+  MOONSHOT_DEFAULT_MODEL_REF,
+  MISTRAL_BASE_URL,
+  MISTRAL_DEFAULT_MODEL_ID,
+  resolveZaiBaseUrl,
+  ZAI_CODING_CN_BASE_URL,
+  ZAI_DEFAULT_MODEL_ID,
+  ZAI_CODING_GLOBAL_BASE_URL,
+  ZAI_CN_BASE_URL,
+  ZAI_GLOBAL_BASE_URL,
+} from "./onboard-auth.models.js";

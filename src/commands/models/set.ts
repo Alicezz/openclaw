@@ -1,31 +1,15 @@
-import { CONFIG_PATH_CLAWDBOT } from "../../config/config.js";
+import { logConfigUpdated } from "../../config/logging.js";
+import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
 import type { RuntimeEnv } from "../../runtime.js";
-import { resolveModelTarget, updateConfig } from "./shared.js";
+import { applyDefaultModelPrimaryUpdate, updateConfig } from "./shared.js";
 
 export async function modelsSetCommand(modelRaw: string, runtime: RuntimeEnv) {
   const updated = await updateConfig((cfg) => {
-    const resolved = resolveModelTarget({ raw: modelRaw, cfg });
-    const key = `${resolved.provider}/${resolved.model}`;
-    const nextModels = { ...cfg.agent?.models };
-    if (!nextModels[key]) nextModels[key] = {};
-    const existingModel = cfg.agent?.model as
-      | { primary?: string; fallbacks?: string[] }
-      | undefined;
-    return {
-      ...cfg,
-      agent: {
-        ...cfg.agent,
-        model: {
-          ...(existingModel?.fallbacks
-            ? { fallbacks: existingModel.fallbacks }
-            : undefined),
-          primary: key,
-        },
-        models: nextModels,
-      },
-    };
+    return applyDefaultModelPrimaryUpdate({ cfg, modelRaw, field: "model" });
   });
 
-  runtime.log(`Updated ${CONFIG_PATH_CLAWDBOT}`);
-  runtime.log(`Default model: ${updated.agent?.model?.primary ?? modelRaw}`);
+  logConfigUpdated(runtime);
+  runtime.log(
+    `Default model: ${resolveAgentModelPrimaryValue(updated.agents?.defaults?.model) ?? modelRaw}`,
+  );
 }

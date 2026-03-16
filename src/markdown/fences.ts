@@ -40,11 +40,8 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
           marker,
           indent,
         };
-      } else if (
-        open.markerChar === markerChar &&
-        markerLen >= open.markerLen
-      ) {
-        const end = nextNewline === -1 ? buffer.length : nextNewline + 1;
+      } else if (open.markerChar === markerChar && markerLen >= open.markerLen) {
+        const end = lineEnd;
         spans.push({
           start: open.start,
           end,
@@ -56,7 +53,9 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
       }
     }
 
-    if (nextNewline === -1) break;
+    if (nextNewline === -1) {
+      break;
+    }
     offset = nextNewline + 1;
   }
 
@@ -73,11 +72,28 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
   return spans;
 }
 
-export function findFenceSpanAt(
-  spans: FenceSpan[],
-  index: number,
-): FenceSpan | undefined {
-  return spans.find((span) => index > span.start && index < span.end);
+export function findFenceSpanAt(spans: FenceSpan[], index: number): FenceSpan | undefined {
+  let low = 0;
+  let high = spans.length - 1;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const span = spans[mid];
+    if (!span) {
+      break;
+    }
+    if (index <= span.start) {
+      high = mid - 1;
+      continue;
+    }
+    if (index >= span.end) {
+      low = mid + 1;
+      continue;
+    }
+    return span;
+  }
+
+  return undefined;
 }
 
 export function isSafeFenceBreak(spans: FenceSpan[], index: number): boolean {

@@ -1,127 +1,38 @@
+import { isDeepStrictEqual } from "node:util";
 import chokidar from "chokidar";
+import type { OpenClawConfig, ConfigFileSnapshot, GatewayReloadMode } from "../config/config.js";
+import { formatConfigIssueLines } from "../config/issue-format.js";
+import { isPlainObject } from "../utils.js";
+import { buildGatewayReloadPlan, type GatewayReloadPlan } from "./config-reload-plan.js";
 
-import type {
-  ClawdbotConfig,
-  ConfigFileSnapshot,
-  GatewayReloadMode,
-} from "../config/config.js";
+export { buildGatewayReloadPlan };
+export type { ChannelKind, GatewayReloadPlan } from "./config-reload-plan.js";
 
 export type GatewayReloadSettings = {
   mode: GatewayReloadMode;
   debounceMs: number;
 };
 
-export type ProviderKind =
-  | "whatsapp"
-  | "telegram"
-  | "discord"
-  | "slack"
-  | "signal"
-  | "imessage";
-
-export type GatewayReloadPlan = {
-  changedPaths: string[];
-  restartGateway: boolean;
-  restartReasons: string[];
-  hotReasons: string[];
-  reloadHooks: boolean;
-  restartGmailWatcher: boolean;
-  restartBrowserControl: boolean;
-  restartCron: boolean;
-  restartHeartbeat: boolean;
-  restartProviders: Set<ProviderKind>;
-  noopPaths: string[];
-};
-
-type ReloadRule = {
-  prefix: string;
-  kind: "restart" | "hot" | "none";
-  actions?: ReloadAction[];
-};
-
-type ReloadAction =
-  | "reload-hooks"
-  | "restart-gmail-watcher"
-  | "restart-browser-control"
-  | "restart-cron"
-  | "restart-heartbeat"
-  | "restart-provider:whatsapp"
-  | "restart-provider:telegram"
-  | "restart-provider:discord"
-  | "restart-provider:slack"
-  | "restart-provider:signal"
-  | "restart-provider:imessage";
-
 const DEFAULT_RELOAD_SETTINGS: GatewayReloadSettings = {
   mode: "hybrid",
   debounceMs: 300,
 };
+const MISSING_CONFIG_RETRY_DELAY_MS = 150;
+const MISSING_CONFIG_MAX_RETRIES = 2;
 
-const RELOAD_RULES: ReloadRule[] = [
-  { prefix: "gateway.remote", kind: "none" },
-  { prefix: "gateway.reload", kind: "none" },
-  { prefix: "hooks.gmail", kind: "hot", actions: ["restart-gmail-watcher"] },
-  { prefix: "hooks", kind: "hot", actions: ["reload-hooks"] },
-  { prefix: "agent.heartbeat", kind: "hot", actions: ["restart-heartbeat"] },
-  { prefix: "cron", kind: "hot", actions: ["restart-cron"] },
-  {
-    prefix: "browser",
-    kind: "hot",
-    actions: ["restart-browser-control"],
-  },
-  { prefix: "web", kind: "hot", actions: ["restart-provider:whatsapp"] },
-  { prefix: "telegram", kind: "hot", actions: ["restart-provider:telegram"] },
-  { prefix: "discord", kind: "hot", actions: ["restart-provider:discord"] },
-  { prefix: "slack", kind: "hot", actions: ["restart-provider:slack"] },
-  { prefix: "signal", kind: "hot", actions: ["restart-provider:signal"] },
-  { prefix: "imessage", kind: "hot", actions: ["restart-provider:imessage"] },
-  { prefix: "identity", kind: "none" },
-  { prefix: "wizard", kind: "none" },
-  { prefix: "logging", kind: "none" },
-  { prefix: "models", kind: "none" },
-  { prefix: "agent", kind: "none" },
-  { prefix: "routing", kind: "none" },
-  { prefix: "messages", kind: "none" },
-  { prefix: "session", kind: "none" },
-  { prefix: "whatsapp", kind: "none" },
-  { prefix: "talk", kind: "none" },
-  { prefix: "skills", kind: "none" },
-  { prefix: "ui", kind: "none" },
-  { prefix: "gateway", kind: "restart" },
-  { prefix: "bridge", kind: "restart" },
-  { prefix: "discovery", kind: "restart" },
-  { prefix: "canvasHost", kind: "restart" },
-];
-
-function matchRule(path: string): ReloadRule | null {
-  for (const rule of RELOAD_RULES) {
-    if (path === rule.prefix || path.startsWith(`${rule.prefix}.`)) return rule;
+export function diffConfigPaths(prev: unknown, next: unknown, prefix = ""): string[] {
+  if (prev === next) {
+    return [];
   }
-  return null;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      Object.prototype.toString.call(value) === "[object Object]",
-  );
-}
-
-export function diffConfigPaths(
-  prev: unknown,
-  next: unknown,
-  prefix = "",
-): string[] {
-  if (prev === next) return [];
   if (isPlainObject(prev) && isPlainObject(next)) {
     const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
     const paths: string[] = [];
     for (const key of keys) {
       const prevValue = prev[key];
       const nextValue = next[key];
-      if (prevValue === undefined && nextValue === undefined) continue;
+      if (prevValue === undefined && nextValue === undefined) {
+        continue;
+      }
       const childPrefix = prefix ? `${prefix}.${key}` : key;
       const childPaths = diffConfigPaths(prevValue, nextValue, childPrefix);
       if (childPaths.length > 0) {
@@ -131,25 +42,19 @@ export function diffConfigPaths(
     return paths;
   }
   if (Array.isArray(prev) && Array.isArray(next)) {
-    if (
-      prev.length === next.length &&
-      prev.every((val, idx) => val === next[idx])
-    ) {
+    // Arrays can contain object entries (for example memory.qmd.paths/scope.rules);
+    // compare structurally so identical values are not reported as changed.
+    if (isDeepStrictEqual(prev, next)) {
       return [];
     }
   }
   return [prefix || "<root>"];
 }
 
-export function resolveGatewayReloadSettings(
-  cfg: ClawdbotConfig,
-): GatewayReloadSettings {
+export function resolveGatewayReloadSettings(cfg: OpenClawConfig): GatewayReloadSettings {
   const rawMode = cfg.gateway?.reload?.mode;
   const mode =
-    rawMode === "off" ||
-    rawMode === "restart" ||
-    rawMode === "hot" ||
-    rawMode === "hybrid"
+    rawMode === "off" || rawMode === "restart" || rawMode === "hot" || rawMode === "hybrid"
       ? rawMode
       : DEFAULT_RELOAD_SETTINGS.mode;
   const debounceRaw = cfg.gateway?.reload?.debounceMs;
@@ -160,104 +65,15 @@ export function resolveGatewayReloadSettings(
   return { mode, debounceMs };
 }
 
-export function buildGatewayReloadPlan(
-  changedPaths: string[],
-): GatewayReloadPlan {
-  const plan: GatewayReloadPlan = {
-    changedPaths,
-    restartGateway: false,
-    restartReasons: [],
-    hotReasons: [],
-    reloadHooks: false,
-    restartGmailWatcher: false,
-    restartBrowserControl: false,
-    restartCron: false,
-    restartHeartbeat: false,
-    restartProviders: new Set(),
-    noopPaths: [],
-  };
-
-  const applyAction = (action: ReloadAction) => {
-    switch (action) {
-      case "reload-hooks":
-        plan.reloadHooks = true;
-        break;
-      case "restart-gmail-watcher":
-        plan.restartGmailWatcher = true;
-        break;
-      case "restart-browser-control":
-        plan.restartBrowserControl = true;
-        break;
-      case "restart-cron":
-        plan.restartCron = true;
-        break;
-      case "restart-heartbeat":
-        plan.restartHeartbeat = true;
-        break;
-      case "restart-provider:whatsapp":
-        plan.restartProviders.add("whatsapp");
-        break;
-      case "restart-provider:telegram":
-        plan.restartProviders.add("telegram");
-        break;
-      case "restart-provider:discord":
-        plan.restartProviders.add("discord");
-        break;
-      case "restart-provider:slack":
-        plan.restartProviders.add("slack");
-        break;
-      case "restart-provider:signal":
-        plan.restartProviders.add("signal");
-        break;
-      case "restart-provider:imessage":
-        plan.restartProviders.add("imessage");
-        break;
-      default:
-        break;
-    }
-  };
-
-  for (const path of changedPaths) {
-    const rule = matchRule(path);
-    if (!rule) {
-      plan.restartGateway = true;
-      plan.restartReasons.push(path);
-      continue;
-    }
-    if (rule.kind === "restart") {
-      plan.restartGateway = true;
-      plan.restartReasons.push(path);
-      continue;
-    }
-    if (rule.kind === "none") {
-      plan.noopPaths.push(path);
-      continue;
-    }
-    plan.hotReasons.push(path);
-    for (const action of rule.actions ?? []) {
-      applyAction(action);
-    }
-  }
-
-  if (plan.restartGmailWatcher) {
-    plan.reloadHooks = true;
-  }
-
-  return plan;
-}
-
 export type GatewayConfigReloader = {
   stop: () => Promise<void>;
 };
 
 export function startGatewayConfigReloader(opts: {
-  initialConfig: ClawdbotConfig;
+  initialConfig: OpenClawConfig;
   readSnapshot: () => Promise<ConfigFileSnapshot>;
-  onHotReload: (
-    plan: GatewayReloadPlan,
-    nextConfig: ClawdbotConfig,
-  ) => Promise<void>;
-  onRestart: (plan: GatewayReloadPlan, nextConfig: ClawdbotConfig) => void;
+  onHotReload: (plan: GatewayReloadPlan, nextConfig: OpenClawConfig) => Promise<void>;
+  onRestart: (plan: GatewayReloadPlan, nextConfig: OpenClawConfig) => void | Promise<void>;
   log: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -272,18 +88,103 @@ export function startGatewayConfigReloader(opts: {
   let running = false;
   let stopped = false;
   let restartQueued = false;
+  let missingConfigRetries = 0;
 
-  const schedule = () => {
-    if (stopped) return;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    const wait = settings.debounceMs;
+  const scheduleAfter = (wait: number) => {
+    if (stopped) {
+      return;
+    }
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
     debounceTimer = setTimeout(() => {
       void runReload();
     }, wait);
   };
+  const schedule = () => {
+    scheduleAfter(settings.debounceMs);
+  };
+  const queueRestart = (plan: GatewayReloadPlan, nextConfig: OpenClawConfig) => {
+    if (restartQueued) {
+      return;
+    }
+    restartQueued = true;
+    void (async () => {
+      try {
+        await opts.onRestart(plan, nextConfig);
+      } catch (err) {
+        // Restart checks can fail (for example unresolved SecretRefs). Keep the
+        // reloader alive and allow a future change to retry restart scheduling.
+        restartQueued = false;
+        opts.log.error(`config restart failed: ${String(err)}`);
+      }
+    })();
+  };
+
+  const handleMissingSnapshot = (snapshot: ConfigFileSnapshot): boolean => {
+    if (snapshot.exists) {
+      missingConfigRetries = 0;
+      return false;
+    }
+    if (missingConfigRetries < MISSING_CONFIG_MAX_RETRIES) {
+      missingConfigRetries += 1;
+      opts.log.info(
+        `config reload retry (${missingConfigRetries}/${MISSING_CONFIG_MAX_RETRIES}): config file not found`,
+      );
+      scheduleAfter(MISSING_CONFIG_RETRY_DELAY_MS);
+      return true;
+    }
+    opts.log.warn("config reload skipped (config file not found)");
+    return true;
+  };
+
+  const handleInvalidSnapshot = (snapshot: ConfigFileSnapshot): boolean => {
+    if (snapshot.valid) {
+      return false;
+    }
+    const issues = formatConfigIssueLines(snapshot.issues, "").join(", ");
+    opts.log.warn(`config reload skipped (invalid config): ${issues}`);
+    return true;
+  };
+
+  const applySnapshot = async (nextConfig: OpenClawConfig) => {
+    const changedPaths = diffConfigPaths(currentConfig, nextConfig);
+    currentConfig = nextConfig;
+    settings = resolveGatewayReloadSettings(nextConfig);
+    if (changedPaths.length === 0) {
+      return;
+    }
+
+    opts.log.info(`config change detected; evaluating reload (${changedPaths.join(", ")})`);
+    const plan = buildGatewayReloadPlan(changedPaths);
+    if (settings.mode === "off") {
+      opts.log.info("config reload disabled (gateway.reload.mode=off)");
+      return;
+    }
+    if (settings.mode === "restart") {
+      queueRestart(plan, nextConfig);
+      return;
+    }
+    if (plan.restartGateway) {
+      if (settings.mode === "hot") {
+        opts.log.warn(
+          `config reload requires gateway restart; hot mode ignoring (${plan.restartReasons.join(
+            ", ",
+          )})`,
+        );
+        return;
+      }
+      queueRestart(plan, nextConfig);
+      return;
+    }
+
+    await opts.onHotReload(plan, nextConfig);
+  };
 
   const runReload = async () => {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     if (running) {
       pending = true;
       return;
@@ -295,48 +196,13 @@ export function startGatewayConfigReloader(opts: {
     }
     try {
       const snapshot = await opts.readSnapshot();
-      if (!snapshot.valid) {
-        const issues = snapshot.issues
-          .map((issue) => `${issue.path}: ${issue.message}`)
-          .join(", ");
-        opts.log.warn(`config reload skipped (invalid config): ${issues}`);
+      if (handleMissingSnapshot(snapshot)) {
         return;
       }
-      const nextConfig = snapshot.config;
-      const changedPaths = diffConfigPaths(currentConfig, nextConfig);
-      currentConfig = nextConfig;
-      settings = resolveGatewayReloadSettings(nextConfig);
-      if (changedPaths.length === 0) return;
-
-      const plan = buildGatewayReloadPlan(changedPaths);
-      if (settings.mode === "off") {
-        opts.log.info("config reload disabled (gateway.reload.mode=off)");
+      if (handleInvalidSnapshot(snapshot)) {
         return;
       }
-      if (settings.mode === "restart") {
-        if (!restartQueued) {
-          restartQueued = true;
-          opts.onRestart(plan, nextConfig);
-        }
-        return;
-      }
-      if (plan.restartGateway) {
-        if (settings.mode === "hot") {
-          opts.log.warn(
-            `config reload requires gateway restart; hot mode ignoring (${plan.restartReasons.join(
-              ", ",
-            )})`,
-          );
-          return;
-        }
-        if (!restartQueued) {
-          restartQueued = true;
-          opts.onRestart(plan, nextConfig);
-        }
-        return;
-      }
-
-      await opts.onHotReload(plan, nextConfig);
+      await applySnapshot(snapshot.config);
     } catch (err) {
       opts.log.error(`config reload failed: ${String(err)}`);
     } finally {
@@ -351,20 +217,30 @@ export function startGatewayConfigReloader(opts: {
   const watcher = chokidar.watch(opts.watchPath, {
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+    usePolling: Boolean(process.env.VITEST),
   });
 
   watcher.on("add", schedule);
   watcher.on("change", schedule);
   watcher.on("unlink", schedule);
+  let watcherClosed = false;
   watcher.on("error", (err) => {
+    if (watcherClosed) {
+      return;
+    }
+    watcherClosed = true;
     opts.log.warn(`config watcher error: ${String(err)}`);
+    void watcher.close().catch(() => {});
   });
 
   return {
     stop: async () => {
       stopped = true;
-      if (debounceTimer) clearTimeout(debounceTimer);
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
       debounceTimer = null;
+      watcherClosed = true;
       await watcher.close().catch(() => {});
     },
   };
