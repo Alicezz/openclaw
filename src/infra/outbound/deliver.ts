@@ -34,6 +34,7 @@ import { markdownToSignalTextChunks, type SignalTextStyleRange } from "../../sig
 import { sendMessageSignal } from "../../signal/send.js";
 import type { sendMessageSlack } from "../../slack/send.js";
 import type { sendMessageTelegram } from "../../telegram/send.js";
+import { splitOnSplitTags } from "../../utils/split-tag.js";
 import type { sendMessageWhatsApp } from "../../web/outbound.js";
 import { throwIfAborted } from "./abort.js";
 import { ackDelivery, enqueueDelivery, failDelivery } from "./delivery-queue.js";
@@ -578,7 +579,8 @@ async function deliverOutboundPayloadsCore(
       })
     : undefined;
 
-  const sendTextChunks = async (
+  // Send a single text segment through the channel chunker.
+  const sendTextSegment = async (
     text: string,
     overrides?: { replyToId?: string | null; threadId?: string | number | null },
   ) => {
@@ -613,6 +615,28 @@ async function deliverOutboundPayloadsCore(
     for (const chunk of chunks) {
       throwIfAborted(abortSignal);
       results.push(await handler.sendText(chunk, overrides));
+    }
+  };
+
+  // Split on [[SPLIT]] directives first, then send each segment through normal chunking.
+  // First segment inherits replyToId; subsequent segments are standalone bubbles.
+  const sendTextChunks = async (
+    text: string,
+    overrides?: { replyToId?: string | null; threadId?: string | number | null },
+  ) => {
+    const segments = splitOnSplitTags(text);
+    if (segments.length <= 1) {
+      // No split tags — fast path, send as single segment
+      await sendTextSegment(segments[0] ?? text, overrides);
+      return;
+    }
+    for (let i = 0; i < segments.length; i++) {
+      // Only the first segment gets the reply-to context
+      const segmentOverrides = i === 0 ? overrides : { ...overrides, replyToId: undefined };
+      const segment = segments[i];
+      if (segment) {
+        await sendTextSegment(segment, segmentOverrides);
+      }
     }
   };
 
@@ -777,11 +801,17 @@ async function deliverOutboundPayloadsCore(
         continue;
       }
 
+      // Split caption on [[SPLIT]] — first segment becomes media caption,
+      // remaining segments are sent as separate text-only follow-up bubbles.
+      const captionSegments = splitOnSplitTags(payloadSummary.text);
+      const mediaCaption = captionSegments[0] ?? payloadSummary.text;
+      const trailingTextSegments = captionSegments.length > 1 ? captionSegments.slice(1) : [];
+
       let first = true;
       let lastMessageId: string | undefined;
       for (const url of payloadSummary.mediaUrls) {
         throwIfAborted(abortSignal);
-        const caption = first ? payloadSummary.text : "";
+        const caption = first ? mediaCaption : "";
         first = false;
         if (isSignalChannel) {
           const delivery = await sendSignalMedia(caption, url);
@@ -792,6 +822,11 @@ async function deliverOutboundPayloadsCore(
           results.push(delivery);
           lastMessageId = delivery.messageId;
         }
+      }
+
+      // Send trailing [[SPLIT]] segments as separate text bubbles after media
+      for (const segment of trailingTextSegments) {
+        await sendTextSegment(segment);
       }
       emitMessageSent({
         success: true,
