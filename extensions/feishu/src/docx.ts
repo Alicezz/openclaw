@@ -1321,7 +1321,8 @@ export function registerFeishuDocTools(api: OpenClawPluginApi) {
                       getMediaMaxBytes(p, defaultAccountId),
                       api.logger,
                     );
-                    return json({ ...created, ...writeResult });
+                    const { blocks_deleted: _, ...writeRest } = writeResult;
+                    return json({ ...created, ...writeRest });
                   }
                   return json(created);
                 }
