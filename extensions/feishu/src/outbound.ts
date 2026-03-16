@@ -4,7 +4,12 @@ import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk/feishu";
 import { resolveFeishuAccount } from "./accounts.js";
 import { sendMediaFeishu } from "./media.js";
 import { getFeishuRuntime } from "./runtime.js";
-import { sendCardFeishu, sendMarkdownCardFeishu, sendMessageFeishu, sendStructuredCardFeishu } from "./send.js";
+import {
+  sendCardFeishu,
+  sendMarkdownCardFeishu,
+  sendMessageFeishu,
+  sendStructuredCardFeishu,
+} from "./send.js";
 
 function normalizePossibleLocalImagePath(text: string | undefined): string | null {
   const raw = text?.trim();
@@ -81,7 +86,16 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   chunker: (text, limit) => getFeishuRuntime().channel.text.chunkMarkdownText(text, limit),
   chunkerMode: "markdown",
   textChunkLimit: 4000,
-  sendPayload: async ({ cfg, to, text, payload, accountId, replyToId, threadId, mediaLocalRoots }) => {
+  sendPayload: async ({
+    cfg,
+    to,
+    text,
+    payload,
+    accountId,
+    replyToId,
+    threadId,
+    mediaLocalRoots,
+  }) => {
     const replyToMessageId = resolveReplyToMessageId({ replyToId, threadId });
     const feishuData = payload.channelData?.feishu as
       | { card?: Record<string, unknown> }
@@ -126,11 +140,11 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         });
       }
 
-      // Send each media attachment
-      let lastResult: Record<string, unknown> | undefined;
+      // Send each media attachment; keep the last successful result for the return value.
+      let lastResult: { messageId: string; chatId: string } = { messageId: "", chatId: "" };
       for (const mediaUrl of mediaUrls) {
         try {
-          const result = await sendMediaFeishu({
+          lastResult = await sendMediaFeishu({
             cfg,
             to,
             mediaUrl,
@@ -138,19 +152,17 @@ export const feishuOutbound: ChannelOutboundAdapter = {
             mediaLocalRoots,
             replyToMessageId,
           });
-          lastResult = result;
         } catch (err) {
           console.error(`[feishu] sendPayload media failed:`, err);
           // On failure, send URL-only fallback (no text duplication — text was already sent above)
           const fallbackText = `📎 ${mediaUrl}`;
-          const result = await sendOutboundText({
+          lastResult = await sendOutboundText({
             cfg,
             to,
             text: fallbackText,
             accountId: accountId ?? undefined,
             replyToMessageId,
           });
-          lastResult = result;
         }
       }
       return { channel: "feishu", ...lastResult };
