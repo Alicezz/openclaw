@@ -72,11 +72,16 @@ describe("loadEnabledBundleMcpConfig", () => {
         workspaceDir,
         cfg: config,
       });
-      const resolvedServerPath = await fs.realpath(serverPath);
 
       expect(loaded.diagnostics).toEqual([]);
       expect(loaded.config.mcpServers.bundleProbe?.command).toBe("node");
-      expect(loaded.config.mcpServers.bundleProbe?.args).toEqual([resolvedServerPath]);
+      expect(loaded.config.mcpServers.bundleProbe?.args).toEqual([
+        expect.stringMatching(/[\\/]servers[\\/]probe\.mjs$/),
+      ]);
+      expect(
+        typeof loaded.config.mcpServers.bundleProbe?.args?.[0] === "string" &&
+          path.isAbsolute(loaded.config.mcpServers.bundleProbe.args[0]),
+      ).toBe(true);
     } finally {
       env.restore();
     }

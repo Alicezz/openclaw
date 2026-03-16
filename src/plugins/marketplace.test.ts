@@ -10,6 +10,10 @@ vi.mock("./install.js", () => ({
   installPluginFromPath: (...args: unknown[]) => installPluginFromPathMock(...args),
 }));
 
+function normalizePathForAssertion(value: string): string {
+  return value.replaceAll("\\", "/");
+}
+
 async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-marketplace-test-"));
   try {
@@ -47,7 +51,7 @@ describe("marketplace plugins", () => {
       const result = await listMarketplacePlugins({ marketplace: rootDir });
       expect(result).toEqual({
         ok: true,
-        sourceLabel: expect.stringContaining(".claude-plugin/marketplace.json"),
+        sourceLabel: expect.any(String),
         manifest: {
           name: "Example Marketplace",
           version: "1.0.0",
@@ -61,6 +65,11 @@ describe("marketplace plugins", () => {
           ],
         },
       });
+      if (result.ok) {
+        expect(normalizePathForAssertion(result.sourceLabel)).toContain(
+          ".claude-plugin/marketplace.json",
+        );
+      }
     });
   });
 
