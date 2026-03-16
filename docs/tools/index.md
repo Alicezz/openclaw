@@ -34,6 +34,10 @@ Notes:
 `tools.profile` sets a **base tool allowlist** before `tools.allow`/`tools.deny`.
 Per-agent override: `agents.list[].tools.profile`.
 
+<Note>
+**2026.3.2 default change:** Local onboarding now defaults previously-unset configs to `tools.profile: "coding"` rather than leaving the profile unset (which behaves like `full`). Existing explicit profile values are preserved. If tools like `exec`, `web_fetch`, or `browser` seem missing after upgrading, check your `tools.profile` setting. For wider session-tool visibility, use `tools.sessions.visibility` (not `sessions.visibility`).
+</Note>
+
 Profiles:
 
 - `minimal`: `session_status` only
