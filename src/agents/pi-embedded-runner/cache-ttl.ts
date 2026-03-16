@@ -21,7 +21,14 @@ function isOpenRouterCacheTtlModel(modelId: string): boolean {
 }
 
 function isDeepInfraCacheTtlModel(modelId: string): boolean {
-  return Array.from(CACHE_TTL_NATIVE_PROVIDERS.values()).some((prefix) => modelId.startsWith(prefix));
+  const DEEPINFRA_CACHE_TTL_MODEL_PREFIXES = [
+    "anthropic/",
+    "moonshot/",
+    "moonshotai/",
+    "zai/",
+    "zai-org/",
+  ] as const;
+  return DEEPINFRA_CACHE_TTL_MODEL_PREFIXES.some((prefix) => modelId.startsWith(prefix));
 }
 
 export function isCacheTtlEligibleProvider(provider: string, modelId: string): boolean {
