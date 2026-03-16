@@ -5,6 +5,7 @@ import byteplusPlugin from "../../../extensions/byteplus/index.js";
 import cloudflareAiGatewayPlugin from "../../../extensions/cloudflare-ai-gateway/index.js";
 import copilotProxyPlugin from "../../../extensions/copilot-proxy/index.js";
 import elevenLabsPlugin from "../../../extensions/elevenlabs/index.js";
+import erniePlugin from "../../../extensions/ernie/index.js";
 import firecrawlPlugin from "../../../extensions/firecrawl/index.js";
 import githubCopilotPlugin from "../../../extensions/github-copilot/index.js";
 import googlePlugin from "../../../extensions/google/index.js";
@@ -23,7 +24,6 @@ import opencodeGoPlugin from "../../../extensions/opencode-go/index.js";
 import opencodePlugin from "../../../extensions/opencode/index.js";
 import openRouterPlugin from "../../../extensions/openrouter/index.js";
 import perplexityPlugin from "../../../extensions/perplexity/index.js";
-import erniePlugin from "../../../extensions/ernie/index.js";
 import qianfanPlugin from "../../../extensions/qianfan/index.js";
 import qwenPortalPlugin from "../../../extensions/qwen-portal-auth/index.js";
 import sglangPlugin from "../../../extensions/sglang/index.js";
@@ -79,6 +79,7 @@ const bundledProviderPlugins: RegistrablePlugin[] = [
   byteplusPlugin,
   cloudflareAiGatewayPlugin,
   copilotProxyPlugin,
+  erniePlugin,
   githubCopilotPlugin,
   googlePlugin,
   huggingFacePlugin,
@@ -94,7 +95,6 @@ const bundledProviderPlugins: RegistrablePlugin[] = [
   opencodePlugin,
   openAIPlugin,
   openRouterPlugin,
-  erniePlugin,
   qianfanPlugin,
   qwenPortalPlugin,
   sglangPlugin,

@@ -2,6 +2,7 @@ import ANTHROPIC_MANIFEST from "../../extensions/anthropic/openclaw.plugin.json"
 import BYTEPLUS_MANIFEST from "../../extensions/byteplus/openclaw.plugin.json" with { type: "json" };
 import CLOUDFLARE_AI_GATEWAY_MANIFEST from "../../extensions/cloudflare-ai-gateway/openclaw.plugin.json" with { type: "json" };
 import COPILOT_PROXY_MANIFEST from "../../extensions/copilot-proxy/openclaw.plugin.json" with { type: "json" };
+import ERNIE_MANIFEST from "../../extensions/ernie/openclaw.plugin.json" with { type: "json" };
 import GITHUB_COPILOT_MANIFEST from "../../extensions/github-copilot/openclaw.plugin.json" with { type: "json" };
 import GOOGLE_MANIFEST from "../../extensions/google/openclaw.plugin.json" with { type: "json" };
 import HUGGINGFACE_MANIFEST from "../../extensions/huggingface/openclaw.plugin.json" with { type: "json" };
@@ -17,7 +18,6 @@ import OPENAI_MANIFEST from "../../extensions/openai/openclaw.plugin.json" with 
 import OPENCODE_GO_MANIFEST from "../../extensions/opencode-go/openclaw.plugin.json" with { type: "json" };
 import OPENCODE_MANIFEST from "../../extensions/opencode/openclaw.plugin.json" with { type: "json" };
 import OPENROUTER_MANIFEST from "../../extensions/openrouter/openclaw.plugin.json" with { type: "json" };
-import ERNIE_MANIFEST from "../../extensions/ernie/openclaw.plugin.json" with { type: "json" };
 import QIANFAN_MANIFEST from "../../extensions/qianfan/openclaw.plugin.json" with { type: "json" };
 import QWEN_PORTAL_AUTH_MANIFEST from "../../extensions/qwen-portal-auth/openclaw.plugin.json" with { type: "json" };
 import SGLANG_MANIFEST from "../../extensions/sglang/openclaw.plugin.json" with { type: "json" };
@@ -64,6 +64,7 @@ export const BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES = collectBundledProviderAu
   BYTEPLUS_MANIFEST,
   CLOUDFLARE_AI_GATEWAY_MANIFEST,
   COPILOT_PROXY_MANIFEST,
+  ERNIE_MANIFEST,
   GITHUB_COPILOT_MANIFEST,
   GOOGLE_MANIFEST,
   HUGGINGFACE_MANIFEST,
@@ -79,7 +80,6 @@ export const BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES = collectBundledProviderAu
   OPENCODE_GO_MANIFEST,
   OPENCODE_MANIFEST,
   OPENROUTER_MANIFEST,
-  ERNIE_MANIFEST,
   QIANFAN_MANIFEST,
   QWEN_PORTAL_AUTH_MANIFEST,
   SGLANG_MANIFEST,
