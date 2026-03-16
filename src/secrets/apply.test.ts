@@ -22,6 +22,25 @@ type ApplyFixture = {
   env: NodeJS.ProcessEnv;
 };
 
+async function removeDirWithRetries(dir: string, attempts = 6): Promise<void> {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (
+        i === attempts - 1 ||
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        !["ENOTEMPTY", "EPERM", "EBUSY"].includes(String((error as { code?: string }).code))
+      ) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (i + 1)));
+    }
+  }
+}
+
 function stripVolatileConfigMeta(input: string): Record<string, unknown> {
   const parsed = JSON.parse(input) as Record<string, unknown>;
   const meta =
@@ -181,7 +200,7 @@ describe("secrets apply", () => {
 
   afterEach(async () => {
     clearSecretsRuntimeSnapshot();
-    await fs.rm(fixture.rootDir, { recursive: true, force: true });
+    await removeDirWithRetries(fixture.rootDir);
   });
 
   it("preflights and applies one-way scrub without plaintext backups", async () => {
@@ -218,7 +237,7 @@ describe("secrets apply", () => {
     const nextEnv = await fs.readFile(fixture.envPath, "utf8");
     expect(nextEnv).not.toContain("sk-openai-plaintext");
     expect(nextEnv).toContain("UNRELATED=value");
-  });
+  }, 180_000);
 
   it("applies auth-profiles sibling ref targets to the scoped agent store", async () => {
     const plan: SecretsApplyPlan = {

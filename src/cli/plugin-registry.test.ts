@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   resolveAgentWorkspaceDir: vi.fn(() => "/tmp/workspace"),
   resolveDefaultAgentId: vi.fn(() => "main"),
+  resolveConfiguredChannelPluginIds: vi.fn(() => ["telegram"]),
+  resolveChannelPluginIds: vi.fn(() => ["telegram", "slack"]),
   loadConfig: vi.fn(),
   loadOpenClawPlugins: vi.fn(),
   loadPluginManifestRegistry: vi.fn(),
@@ -20,6 +22,11 @@ vi.mock("../config/config.js", () => ({
 
 vi.mock("../plugins/loader.js", () => ({
   loadOpenClawPlugins: mocks.loadOpenClawPlugins,
+}));
+
+vi.mock("../plugins/channel-plugin-ids.js", () => ({
+  resolveConfiguredChannelPluginIds: mocks.resolveConfiguredChannelPluginIds,
+  resolveChannelPluginIds: mocks.resolveChannelPluginIds,
 }));
 
 vi.mock("../plugins/manifest-registry.js", () => ({
@@ -50,6 +57,8 @@ describe("ensurePluginRegistryLoaded", () => {
       channels: [],
       tools: [],
     });
+    mocks.resolveConfiguredChannelPluginIds.mockReturnValue(["telegram"]);
+    mocks.resolveChannelPluginIds.mockReturnValue(["telegram", "slack"]);
   });
 
   it("loads only configured channel plugins for configured-channels scope", async () => {

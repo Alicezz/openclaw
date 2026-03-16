@@ -36,6 +36,8 @@ import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "./tools/sessions-helpers.js";
+import { createHandoffCapsule } from "./zk-handoff.js";
+import { resolveZkSpawnKey } from "./zk-spawn-key.js";
 
 export const SUBAGENT_SPAWN_MODES = ["run", "session"] as const;
 export type SpawnSubagentMode = (typeof SUBAGENT_SPAWN_MODES)[number];
@@ -603,6 +605,28 @@ export async function spawnSubagentDirect(
 
   const childIdem = crypto.randomUUID();
   let childRunId: string = childIdem;
+
+  // Build a ZK handoff capsule that the gateway will verify before dispatching
+  // the child agent. Failure here must never block the actual spawn.
+  let zkHandoffCapsule: string | undefined;
+  try {
+    const capsule = createHandoffCapsule({
+      senderAgentId: requesterAgentId ?? "unknown",
+      receiverAgentId: targetAgentId ?? requesterAgentId ?? "unknown",
+      task,
+      taskLabel: label || "subagent-spawn",
+      state: { spawnDepth: childDepth },
+      parentSessionKey: requesterInternalKey,
+      authorizedChannelIds: requesterOrigin?.channel ? [requesterOrigin.channel] : [],
+      authorizedResourceIds: [],
+      gatewayKey: resolveZkSpawnKey(),
+      ttlMs: (runTimeoutSeconds || 600) * 1_000 + 60_000,
+    });
+    zkHandoffCapsule = JSON.stringify(capsule);
+  } catch {
+    // ZK failure must never block spawn.
+  }
+
   try {
     const {
       spawnedBy: _spawnedBy,
@@ -626,6 +650,7 @@ export async function spawnSubagentDirect(
         timeout: runTimeoutSeconds,
         label: label || undefined,
         ...publicSpawnedMetadata,
+        ...(zkHandoffCapsule ? { zkHandoffCapsule } : {}),
       },
       timeoutMs: 10_000,
     });

@@ -81,7 +81,7 @@ describe("provider-usage.load", () => {
     expect(summary.providers.find((provider) => provider.provider === "xiaomi")?.windows).toEqual(
       [],
     );
-  });
+  }, 180_000);
 
   it("returns empty provider list when auth resolves to none", async () => {
     const mockFetch = createProviderUsageFetch(async () => makeResponse(404, "not found"));

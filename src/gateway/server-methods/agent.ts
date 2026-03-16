@@ -5,6 +5,12 @@ import {
   normalizeSpawnedRunMetadata,
   resolveIngressWorkspaceOverrideForSpawnedRun,
 } from "../../agents/spawned-context.js";
+import {
+  HandoffCapsule,
+  HandoffNonceRegistry,
+  receiveHandoffCapsule,
+} from "../../agents/zk-handoff.js";
+import { resolveZkSpawnKey } from "../../agents/zk-spawn-key.js";
 import { buildBareSessionResetPrompt } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
@@ -63,6 +69,9 @@ import {
 } from "./agent-wait-dedupe.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
+
+// Module-level nonce registry shared across all agent dispatches in this gateway process.
+const _zkNonceRegistry = new HandoffNonceRegistry();
 
 const RESET_COMMAND_RE = /^\/(new|reset)(?:\s+([\s\S]*))?$/i;
 
@@ -190,6 +199,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       bestEffortDeliver?: boolean;
       label?: string;
       inputProvenance?: InputProvenance;
+      zkHandoffCapsule?: string;
     };
     const senderIsOwner = resolveSenderIsOwnerFromClient(client);
     const cfg = loadConfig();
@@ -355,6 +365,63 @@ export const agentHandlers: GatewayRequestHandlers = {
       const labelValue = request.label?.trim() || entry?.label;
       const sessionAgent = resolveAgentIdFromSessionKey(canonicalKey);
       spawnedByValue = canonicalizeSpawnedByForAgent(cfg, sessionAgent, entry?.spawnedBy);
+      // Verify ZK handoff capsule when present — covers both subagent spawns
+      // (parent → child) and peer-to-peer A2A steps (sibling → sibling).
+      if (request.zkHandoffCapsule) {
+        let zkCapsule: Record<string, unknown> | undefined;
+        try {
+          zkCapsule = JSON.parse(request.zkHandoffCapsule) as Record<string, unknown>;
+        } catch {
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              "invalid agent params: malformed zk handoff capsule",
+            ),
+          );
+          return;
+        }
+        if (zkCapsule) {
+          const verifyResult = receiveHandoffCapsule(
+            zkCapsule as unknown as HandoffCapsule,
+            sessionAgent ?? canonicalKey,
+            resolveZkSpawnKey(),
+          );
+          if (!verifyResult.valid) {
+            respond(
+              false,
+              undefined,
+              errorShape(
+                ErrorCodes.INVALID_REQUEST,
+                `invalid agent params: zk handoff verification failed: ${verifyResult.reason}`,
+              ),
+            );
+            return;
+          }
+          const header = zkCapsule?.header as Record<string, unknown> | undefined;
+          if (header?.handoffNonce && typeof header.expiresAt === "number") {
+            const isReplay = _zkNonceRegistry.checkAndRegister(
+              typeof header.handoffNonce === "string"
+                ? header.handoffNonce
+                : JSON.stringify(header.handoffNonce),
+              header.expiresAt,
+              canonicalKey,
+            );
+            if (isReplay) {
+              respond(
+                false,
+                undefined,
+                errorShape(
+                  ErrorCodes.INVALID_REQUEST,
+                  "invalid agent params: zk handoff replay detected — request rejected",
+                ),
+              );
+              return;
+            }
+          }
+        }
+      }
       let inheritedGroup:
         | { groupId?: string; groupChannel?: string; groupSpace?: string }
         | undefined;

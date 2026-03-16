@@ -45,10 +45,12 @@ describe("marketplace plugins", () => {
 
       const { listMarketplacePlugins } = await import("./marketplace.js");
       const result = await listMarketplacePlugins({ marketplace: rootDir });
-      expect(result).toEqual({
-        ok: true,
-        sourceLabel: expect.stringContaining(".claude-plugin/marketplace.json"),
-        manifest: {
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.sourceLabel.replaceAll("\\", "/")).toContain(
+          ".claude-plugin/marketplace.json",
+        );
+        expect(result.manifest).toEqual({
           name: "Example Marketplace",
           version: "1.0.0",
           plugins: [
@@ -59,8 +61,8 @@ describe("marketplace plugins", () => {
               source: { kind: "path", path: "./plugins/frontend-design" },
             },
           ],
-        },
-      });
+        });
+      }
     });
   });
 
