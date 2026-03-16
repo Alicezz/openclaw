@@ -19,6 +19,7 @@ const BUNDLED_WEB_SEARCH_ALLOWLIST_COMPAT_PLUGIN_IDS = [
   "firecrawl",
   "google",
   "moonshot",
+  "parallel",
   "perplexity",
   "xai",
 ] as const;
@@ -85,6 +86,22 @@ const BUNDLED_WEB_SEARCH_PROVIDER_REGISTRY = [
       getCredentialValue: (searchConfig) => getScopedCredentialValue(searchConfig, "kimi"),
       setCredentialValue: (searchConfigTarget, value) =>
         setScopedCredentialValue(searchConfigTarget, "kimi", value),
+    }),
+  },
+  {
+    pluginId: "parallel",
+    provider: createPluginBackedWebSearchProvider({
+      id: "parallel",
+      label: "Parallel",
+      hint: "LLM-optimized excerpts",
+      envVars: ["PARALLEL_API_KEY"],
+      placeholder: "par-...",
+      signupUrl: "https://parallel.ai",
+      docsUrl: "https://docs.openclaw.ai/tools/web",
+      autoDetectOrder: 45,
+      getCredentialValue: (searchConfig) => getScopedCredentialValue(searchConfig, "parallel"),
+      setCredentialValue: (searchConfigTarget, value) =>
+        setScopedCredentialValue(searchConfigTarget, "parallel", value),
     }),
   },
   {
