@@ -214,7 +214,8 @@ export async function ensureSkillSnapshot(params: {
   ensureSkillsWatcher({ workspaceDir, config: cfg });
   const shouldRefreshSnapshot =
     (snapshotVersion > 0 && (nextEntry?.skillsSnapshot?.version ?? 0) < snapshotVersion) ||
-    nextEntry?.skillsSnapshot?.eligibilitySignature !== eligibilitySignature;
+    (nextEntry?.skillsSnapshot !== undefined &&
+      nextEntry.skillsSnapshot.eligibilitySignature !== eligibilitySignature);
 
   if (isFirstTurnInSession && sessionStore && sessionKey) {
     const current = nextEntry ??
@@ -246,7 +247,7 @@ export async function ensureSkillSnapshot(params: {
   }
 
   const skillsSnapshot = shouldRefreshSnapshot
-    ? isFirstTurnInSession && nextEntry?.skillsSnapshot
+    ? isFirstTurnInSession && sessionStore && sessionKey && nextEntry?.skillsSnapshot
       ? nextEntry.skillsSnapshot
       : {
           ...buildWorkspaceSkillSnapshot(workspaceDir, {
