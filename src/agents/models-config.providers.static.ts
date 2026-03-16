@@ -1,11 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
-import {
-  DEEPINFRA_BASE_URL,
-  DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
-  DEEPINFRA_DEFAULT_COST,
-  DEEPINFRA_DEFAULT_MAX_TOKENS,
-  DEEPINFRA_MODEL_CATALOG,
-} from "../providers/deepinfra-shared.js";
+import { DEEPINFRA_BASE_URL } from "../providers/deepinfra-shared.js";
 import {
   KILOCODE_BASE_URL,
   KILOCODE_DEFAULT_CONTEXT_WINDOW,
@@ -20,6 +14,7 @@ import {
   BYTEPLUS_CODING_BASE_URL,
   BYTEPLUS_CODING_MODEL_CATALOG,
 } from "./byteplus-models.js";
+import { buildStaticCatalog } from "./deepinfra-models.js";
 import {
   buildDoubaoModelDefinition,
   DOUBAO_BASE_URL,
@@ -557,14 +552,6 @@ export function buildDeepInfraStaticProvider(): ProviderConfig {
   return {
     baseUrl: DEEPINFRA_BASE_URL,
     api: "openai-completions",
-    models: DEEPINFRA_MODEL_CATALOG.map((model) => ({
-      id: model.id,
-      name: model.name,
-      reasoning: model.reasoning,
-      input: model.input,
-      cost: DEEPINFRA_DEFAULT_COST,
-      contextWindow: model.contextWindow ?? DEEPINFRA_DEFAULT_CONTEXT_WINDOW,
-      maxTokens: model.maxTokens ?? DEEPINFRA_DEFAULT_MAX_TOKENS,
-    })),
+    models: buildStaticCatalog(),
   };
 }
