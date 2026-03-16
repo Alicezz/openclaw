@@ -124,6 +124,45 @@ describe("flushPendingToolResultsAfterIdle", () => {
     expect(getMessages(sm).map((m) => m.role)).toEqual(["assistant", "user"]);
   });
 
+  it("waits across retry gap when pending tool calls still exist", async () => {
+    const sm = guardSessionManager(SessionManager.inMemory());
+    const appendMessage = sm.appendMessage.bind(sm) as unknown as (message: AgentMessage) => void;
+
+    const waitForIdle = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+
+    const hasPendingToolCalls = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    const agent = { waitForIdle, hasPendingToolCalls };
+
+    appendMessage(assistantToolCall("call_retry_gap_1"));
+
+    const flushPromise = flushPendingToolResultsAfterIdle({
+      agent,
+      sessionManager: sm,
+      timeoutMs: 1_000,
+    });
+
+    await Promise.resolve();
+    appendMessage(toolResult("call_retry_gap_1", "arrived after retry gap"));
+    await flushPromise;
+
+    const messages = getMessages(sm);
+    expect(messages.map((m) => m.role)).toEqual(["assistant", "toolResult"]);
+    expect((messages[1] as { isError?: boolean }).isError).not.toBe(true);
+    expect((messages[1] as { content?: Array<{ text?: string }> }).content?.[0]?.text).toBe(
+      "arrived after retry gap",
+    );
+    expect(waitForIdle).toHaveBeenCalledTimes(2);
+  });
+
   it("clears timeout handle when waitForIdle resolves first", async () => {
     const sm = guardSessionManager(SessionManager.inMemory());
     vi.useFakeTimers();
