@@ -362,9 +362,27 @@ export function applyExtraParamsToAgent(
     agent.streamFn = createMoonshotThinkingWrapper(agent.streamFn, thinkingType);
   }
 
-  if (provider === "amazon-bedrock" && !isAnthropicBedrockModel(modelId)) {
-    log.debug(`disabling prompt caching for non-Anthropic Bedrock model ${provider}/${modelId}`);
-    agent.streamFn = createBedrockNoCacheWrapper(agent.streamFn);
+  if (provider === "amazon-bedrock") {
+    // Try to get the model name from configuration for better detection of Anthropic models
+    // when using Application Inference Profile ARNs
+    let modelName: string | undefined;
+    const modelKey = `${provider}/${modelId}`;
+    const modelConfig = cfg?.agents?.defaults?.models?.[modelKey];
+    if (modelConfig?.alias) {
+      modelName = modelConfig.alias;
+    } else {
+      // Try to get from provider models configuration
+      const providerConfig = cfg?.models?.providers?.[provider];
+      if (providerConfig?.models) {
+        const modelDef = providerConfig.models.find((m) => m.id === modelId);
+        modelName = modelDef?.name;
+      }
+    }
+
+    if (!isAnthropicBedrockModel(modelId, modelName)) {
+      log.debug(`disabling prompt caching for non-Anthropic Bedrock model ${provider}/${modelId}`);
+      agent.streamFn = createBedrockNoCacheWrapper(agent.streamFn);
+    }
   }
 
   // Enable Z.AI tool_stream for real-time tool call streaming.
