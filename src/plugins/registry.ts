@@ -3,6 +3,7 @@ import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ChannelDock } from "../channels/dock.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import { registerContextEngineForOwner } from "../context-engine/registry.js";
+import { onAgentEvent, type AgentEventPayload } from "../infra/agent-events.js";
 import type {
   GatewayRequestHandler,
   GatewayRequestHandlers,
@@ -851,6 +852,19 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         }
       },
       resolvePath: (input: string) => resolveUserPath(input),
+      onAgentEvent: registrationMode === "full"
+        ? (listener: (evt: AgentEventPayload) => void, filter?: { sessionKey?: string }) => {
+            if (!filter?.sessionKey) {
+              return onAgentEvent(listener);
+            }
+            const sk = filter.sessionKey;
+            return onAgentEvent((evt) => {
+              if (evt.sessionKey === sk) {
+                listener(evt);
+              }
+            });
+          }
+        : () => () => {},
       on: (hookName, handler, opts) =>
         registrationMode === "full"
           ? registerTypedHook(record, hookName, handler, opts, params.hookPolicy)
