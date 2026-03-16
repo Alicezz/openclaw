@@ -38,6 +38,8 @@ type RegistryImportOptions = {
   sessionResetImportError?: Error;
   sessionUtilsImportError?: Error;
   registrationMode?: PluginRegistrationMode;
+  gatewaySupportsReset?: boolean;
+  runtimeAvailable?: boolean;
 };
 
 function createRecord(): PluginRecord {
@@ -72,6 +74,8 @@ async function createApiHarness(options?: RegistryImportOptions) {
         throw options.sessionResetImportError;
       },
     }));
+  } else {
+    vi.doUnmock("../gateway/session-reset-service.js");
   }
 
   if (options?.sessionUtilsImportError) {
@@ -84,6 +88,8 @@ async function createApiHarness(options?: RegistryImportOptions) {
         },
       };
     });
+  } else {
+    vi.doUnmock("../gateway/session-utils.js");
   }
 
   const sessionResetService = options?.sessionResetImportError
@@ -92,10 +98,9 @@ async function createApiHarness(options?: RegistryImportOptions) {
   const sessionUtils = options?.sessionUtilsImportError
     ? null
     : await import("../gateway/session-utils.js");
-  const configModule = await import("../config/config.js");
 
   const deps: SessionResetDeps = {
-    loadConfig: vi.spyOn(configModule, "loadConfig"),
+    loadConfig: vi.fn<[], OpenClawConfig>(() => ({}) as OpenClawConfig),
     performGatewaySessionReset:
       sessionResetService === null
         ? vi.fn()
@@ -104,6 +109,12 @@ async function createApiHarness(options?: RegistryImportOptions) {
       sessionUtils === null ? vi.fn() : vi.spyOn(sessionUtils, "resolveGatewaySessionStoreTarget"),
   };
 
+  if (sessionUtils !== null) {
+    deps.resolveGatewaySessionStoreTarget.mockReturnValue({
+      canonicalKey: "agent:main:demo",
+    });
+  }
+
   const { createPluginRegistry } = await import("./registry.js");
   const { createApi } = createPluginRegistry({
     logger: {
@@ -111,7 +122,12 @@ async function createApiHarness(options?: RegistryImportOptions) {
       warn: () => {},
       error: () => {},
     },
-    runtime: {} as PluginRuntime,
+    coreGatewayHandlers:
+      options?.gatewaySupportsReset === false ? {} : { "sessions.reset": async () => {} },
+    runtime: createTestRuntime({
+      available: options?.runtimeAvailable !== false,
+      loadConfig: deps.loadConfig,
+    }),
   });
 
   const api = createApi(createRecord(), {
@@ -120,6 +136,33 @@ async function createApiHarness(options?: RegistryImportOptions) {
   });
 
   return { api, deps };
+}
+
+function createTestRuntime(params: {
+  available?: boolean;
+  loadConfig: SessionResetDeps["loadConfig"];
+}): PluginRuntime {
+  const run = vi.fn(async () => ({ runId: "run" }));
+  const deleteSession =
+    params.available === false
+      ? run
+      : vi.fn(async () => {
+          return;
+        });
+  return {
+    version: "test",
+    config: {
+      loadConfig: params.loadConfig as PluginRuntime["config"]["loadConfig"],
+      writeConfigFile: vi.fn(),
+    },
+    subagent: {
+      run,
+      waitForRun: vi.fn(),
+      getSessionMessages: vi.fn(),
+      getSession: vi.fn(),
+      deleteSession,
+    },
+  } as unknown as PluginRuntime;
 }
 
 function deferred<T>() {
@@ -173,6 +216,49 @@ describe("plugin resetSession", () => {
       const { api } = await createApiHarness({ registrationMode: "setup-runtime" });
 
       expect(api.resetSession).toBeUndefined();
+    });
+  });
+
+  describe("gateway availability guard", () => {
+    it("fails fast when the runtime subagent is unavailable", async () => {
+      const { api, deps } = await createApiHarness({ runtimeAvailable: false });
+
+      await expect(api.resetSession?.("agent:main:demo")).resolves.toEqual({
+        ok: false,
+        key: "agent:main:demo",
+        error: "resetSession is only available while the gateway is running.",
+      });
+
+      expect(deps.loadConfig).not.toHaveBeenCalled();
+      expect(deps.resolveGatewaySessionStoreTarget).not.toHaveBeenCalled();
+      expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
+    });
+
+    it("fails fast when the gateway does not expose sessions.reset", async () => {
+      const { api, deps } = await createApiHarness({ gatewaySupportsReset: false });
+
+      await expect(api.resetSession?.("agent:main:demo")).resolves.toEqual({
+        ok: false,
+        key: "agent:main:demo",
+        error: "resetSession is only available while the gateway is running.",
+      });
+
+      expect(deps.loadConfig).not.toHaveBeenCalled();
+      expect(deps.resolveGatewaySessionStoreTarget).not.toHaveBeenCalled();
+      expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
+    });
+
+    it("does not attempt to import the reset service when the gateway is unavailable", async () => {
+      const { api } = await createApiHarness({
+        runtimeAvailable: false,
+        sessionResetImportError: new Error("reset module should not load"),
+      });
+
+      await expect(api.resetSession?.("agent:main:demo")).resolves.toEqual({
+        ok: false,
+        key: "agent:main:demo",
+        error: "resetSession is only available while the gateway is running.",
+      });
     });
   });
 
