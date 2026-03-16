@@ -130,10 +130,6 @@
       "types": "./dist/plugin-sdk/feishu.d.ts",
       "default": "./dist/plugin-sdk/feishu.js"
     },
-    "./plugin-sdk/google-antigravity-auth": {
-      "types": "./dist/plugin-sdk/google-antigravity-auth.d.ts",
-      "default": "./dist/plugin-sdk/google-antigravity-auth.js"
-    },
     "./plugin-sdk/googlechat": {
       "types": "./dist/plugin-sdk/googlechat.d.ts",
       "default": "./dist/plugin-sdk/googlechat.js"

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   readBestEffortConfig: vi.fn(),
   resolveCommandSecretRefsViaGateway: vi.fn(),
+  hasPotentialConfiguredChannels: vi.fn(),
   buildChannelsTable: vi.fn(),
   callGateway: vi.fn(),
   getUpdateCheckResult: vi.fn(),
@@ -25,6 +26,10 @@ vi.mock("../config/config.js", () => ({
 
 vi.mock("../cli/command-secret-gateway.js", () => ({
   resolveCommandSecretRefsViaGateway: mocks.resolveCommandSecretRefsViaGateway,
+}));
+
+vi.mock("../channels/config-presence.js", () => ({
+  hasPotentialConfiguredChannels: mocks.hasPotentialConfiguredChannels,
 }));
 
 vi.mock("./status-all/channels.js", () => ({
@@ -83,6 +88,7 @@ import { scanStatus } from "./status.scan.js";
 
 describe("scanStatus", () => {
   it("passes sourceConfig into buildChannelsTable for summary-mode status output", async () => {
+    mocks.hasPotentialConfiguredChannels.mockReturnValue(false);
     mocks.readBestEffortConfig.mockResolvedValue({
       marker: "source",
       session: {},
@@ -146,6 +152,7 @@ describe("scanStatus", () => {
   });
 
   it("skips channel plugin preload for status --json with no channel config", async () => {
+    mocks.hasPotentialConfiguredChannels.mockReturnValue(false);
     mocks.readBestEffortConfig.mockResolvedValue({
       session: {},
       plugins: { enabled: false },
@@ -333,6 +340,7 @@ describe("scanStatus", () => {
   });
 
   it("preloads configured channel plugins for status --json when channel config exists", async () => {
+    mocks.hasPotentialConfiguredChannels.mockReturnValue(true);
     mocks.readBestEffortConfig.mockResolvedValue({
       session: {},
       plugins: { enabled: false },
