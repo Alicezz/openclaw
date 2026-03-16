@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   dedupeProfileIds,
   ensureAuthProfileStore,
@@ -9,6 +12,7 @@ import { isNonSecretApiKeyMarker } from "../agents/model-auth-markers.js";
 import { resolveUsableCustomProviderApiKey } from "../agents/model-auth.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import { loadConfig, type OpenClawConfig } from "../config/config.js";
+import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { resolveProviderUsageAuthWithPlugin } from "../plugins/provider-runtime.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
 import type { UsageProviderId } from "./provider-usage.types.js";
@@ -166,6 +170,92 @@ async function resolveProviderUsageAuthViaPlugin(params: {
   };
 }
 
+function resolveLegacyZaiUsageToken(env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const authPath = path.join(
+      resolveRequiredHomeDir(env, os.homedir),
+      ".pi",
+      "agent",
+      "auth.json",
+    );
+    if (!fs.existsSync(authPath)) {
+      return undefined;
+    }
+    const parsed = JSON.parse(fs.readFileSync(authPath, "utf8")) as Record<
+      string,
+      { access?: string }
+    >;
+    return normalizeSecretInput(parsed["z-ai"]?.access ?? parsed.zai?.access);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGoogleUsageToken(token: string): string {
+  try {
+    const parsed = JSON.parse(token) as { token?: unknown };
+    if (typeof parsed.token === "string") {
+      return normalizeSecretInput(parsed.token) || token;
+    }
+  } catch {
+    // ignore
+  }
+  return token;
+}
+
+async function resolveBuiltInProviderUsageAuth(params: {
+  state: UsageAuthState;
+  provider: UsageProviderId;
+}): Promise<ProviderAuth | null> {
+  switch (params.provider) {
+    case "anthropic":
+    case "github-copilot":
+    case "openai-codex":
+      return await resolveOAuthToken({
+        state: params.state,
+        provider: params.provider,
+      });
+    case "google-gemini-cli": {
+      const auth = await resolveOAuthToken({
+        state: params.state,
+        provider: params.provider,
+      });
+      if (!auth) {
+        return null;
+      }
+      return {
+        ...auth,
+        token: parseGoogleUsageToken(auth.token),
+      };
+    }
+    case "minimax": {
+      const token = resolveProviderApiKeyFromConfigAndStore({
+        state: params.state,
+        providerIds: [params.provider],
+        envDirect: [params.state.env.MINIMAX_CODE_PLAN_KEY, params.state.env.MINIMAX_API_KEY],
+      });
+      return token ? { provider: params.provider, token } : null;
+    }
+    case "xiaomi": {
+      const token = resolveProviderApiKeyFromConfigAndStore({
+        state: params.state,
+        providerIds: [params.provider],
+        envDirect: [params.state.env.XIAOMI_API_KEY],
+      });
+      return token ? { provider: params.provider, token } : null;
+    }
+    case "zai": {
+      const token =
+        resolveProviderApiKeyFromConfigAndStore({
+          state: params.state,
+          providerIds: [params.provider, "z-ai"],
+          envDirect: [params.state.env.ZAI_API_KEY, params.state.env.Z_AI_API_KEY],
+        }) ?? resolveLegacyZaiUsageToken(params.state.env);
+      return token ? { provider: params.provider, token } : null;
+    }
+  }
+}
+
 export async function resolveProviderAuths(params: {
   providers: UsageProviderId[];
   auth?: ProviderAuth[];
@@ -186,6 +276,14 @@ export async function resolveProviderAuths(params: {
   const auths: ProviderAuth[] = [];
 
   for (const provider of params.providers) {
+    const builtInAuth = await resolveBuiltInProviderUsageAuth({
+      state,
+      provider,
+    });
+    if (builtInAuth) {
+      auths.push(builtInAuth);
+      continue;
+    }
     const pluginAuth = await resolveProviderUsageAuthViaPlugin({
       state,
       provider,
