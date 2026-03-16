@@ -31,12 +31,10 @@ vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
 type SessionResetDeps = {
   loadConfig: ReturnType<typeof vi.fn>;
   performGatewaySessionReset: ReturnType<typeof vi.fn>;
-  resolveGatewaySessionStoreTarget: ReturnType<typeof vi.fn>;
 };
 
 type RegistryImportOptions = {
   sessionResetImportError?: Error;
-  sessionUtilsImportError?: Error;
   registrationMode?: PluginRegistrationMode;
   gatewaySupportsReset?: boolean;
   runtimeAvailable?: boolean;
@@ -78,26 +76,9 @@ async function createApiHarness(options?: RegistryImportOptions) {
     vi.doUnmock("../gateway/session-reset-service.js");
   }
 
-  if (options?.sessionUtilsImportError) {
-    vi.doMock("../gateway/session-utils.js", async (importOriginal) => {
-      const actual = await importOriginal<typeof import("../gateway/session-utils.js")>();
-      return {
-        ...actual,
-        resolveGatewaySessionStoreTarget: () => {
-          throw options.sessionUtilsImportError;
-        },
-      };
-    });
-  } else {
-    vi.doUnmock("../gateway/session-utils.js");
-  }
-
   const sessionResetService = options?.sessionResetImportError
     ? null
     : await import("../gateway/session-reset-service.js");
-  const sessionUtils = options?.sessionUtilsImportError
-    ? null
-    : await import("../gateway/session-utils.js");
 
   const deps: SessionResetDeps = {
     loadConfig: vi.fn(() => ({}) as OpenClawConfig),
@@ -105,15 +86,7 @@ async function createApiHarness(options?: RegistryImportOptions) {
       sessionResetService === null
         ? vi.fn()
         : vi.spyOn(sessionResetService, "performGatewaySessionReset"),
-    resolveGatewaySessionStoreTarget:
-      sessionUtils === null ? vi.fn() : vi.spyOn(sessionUtils, "resolveGatewaySessionStoreTarget"),
   };
-
-  if (sessionUtils !== null) {
-    deps.resolveGatewaySessionStoreTarget.mockReturnValue({
-      canonicalKey: "agent:main:demo",
-    });
-  }
 
   const { createPluginRegistry } = await import("./registry.js");
   const { createApi } = createPluginRegistry({
@@ -178,9 +151,6 @@ function deferred<T>() {
 async function createApiWithDefaultMocks() {
   const harness = await createApiHarness();
   harness.deps.loadConfig.mockReturnValue({} as OpenClawConfig);
-  harness.deps.resolveGatewaySessionStoreTarget.mockReturnValue({
-    canonicalKey: "agent:main:demo",
-  });
   return harness;
 }
 
@@ -188,7 +158,6 @@ afterEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   vi.doUnmock("../gateway/session-reset-service.js");
-  vi.doUnmock("../gateway/session-utils.js");
 });
 
 describe("plugin resetSession", () => {
@@ -230,7 +199,6 @@ describe("plugin resetSession", () => {
       });
 
       expect(deps.loadConfig).not.toHaveBeenCalled();
-      expect(deps.resolveGatewaySessionStoreTarget).not.toHaveBeenCalled();
       expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
     });
 
@@ -244,7 +212,6 @@ describe("plugin resetSession", () => {
       });
 
       expect(deps.loadConfig).not.toHaveBeenCalled();
-      expect(deps.resolveGatewaySessionStoreTarget).not.toHaveBeenCalled();
       expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
     });
 
@@ -282,7 +249,6 @@ describe("plugin resetSession", () => {
         error: "resetSession key must be a non-empty string",
       });
 
-      expect(deps.resolveGatewaySessionStoreTarget).not.toHaveBeenCalled();
       expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
     });
 
@@ -296,15 +262,12 @@ describe("plugin resetSession", () => {
 
       const result = await api.resetSession?.("  agent:main:demo  ");
 
-      expect(deps.resolveGatewaySessionStoreTarget).toHaveBeenCalledWith({
-        cfg: {},
-        key: "agent:main:demo",
-      });
       expect(deps.performGatewaySessionReset).toHaveBeenCalledWith({
         key: "agent:main:demo",
         reason: "new",
         commandSource: "plugin:demo-plugin",
       });
+      expect(deps.loadConfig).toHaveBeenCalledTimes(1);
       expect(result).toEqual({
         ok: true,
         key: "agent:main:canonical",
@@ -332,15 +295,13 @@ describe("plugin resetSession", () => {
 
     it("uses live config for canonicalization instead of the captured API config", async () => {
       const { api, deps } = await createApiHarness();
-      const liveConfig = { session: { mainKey: "work" } } as OpenClawConfig;
+      const liveConfig = {
+        agents: { list: [{ id: "ops", default: true }] },
+        session: { mainKey: "work" },
+      } as OpenClawConfig;
       const pending = deferred<{ ok: true; key: string; entry: { sessionId: string } }>();
 
       deps.loadConfig.mockReturnValue(liveConfig);
-      deps.resolveGatewaySessionStoreTarget.mockImplementation(
-        ({ cfg, key }: { cfg: OpenClawConfig; key: string }) => ({
-          canonicalKey: cfg === liveConfig && key === "agent:ops:MAIN" ? "agent:ops:work" : key,
-        }),
-      );
       deps.performGatewaySessionReset.mockReturnValue(pending.promise);
 
       const first = api.resetSession?.("agent:ops:MAIN");
@@ -421,7 +382,7 @@ describe("plugin resetSession", () => {
 
     it("normalizes canonicalization failure before invoking the reset helper", async () => {
       const { api, deps } = await createApiHarness();
-      deps.resolveGatewaySessionStoreTarget.mockImplementation(() => {
+      deps.loadConfig.mockImplementation(() => {
         throw new Error("bad session key");
       });
 
@@ -442,18 +403,6 @@ describe("plugin resetSession", () => {
         ok: false,
         key: "agent:main:demo",
         error: "import setup failed",
-      });
-    });
-
-    it("normalizes session-utils import/setup failures", async () => {
-      const { api } = await createApiHarness({
-        sessionUtilsImportError: new Error("session-utils setup failed"),
-      });
-
-      await expect(api.resetSession?.("agent:main:demo")).resolves.toEqual({
-        ok: false,
-        key: "agent:main:demo",
-        error: "session-utils setup failed",
       });
     });
 
@@ -504,9 +453,6 @@ describe("plugin resetSession", () => {
       const first = deferred<{ ok: true; key: string; entry: { sessionId: string } }>();
       const second = deferred<{ ok: true; key: string; entry: { sessionId: string } }>();
 
-      deps.resolveGatewaySessionStoreTarget.mockImplementation(({ key }: { key: string }) => ({
-        canonicalKey: key,
-      }));
       deps.performGatewaySessionReset
         .mockReturnValueOnce(first.promise)
         .mockReturnValueOnce(second.promise);
@@ -541,9 +487,10 @@ describe("plugin resetSession", () => {
       const { api, deps } = await createApiHarness();
       const pending = deferred<{ ok: true; key: string; entry: { sessionId: string } }>();
 
-      deps.resolveGatewaySessionStoreTarget.mockImplementation(({ key }: { key: string }) => ({
-        canonicalKey: key === "agent:ops:MAIN" ? "agent:ops:work" : key,
-      }));
+      deps.loadConfig.mockReturnValue({
+        agents: { list: [{ id: "ops", default: true }] },
+        session: { mainKey: "work" },
+      } as OpenClawConfig);
       deps.performGatewaySessionReset.mockReturnValue(pending.promise);
 
       const first = api.resetSession?.("agent:ops:MAIN");

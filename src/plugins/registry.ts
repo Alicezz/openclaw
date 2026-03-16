@@ -55,7 +55,6 @@ import type {
 } from "./types.js";
 
 type GatewaySessionResetModule = typeof import("../gateway/session-reset-service.js");
-type GatewaySessionUtilsModule = typeof import("../gateway/session-utils.js");
 
 export type PluginToolRegistration = {
   pluginId: string;
@@ -220,6 +219,138 @@ type PluginTypedHookPolicy = {
   allowPromptInjection?: boolean;
 };
 
+const FALLBACK_AGENT_ID = "main";
+const DEFAULT_MAIN_SESSION_KEY = "main";
+const VALID_AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const INVALID_AGENT_CHARS_RE = /[^a-z0-9_-]+/g;
+const LEADING_DASH_RE = /^-+/;
+const TRAILING_DASH_RE = /-+$/;
+
+const isGlobalSessionKey = (value: string) => value === "global" || value === "unknown";
+
+const normalizePluginMainKey = (value?: string) => {
+  const trimmed = (value ?? "").trim();
+  return trimmed ? trimmed.toLowerCase() : DEFAULT_MAIN_SESSION_KEY;
+};
+
+const normalizePluginAgentId = (value?: string) => {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return FALLBACK_AGENT_ID;
+  }
+  if (VALID_AGENT_ID_RE.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  return (
+    trimmed
+      .toLowerCase()
+      .replace(INVALID_AGENT_CHARS_RE, "-")
+      .replace(LEADING_DASH_RE, "")
+      .replace(TRAILING_DASH_RE, "")
+      .slice(0, 64) || FALLBACK_AGENT_ID
+  );
+};
+
+const parsePluginAgentSessionKey = (
+  sessionKey: string,
+): { agentId: string; rest: string } | null => {
+  const raw = (sessionKey ?? "").trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "agent") {
+    return null;
+  }
+  const agentId = parts[1]?.trim();
+  const rest = parts.slice(2).join(":");
+  if (!agentId || !rest) {
+    return null;
+  }
+  return { agentId, rest };
+};
+
+const buildPluginAgentMainSessionKey = (params: { agentId: string; mainKey?: string }): string => {
+  return `agent:${normalizePluginAgentId(params.agentId)}:${normalizePluginMainKey(params.mainKey)}`;
+};
+
+const canonicalizePluginMainSessionAlias = (params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+}): string => {
+  const raw = params.sessionKey.trim();
+  if (!raw) {
+    return "";
+  }
+  const normalized = raw.toLowerCase();
+  const normalizedAgent = normalizePluginAgentId(params.agentId);
+  const normalizedMainKey = normalizePluginMainKey(params.cfg.session?.mainKey);
+  const agentMainSessionKey = buildPluginAgentMainSessionKey({
+    agentId: normalizedAgent,
+    mainKey: normalizedMainKey,
+  });
+  const agentMainAliasKey = buildPluginAgentMainSessionKey({
+    agentId: normalizedAgent,
+    mainKey: DEFAULT_MAIN_SESSION_KEY,
+  });
+  const isAlias =
+    normalized === "main" ||
+    normalized === normalizedMainKey ||
+    normalized === agentMainSessionKey ||
+    normalized === agentMainAliasKey;
+  if (params.cfg.session?.scope === "global" && isAlias) {
+    return "global";
+  }
+  return isAlias ? agentMainSessionKey : normalized;
+};
+
+const resolveDefaultPluginAgentId = (cfg: OpenClawConfig): string => {
+  const agents = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
+  const preferred =
+    agents.find((agent) => agent?.default)?.id ??
+    agents.find((agent) => typeof agent?.id === "string")?.id ??
+    FALLBACK_AGENT_ID;
+  return normalizePluginAgentId(preferred);
+};
+
+const resolvePluginMainSessionKey = (cfg: OpenClawConfig): string => {
+  if (cfg.session?.scope === "global") {
+    return "global";
+  }
+  return buildPluginAgentMainSessionKey({
+    agentId: resolveDefaultPluginAgentId(cfg),
+    mainKey: cfg.session?.mainKey,
+  });
+};
+
+const resolveCanonicalPluginSessionKey = (cfg: OpenClawConfig, rawKey: string): string => {
+  const trimmedKey = rawKey.trim();
+  if (!trimmedKey) {
+    return "";
+  }
+  const lowered = trimmedKey.toLowerCase();
+  if (isGlobalSessionKey(lowered)) {
+    return lowered;
+  }
+  const parsed = parsePluginAgentSessionKey(trimmedKey);
+  if (parsed) {
+    return canonicalizePluginMainSessionAlias({
+      cfg,
+      agentId: parsed.agentId,
+      sessionKey: trimmedKey,
+    });
+  }
+  const normalizedMainKey = normalizePluginMainKey(cfg.session?.mainKey);
+  if (lowered === "main" || lowered === normalizedMainKey) {
+    return resolvePluginMainSessionKey(cfg);
+  }
+  if (lowered.startsWith("agent:")) {
+    return lowered;
+  }
+  return `agent:${resolveDefaultPluginAgentId(cfg)}:${lowered}`;
+};
+
 const constrainLegacyPromptInjectionHook = (
   handler: PluginHookHandlerMap["before_agent_start"],
 ): PluginHookHandlerMap["before_agent_start"] => {
@@ -287,13 +418,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
             return sessionResetModuleCache;
           }
         : null;
-  let sessionUtilsModuleCache: GatewaySessionUtilsModule | null = null;
-  const loadSessionUtilsModule = async () => {
-    if (!sessionUtilsModuleCache) {
-      sessionUtilsModuleCache = await import("../gateway/session-utils.js");
-    }
-    return sessionUtilsModuleCache;
-  };
   const resetSessionsInFlight = new Set<string>();
 
   const pushDiagnostic = (diag: PluginDiagnostic) => {
@@ -358,12 +482,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
 
         const normalizedReason = reason === "reset" ? "reset" : "new";
         const liveConfig = params.loadConfig();
-        const { resolveGatewaySessionStoreTarget } = await loadSessionUtilsModule();
-        const resolvedTarget = resolveGatewaySessionStoreTarget({
-          cfg: liveConfig,
-          key: trimmedKey,
-        });
-        const canonicalKey = resolvedTarget.canonicalKey?.trim();
+        const canonicalKey = resolveCanonicalPluginSessionKey(liveConfig, trimmedKey).trim();
         if (!canonicalKey) {
           throw new Error("Session reset failed to resolve a canonical session key");
         }
