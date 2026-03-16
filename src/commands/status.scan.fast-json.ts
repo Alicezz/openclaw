@@ -1,7 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { hasPotentialConfiguredChannels } from "../channels/config-presence.js";
 import { resolveConfigPath, resolveGatewayPort, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { isSecureWebSocketUrl } from "../gateway/net.js";
@@ -16,7 +15,7 @@ import {
   resolveGatewayProbeAuthResolution,
 } from "./status.gateway-probe.js";
 import type { StatusScanResult } from "./status.scan.js";
-import { getStatusSummary } from "./status.summary.js";
+import { getStatusSummaryForFastJson } from "./status.summary.fast-json.js";
 import { getUpdateCheckResult } from "./status.update.js";
 
 type MemoryStatusSnapshot = MemoryProviderStatus & {
@@ -62,6 +61,24 @@ let statusScanDepsRuntimeModulePromise:
   | Promise<typeof import("./status.scan.deps.runtime.js")>
   | undefined;
 
+const IGNORED_CHANNEL_CONFIG_KEYS = new Set(["defaults", "modelByChannel"]);
+const CHANNEL_ENV_PREFIXES = [
+  "BLUEBUBBLES_",
+  "DISCORD_",
+  "GOOGLECHAT_",
+  "IRC_",
+  "LINE_",
+  "MATRIX_",
+  "MSTEAMS_",
+  "SIGNAL_",
+  "SLACK_",
+  "TELEGRAM_",
+  "WHATSAPP_",
+  "ZALOUSER_",
+  "ZALO_",
+] as const;
+const DEFAULT_ACCOUNT_ID = "default";
+
 function loadPluginRegistryModule() {
   pluginRegistryModulePromise ??= import("../cli/plugin-registry.js");
   return pluginRegistryModulePromise;
@@ -98,6 +115,79 @@ function shouldSkipMissingConfigFastPath(): boolean {
     process.env.VITEST_POOL_ID !== undefined ||
     process.env.NODE_ENV === "test"
   );
+}
+
+function hasNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasMeaningfulChannelConfig(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.keys(value).some((key) => key !== "enabled");
+}
+
+function hasWhatsAppAuthStateForFastStatus(env: NodeJS.ProcessEnv): boolean {
+  try {
+    const stateDir = resolveStateDir(env, os.homedir);
+    const oauthDir = env.OPENCLAW_OAUTH_DIR?.trim() || path.join(stateDir, "credentials");
+    const legacyCreds = path.join(oauthDir, "creds.json");
+    if (existsSync(legacyCreds)) {
+      return true;
+    }
+
+    const accountsRoot = path.join(oauthDir, "whatsapp");
+    const defaultCreds = path.join(accountsRoot, DEFAULT_ACCOUNT_ID, "creds.json");
+    if (existsSync(defaultCreds)) {
+      return true;
+    }
+
+    const entries = readdirSync(accountsRoot, { withFileTypes: true });
+    return entries.some((entry) => {
+      if (!entry.isDirectory()) {
+        return false;
+      }
+      return existsSync(path.join(accountsRoot, entry.name, "creds.json"));
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hasPotentialConfiguredChannelsForFastStatus(
+  cfg: OpenClawConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const channels = isRecord(cfg.channels) ? cfg.channels : null;
+  if (channels) {
+    for (const [key, value] of Object.entries(channels)) {
+      if (IGNORED_CHANNEL_CONFIG_KEYS.has(key)) {
+        continue;
+      }
+      if (hasMeaningfulChannelConfig(value)) {
+        return true;
+      }
+    }
+  }
+
+  for (const [key, value] of Object.entries(env)) {
+    if (!hasNonEmptyString(value)) {
+      continue;
+    }
+    if (
+      CHANNEL_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
+      key === "TELEGRAM_BOT_TOKEN"
+    ) {
+      return true;
+    }
+  }
+
+  return hasWhatsAppAuthStateForFastStatus(env);
 }
 
 function hasExplicitMemorySearchConfig(cfg: OpenClawConfig, agentId: string): boolean {
@@ -337,7 +427,7 @@ export async function scanStatusJsonFast(
     sourceConfig: loadedRaw,
     commandName: "status --json",
   });
-  if (hasPotentialConfiguredChannels(cfg)) {
+  if (hasPotentialConfiguredChannelsForFastStatus(cfg)) {
     const { ensurePluginRegistryLoaded } = await loadPluginRegistryModule();
     ensurePluginRegistryLoaded({ scope: "configured-channels" });
   }
@@ -350,7 +440,7 @@ export async function scanStatusJsonFast(
     includeRegistry: true,
   });
   const agentStatusPromise = getAgentLocalStatuses(cfg);
-  const summaryPromise = getStatusSummary({ config: cfg, sourceConfig: loadedRaw });
+  const summaryPromise = getStatusSummaryForFastJson({ config: cfg, sourceConfig: loadedRaw });
 
   const tailscaleDnsPromise =
     tailscaleMode === "off"

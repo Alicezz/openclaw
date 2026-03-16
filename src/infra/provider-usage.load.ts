@@ -2,6 +2,13 @@ import { loadConfig, type OpenClawConfig } from "../config/config.js";
 import { resolveFetch } from "./fetch.js";
 import { type ProviderAuth, resolveProviderAuths } from "./provider-usage.auth.js";
 import {
+  fetchClaudeUsage,
+  fetchCodexUsage,
+  fetchGeminiUsage,
+  fetchMinimaxUsage,
+  fetchZaiUsage,
+} from "./provider-usage.fetch.js";
+import {
   DEFAULT_TIMEOUT_MS,
   ignoredErrors,
   PROVIDER_LABELS,
@@ -35,6 +42,14 @@ async function fetchProviderUsageSnapshot(params: {
   timeoutMs: number;
   fetchFn: typeof fetch;
 }): Promise<ProviderUsageSnapshot> {
+  if (params.auth.provider === "xiaomi") {
+    return {
+      provider: "xiaomi",
+      displayName: PROVIDER_LABELS.xiaomi,
+      windows: [],
+    };
+  }
+
   const { resolveProviderUsageSnapshotWithPlugin } = await import("../plugins/provider-runtime.js");
   const pluginSnapshot = await resolveProviderUsageSnapshotWithPlugin({
     provider: params.auth.provider,
@@ -55,6 +70,32 @@ async function fetchProviderUsageSnapshot(params: {
   });
   if (pluginSnapshot) {
     return pluginSnapshot;
+  }
+  switch (params.auth.provider) {
+    case "anthropic":
+      return await fetchClaudeUsage(params.auth.token, params.timeoutMs, params.fetchFn);
+    case "github-copilot": {
+      const { fetchCopilotUsage } = await import("../../extensions/github-copilot/usage.js");
+      return await fetchCopilotUsage(params.auth.token, params.timeoutMs, params.fetchFn);
+    }
+    case "google-gemini-cli":
+      return await fetchGeminiUsage(
+        params.auth.token,
+        params.timeoutMs,
+        params.fetchFn,
+        params.auth.provider,
+      );
+    case "minimax":
+      return await fetchMinimaxUsage(params.auth.token, params.timeoutMs, params.fetchFn);
+    case "openai-codex":
+      return await fetchCodexUsage(
+        params.auth.token,
+        params.auth.accountId,
+        params.timeoutMs,
+        params.fetchFn,
+      );
+    case "zai":
+      return await fetchZaiUsage(params.auth.token, params.timeoutMs, params.fetchFn);
   }
   return {
     provider: params.auth.provider,
