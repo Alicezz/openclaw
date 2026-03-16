@@ -836,6 +836,7 @@ export async function redispatchSubagentRunAfterRestart(
   waitTimeoutMs: number,
   onComplete: (runId: string, endedAt: number, outcome: { status: string }) => Promise<void>,
   suppressNotifications?: boolean,
+  onResumeCleanup?: (runId: string) => void,
 ): Promise<void> {
   // Track whether onComplete has been called so the finally block can guarantee
   // it fires on every exit path (fix for resume-lock leak on early return or
@@ -1016,9 +1017,13 @@ export async function redispatchSubagentRunAfterRestart(
     if (!onCompleteCalled) {
       if (childDispatchSucceeded) {
         log.warn(
-          "agent.wait failed after successful redispatch; leaving run in retryable state",
+          "agent.wait failed after successful redispatch; releasing resume lock for retry",
           { runId },
         );
+        // Release the resume lock so a subsequent reconciliation pass can
+        // re-discover and retry this run.  Without this, the run stays in
+        // `resumedRuns` forever and no code path ever picks it up again.
+        onResumeCleanup?.(runId);
       } else {
         try {
           await onComplete(runId, Date.now(), { status: "error" });
@@ -1098,6 +1103,7 @@ export function routeResumedRun(params: {
       params.waitTimeoutMs,
       params.onCompleteRedispatch,
       true, // suppressNotifications — no user-visible messages before recovered run completes
+      params.onResumeCleanup,
     );
     return true;
   }
