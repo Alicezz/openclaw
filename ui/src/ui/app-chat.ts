@@ -1,5 +1,5 @@
 import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
-import { scheduleChatScroll } from "./app-scroll.ts";
+import { scheduleChatScroll, type ChatAutoScrollMode } from "./app-scroll.ts";
 import { setLastActiveSessionKey } from "./app-settings.ts";
 import { resetToolStream } from "./app-tool-stream.ts";
 import type { OpenClawApp } from "./app.ts";
@@ -36,6 +36,13 @@ export type ChatHost = {
   refreshSessionsAfterChat: Set<string>;
   /** Callback for slash-command side effects that need app-level access. */
   onSlashAction?: (action: string) => void;
+};
+
+type ChatFollowState = {
+  chatUserNearBottom: boolean;
+  chatAutoScrollMode: ChatAutoScrollMode;
+  chatSuppressedBlockId: string | null;
+  chatNewMessagesBelow: boolean;
 };
 
 export const CHAT_SESSIONS_ACTIVE_MINUTES = 120;
@@ -118,11 +125,37 @@ async function sendChatMessageNow(
     previousAttachments?: ChatAttachment[];
     restoreAttachments?: boolean;
     refreshSessions?: boolean;
+    rearmFollow?: boolean;
   },
 ) {
   resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+  const scrollState = host as ChatHost & ChatFollowState;
+  const prevFollowState: ChatFollowState | null =
+    opts?.rearmFollow !== false
+      ? {
+          chatUserNearBottom: scrollState.chatUserNearBottom,
+          chatAutoScrollMode: scrollState.chatAutoScrollMode,
+          chatSuppressedBlockId: scrollState.chatSuppressedBlockId,
+          chatNewMessagesBelow: scrollState.chatNewMessagesBelow,
+        }
+      : null;
+  if (prevFollowState) {
+    // Only immediate user-initiated sends imply "follow the latest reply".
+    scrollState.chatUserNearBottom = true;
+    scrollState.chatAutoScrollMode = "bottom";
+    scrollState.chatSuppressedBlockId = null;
+    scrollState.chatNewMessagesBelow = false;
+  }
   const runId = await sendChatMessage(host as unknown as OpenClawApp, message, opts?.attachments);
   const ok = Boolean(runId);
+  if (!ok && prevFollowState) {
+    // RPC failed — undo the optimistic follow-state rearm so the viewport
+    // doesn't jump and the "new messages below" signal isn't lost.
+    scrollState.chatUserNearBottom = prevFollowState.chatUserNearBottom;
+    scrollState.chatAutoScrollMode = prevFollowState.chatAutoScrollMode;
+    scrollState.chatSuppressedBlockId = prevFollowState.chatSuppressedBlockId;
+    scrollState.chatNewMessagesBelow = prevFollowState.chatNewMessagesBelow;
+  }
   if (!ok && opts?.previousDraft != null) {
     host.chatMessage = opts.previousDraft;
   }
@@ -163,12 +196,15 @@ async function flushChatQueue(host: ChatHost) {
   let ok = false;
   try {
     if (next.localCommandName) {
-      await dispatchSlashCommand(host, next.localCommandName, next.localCommandArgs ?? "");
+      await dispatchSlashCommand(host, next.localCommandName, next.localCommandArgs ?? "", {
+        rearmFollow: false,
+      });
       ok = true;
     } else {
       ok = await sendChatMessageNow(host, next.text, {
         attachments: next.attachments,
         refreshSessions: next.refreshSessions,
+        rearmFollow: false,
       });
     }
   } catch (err) {
@@ -266,7 +302,7 @@ async function dispatchSlashCommand(
   host: ChatHost,
   name: string,
   args: string,
-  sendOpts?: { previousDraft?: string; restoreDraft?: boolean },
+  sendOpts?: { previousDraft?: string; restoreDraft?: boolean; rearmFollow?: boolean },
 ) {
   switch (name) {
     case "stop":
@@ -277,6 +313,7 @@ async function dispatchSlashCommand(
         refreshSessions: true,
         previousDraft: sendOpts?.previousDraft,
         restoreDraft: sendOpts?.restoreDraft,
+        rearmFollow: sendOpts?.rearmFollow,
       });
       return;
     case "reset":
@@ -284,6 +321,7 @@ async function dispatchSlashCommand(
         refreshSessions: true,
         previousDraft: sendOpts?.previousDraft,
         restoreDraft: sendOpts?.restoreDraft,
+        rearmFollow: sendOpts?.rearmFollow,
       });
       return;
     case "clear":
