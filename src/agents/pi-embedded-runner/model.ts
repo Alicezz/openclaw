@@ -317,11 +317,15 @@ export function resolveModelWithRegistry(params: {
     const configuredOpenRouterModel = providerConfig?.models?.find(
       (candidate) => candidate.id === modelId,
     );
-    const resolvedInput: Array<"text" | "image"> = configuredOpenRouterModel?.input
+    const configuredInput = configuredOpenRouterModel?.input
       ? configuredOpenRouterModel.input.filter((item) => item === "text" || item === "image")
-      : isLikelyVisionModel(modelId)
-        ? ["text", "image"]
-        : ["text"];
+      : undefined;
+    const resolvedInput: Array<"text" | "image"> =
+      configuredInput && configuredInput.length > 0
+        ? configuredInput
+        : isLikelyVisionModel(modelId)
+          ? ["text", "image"]
+          : ["text"];
 
     const providerHeaders = sanitizeModelHeaders(providerConfig?.headers, {
       stripSecretRefMarkers: true,
