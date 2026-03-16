@@ -278,7 +278,7 @@ export {
 
 export async function applyDeferredMediaUnderstandingToQueuedRun(
   queued: FollowupRun,
-  params: { logLabel?: string } = {},
+  params: { logLabel?: string; skipTranscriptEcho?: boolean } = {},
 ): Promise<void> {
   // NOTE: collect-mode and overflow-summary queue drains create synthetic
   // followup runs without mediaContext — those paths are not covered here
@@ -337,6 +337,7 @@ export async function applyDeferredMediaUnderstandingToQueuedRun(
         provider: queued.run.provider,
         model: queued.run.model,
       },
+      skipTranscriptEcho: params.skipTranscriptEcho,
     });
 
     const shouldRebuildPrompt =

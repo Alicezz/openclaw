@@ -104,7 +104,12 @@ async function resolveSummaryLines(items: FollowupRun[]): Promise<string[]> {
   // so line order matches the original item order.
   await Promise.allSettled(
     items.map((item) =>
-      applyDeferredMediaUnderstandingToQueuedRun(item, { logLabel: "followup queue" }),
+      applyDeferredMediaUnderstandingToQueuedRun(item, {
+        logLabel: "followup queue",
+        // Suppress transcript echoes for overflow summary items — dropped
+        // messages must not produce user-visible side effects.
+        skipTranscriptEcho: true,
+      }),
     ),
   );
   // After deferred media, prefer the concise summaryLine (the original user

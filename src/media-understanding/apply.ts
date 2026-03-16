@@ -469,6 +469,8 @@ export async function applyMediaUnderstanding(params: {
   agentDir?: string;
   providers?: Record<string, MediaUnderstandingProvider>;
   activeModel?: ActiveMediaModel;
+  /** When true, skip echoing transcript back to chat (e.g. overflow summary items). */
+  skipTranscriptEcho?: boolean;
 }): Promise<ApplyMediaUnderstandingResult> {
   const { ctx, cfg } = params;
   const commandCandidates = [ctx.CommandBody, ctx.RawBody, ctx.Body];
@@ -530,8 +532,10 @@ export async function applyMediaUnderstanding(params: {
           ctx.RawBody = transcript;
         }
         // Echo transcript back to chat before agent processing, if configured.
+        // Skip echo for overflow summary items — dropped messages must not
+        // produce user-visible side effects.
         const audioCfg = cfg.tools?.media?.audio;
-        if (audioCfg?.echoTranscript && transcript) {
+        if (!params.skipTranscriptEcho && audioCfg?.echoTranscript && transcript) {
           await sendTranscriptEcho({
             ctx,
             cfg,
