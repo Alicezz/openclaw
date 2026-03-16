@@ -400,129 +400,49 @@ export async function createEmbeddingProvider(
     );
   };
 
+  // Try primary provider first, then fallback on failure
   const pluginProvider = pluginProviders[normalizedRequested];
   if (pluginProvider) {
-    // Return plugin provider directly - fallback handling happens on actual errors
+    // Return plugin provider directly - fallback happens on actual errors later
     return { provider: pluginProvider, requestedProvider };
   }
 
-  // Built-in fallback path - try plugin fallback first, then built-in
-  if (fallback) {
-    const normalizedFallback = normalizeProviderId(fallback);
-    const fallbackPluginProvider = pluginProviders[normalizedFallback];
-    // Try plugin fallback first if it exists
-    if (fallbackPluginProvider) {
-      return {
-        provider: fallbackPluginProvider,
-        requestedProvider,
-        fallbackFrom: requestedProvider,
-      };
-    }
-    // Try built-in fallback (normalized)
-    try {
-      const fallbackResult = await createProvider(normalizedFallback);
-      return { ...fallbackResult, requestedProvider, fallbackFrom: requestedProvider };
-    } catch {
-      // Fallback failed - let the main error path handle it
-    }
-  }
-
-  const formatPrimaryError = (err: unknown, provider: string) =>
-    provider === "local" ? formatLocalSetupError(err) : formatErrorMessage(err);
-
-  if (requestedProvider === "auto") {
-    const missingKeyErrors: string[] = [];
-    let localError: string | null = null;
-
-    if (canAutoSelectLocal(options)) {
-      try {
-        const local = await createProvider("local");
-        return { ...local, requestedProvider };
-      } catch (err) {
-        localError = formatLocalSetupError(err);
-      }
-    }
-
-    for (const provider of REMOTE_EMBEDDING_PROVIDER_IDS) {
-      try {
-        const result = await createProvider(provider);
-        return { ...result, requestedProvider };
-      } catch (err) {
-        if (isMissingApiKeyError(err)) {
-          const message = formatPrimaryError(err, provider);
-          missingKeyErrors.push(message);
-          continue;
-        }
-        const wrapped = new Error(formatPrimaryError(err, provider)) as Error & { cause?: unknown };
-        wrapped.cause = err;
-        throw wrapped;
-      }
-    }
-
-    // Plugin providers are only used when explicitly configured (not in auto mode).
-    // Auto mode uses only built-in providers to preserve FTS-only fallback behavior.
-
-    // All providers failed due to missing API keys - return null provider for FTS-only mode
-    const details = [...missingKeyErrors, localError].filter(Boolean) as string[];
-    const reason = details.length > 0 ? details.join("\n\n") : "No embeddings provider available.";
-    return {
-      provider: null,
-      requestedProvider,
-      providerUnavailableReason: reason,
-    };
-  }
-
+  // Not a plugin - try built-in primary first
   try {
-    const primary = await createProvider(requestedProvider);
+    const primary = await createProvider(normalizeProviderId(requestedProvider));
     return { ...primary, requestedProvider };
   } catch (primaryErr) {
-    const reason = formatPrimaryError(primaryErr, requestedProvider);
-    if (fallback && fallback !== "none" && fallback !== requestedProvider) {
+    // Primary failed - try fallback if configured
+    const reason = formatErrorMessage(primaryErr);
+    if (fallback) {
       const normalizedFallback = normalizeProviderId(fallback);
-      if (pluginProviders[normalizedFallback]) {
+      const fallbackPluginProvider = pluginProviders[normalizedFallback];
+      // Try plugin fallback first if it exists
+      if (fallbackPluginProvider) {
         return {
-          provider: pluginProviders[normalizedFallback],
+          provider: fallbackPluginProvider,
           requestedProvider,
           fallbackFrom: requestedProvider,
           fallbackReason: reason,
         };
       }
+      // Try built-in fallback
       try {
-        const fallbackResult = await createProvider(fallback);
+        const fallbackResult = await createProvider(normalizedFallback);
         return {
           ...fallbackResult,
           requestedProvider,
           fallbackFrom: requestedProvider,
           fallbackReason: reason,
         };
-      } catch (fallbackErr) {
-        // Both primary and fallback failed - check if it's auth-related
-        const fallbackReason = formatErrorMessage(fallbackErr);
-        const combinedReason = `${reason}\n\nFallback to ${fallback} failed: ${fallbackReason}`;
-        if (isMissingApiKeyError(primaryErr) && isMissingApiKeyError(fallbackErr)) {
-          // Both failed due to missing API keys - return null for FTS-only mode
-          return {
-            provider: null,
-            requestedProvider,
-            fallbackFrom: requestedProvider,
-            fallbackReason: reason,
-            providerUnavailableReason: combinedReason,
-          };
-        }
-        // Non-auth errors are still fatal
-        const wrapped = new Error(combinedReason) as Error & { cause?: unknown };
-        wrapped.cause = fallbackErr;
+      } catch {
+        // Fallback also failed - throw primary error
+        const wrapped = new Error(reason) as Error & { cause?: unknown };
+        wrapped.cause = primaryErr;
         throw wrapped;
       }
     }
-    // No fallback configured - check if we should degrade to FTS-only
-    if (isMissingApiKeyError(primaryErr)) {
-      return {
-        provider: null,
-        requestedProvider,
-        providerUnavailableReason: reason,
-      };
-    }
+    // No fallback - throw primary error
     const wrapped = new Error(reason) as Error & { cause?: unknown };
     wrapped.cause = primaryErr;
     throw wrapped;
