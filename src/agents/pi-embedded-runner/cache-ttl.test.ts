@@ -9,6 +9,8 @@ describe("isCacheTtlEligibleProvider", () => {
   it("allows moonshot and zai providers", () => {
     expect(isCacheTtlEligibleProvider("moonshot", "kimi-k2.5")).toBe(true);
     expect(isCacheTtlEligibleProvider("zai", "glm-5")).toBe(true);
+    expect(isCacheTtlEligibleProvider("deepinfra", "zai-org/glm-5")).toBe(true);
+    expect(isCacheTtlEligibleProvider("deepinfra", "moonshotai/kimi-k2.5")).toBe(true);
   });
 
   it("is case-insensitive for native providers", () => {
@@ -26,5 +28,6 @@ describe("isCacheTtlEligibleProvider", () => {
   it("rejects unsupported providers and models", () => {
     expect(isCacheTtlEligibleProvider("openai", "gpt-4o")).toBe(false);
     expect(isCacheTtlEligibleProvider("openrouter", "openai/gpt-4o")).toBe(false);
+    expect(isCacheTtlEligibleProvider("deepinfra", "openai/gpt-4o")).toBe(false);
   });
 });
