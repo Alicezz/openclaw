@@ -81,32 +81,55 @@ function normalizeProxyUrlForUndici(url: string): string | null {
 }
 
 /**
- * When only ALL_PROXY (or all_proxy) is set and no standard HTTP_PROXY /
- * HTTPS_PROXY vars exist, return explicit `httpProxy` / `httpsProxy` options
- * that can be spread into an `EnvHttpProxyAgent` constructor call.
+ * Return explicit `httpProxy` / `httpsProxy` options for `EnvHttpProxyAgent`
+ * when the environment proxy URLs need normalization or bridging.
  *
- * undici's `EnvHttpProxyAgent` ignores ALL_PROXY entirely, so this bridges
- * the gap for users who rely solely on ALL_PROXY (common in China behind
- * SOCKS5 / mixed-protocol proxies).
+ * Covers two cases:
+ * 1. HTTP_PROXY / HTTPS_PROXY contain a protocol that `EnvHttpProxyAgent`
+ *    cannot handle (e.g. `socks5://`) — normalize to `http://`.
+ * 2. Only ALL_PROXY (or `all_proxy`) is set — `EnvHttpProxyAgent` ignores
+ *    ALL_PROXY entirely, so we pass its (normalized) value explicitly.
  *
- * Returns `undefined` when no explicit options are needed (either no
- * ALL_PROXY is set, or standard vars already cover the proxy).
+ * Returns `undefined` when no explicit options are needed (standard vars
+ * are set with `http://` / `https://` URLs that the agent handles natively).
  */
 export function resolveAllProxyFallbackOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): { httpProxy: string; httpsProxy: string } | undefined {
+  const httpUrl = resolveEnvHttpProxyUrl("http", env);
+  const httpsUrl = resolveEnvHttpProxyUrl("https", env);
+
+  // If standard vars are set with http(s):// URLs, EnvHttpProxyAgent handles
+  // them natively — no explicit options needed. But ALL non-null URLs must be
+  // usable; a mix like HTTP_PROXY=http://… + HTTPS_PROXY=socks5://… would
+  // still break the agent for https requests.
+  const httpOk = httpUrl == null || /^https?:\/\//i.test(httpUrl);
+  const httpsOk = httpsUrl == null || /^https?:\/\//i.test(httpsUrl);
+  const hasStandard = httpUrl != null || httpsUrl != null;
+
+  if (hasStandard && httpOk && httpsOk) {
+    return undefined;
+  }
+
+  // Standard vars exist but at least one uses an incompatible protocol
+  // (e.g. socks5://). Normalize each individually, keeping usable ones as-is.
+  if (hasStandard) {
+    const effectiveHttpUrl = httpUrl ? normalizeProxyUrlForUndici(httpUrl) : null;
+    const effectiveHttpsUrl = httpsUrl ? normalizeProxyUrlForUndici(httpsUrl) : null;
+    const resolved = effectiveHttpsUrl ?? effectiveHttpUrl;
+    if (resolved) {
+      return {
+        httpProxy: effectiveHttpUrl ?? resolved,
+        httpsProxy: effectiveHttpsUrl ?? resolved,
+      };
+    }
+  }
+
+  // Fall back to ALL_PROXY / all_proxy.
   const lowerAllProxy = normalizeProxyEnvValue(env.all_proxy);
   const allProxy =
     lowerAllProxy !== undefined ? lowerAllProxy : normalizeProxyEnvValue(env.ALL_PROXY);
   if (!allProxy) {
-    return undefined;
-  }
-
-  const hasStandardProxy =
-    resolveEnvHttpProxyUrl("http", env) !== undefined ||
-    resolveEnvHttpProxyUrl("https", env) !== undefined;
-
-  if (hasStandardProxy) {
     return undefined;
   }
 
