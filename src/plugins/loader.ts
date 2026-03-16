@@ -431,6 +431,8 @@ function shouldLoadChannelPluginInSetupRuntime(params: {
   env: NodeJS.ProcessEnv;
   preferSetupRuntimeForChannelPlugins?: boolean;
 }): boolean {
+  const hasExplicitChannelConfig = (channelId: string) =>
+    Object.prototype.hasOwnProperty.call(params.cfg.channels ?? {}, channelId);
   if (!params.setupSource || params.manifestChannels.length === 0) {
     return false;
   }
@@ -440,8 +442,9 @@ function shouldLoadChannelPluginInSetupRuntime(params: {
   ) {
     return true;
   }
-  return !params.manifestChannels.some((channelId) =>
-    isChannelConfigured(params.cfg, channelId, params.env),
+  return !params.manifestChannels.some(
+    (channelId) =>
+      hasExplicitChannelConfig(channelId) || isChannelConfigured(params.cfg, channelId, params.env),
   );
 }
 
