@@ -1,13 +1,11 @@
 import path from "node:path";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
-import type { OpenClawConfig } from "../config/config.js";
 import { registerContextEngineForOwner } from "../context-engine/registry.js";
 import type {
   GatewayRequestHandler,
   GatewayRequestHandlers,
 } from "../gateway/server-methods/types.js";
-import { resolveGatewaySessionStoreTarget } from "../gateway/session-utils.js";
 import { registerInternalHook } from "../hooks/internal-hooks.js";
 import type { HookEntry } from "../hooks/types.js";
 import { resolveUserPath } from "../utils.js";
@@ -54,8 +52,6 @@ import type {
   SpeechProviderPlugin,
   WebSearchProviderPlugin,
 } from "./types.js";
-
-type GatewaySessionResetModule = typeof import("../gateway/session-reset-service.js");
 
 export type PluginToolRegistration = {
   pluginId: string;
@@ -213,7 +209,6 @@ export type PluginRegistryParams = {
   // When true, skip writing to the global plugin command registry during register().
   // Used by non-activating snapshot loads to avoid leaking commands into the running gateway.
   suppressGlobalCommands?: boolean;
-  loadSessionResetModule?: () => Promise<GatewaySessionResetModule>;
 };
 
 type PluginTypedHookPolicy = {
@@ -259,34 +254,6 @@ export function createEmptyPluginRegistry(): PluginRegistry {
 export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const registry = createEmptyPluginRegistry();
   const coreGatewayMethods = new Set(Object.keys(registryParams.coreGatewayHandlers ?? {}));
-  const canGatewayHandleSessionReset = coreGatewayMethods.has("sessions.reset");
-  const isGatewayRuntimeAvailable = () => {
-    const subagentRuntime = registryParams.runtime.subagent;
-    return (
-      Boolean(subagentRuntime) && !Object.is(subagentRuntime.run, subagentRuntime.deleteSession)
-    );
-  };
-  const runtimeLoadConfig = () => {
-    const loadConfig = registryParams.runtime.config?.loadConfig;
-    if (typeof loadConfig !== "function") {
-      throw new Error("Plugin runtime config loader is unavailable.");
-    }
-    return loadConfig();
-  };
-  const gatewayResetUnavailableError =
-    "resetSession is only available while the gateway is running.";
-  let sessionResetModuleCache: GatewaySessionResetModule | null = null;
-  const loadSessionResetModule =
-    canGatewayHandleSessionReset && registryParams.loadSessionResetModule
-      ? registryParams.loadSessionResetModule
-      : canGatewayHandleSessionReset
-        ? async () => {
-            if (!sessionResetModuleCache) {
-              sessionResetModuleCache = await import("../gateway/session-reset-service.js");
-            }
-            return sessionResetModuleCache;
-          }
-        : null;
   const resetSessionsInFlight = new Set<string>();
 
   const pushDiagnostic = (diag: PluginDiagnostic) => {
@@ -327,9 +294,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
 
   const createPluginResetSession = (params: {
     pluginId: string;
-    loadConfig: () => OpenClawConfig;
-    loadSessionResetModule: (() => Promise<GatewaySessionResetModule>) | null;
-    isGatewayRuntimeAvailable: () => boolean;
   }): NonNullable<OpenClawPluginApi["resetSession"]> => {
     return async (key, reason = "new") => {
       let responseKey = typeof key === "string" ? key.trim() : "";
@@ -346,7 +310,16 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         }
 
         const normalizedReason = reason === "reset" ? "reset" : "new";
-        const liveConfig = params.loadConfig();
+        const [
+          { loadConfig },
+          { resolveGatewaySessionStoreTarget },
+          { performGatewaySessionReset },
+        ] = await Promise.all([
+          import("../config/config.js"),
+          import("../gateway/session-utils.js"),
+          import("../gateway/session-reset-service.js"),
+        ]);
+        const liveConfig = loadConfig();
         const resolvedTarget = resolveGatewaySessionStoreTarget({
           cfg: liveConfig,
           key: trimmedKey,
@@ -357,10 +330,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         }
 
         responseKey = canonicalKey;
-        if (!params.isGatewayRuntimeAvailable() || !params.loadSessionResetModule) {
-          return createResetSessionFailure(canonicalKey, gatewayResetUnavailableError);
-        }
-
         if (resetSessionsInFlight.has(canonicalKey)) {
           return createResetSessionFailure(
             canonicalKey,
@@ -370,7 +339,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
 
         resetSessionsInFlight.add(canonicalKey);
         try {
-          const { performGatewaySessionReset } = await params.loadSessionResetModule();
           const result = await performGatewaySessionReset({
             key: trimmedKey,
             reason: normalizedReason,
@@ -1076,14 +1044,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         }
       },
       resetSession:
-        registrationMode === "full"
-          ? createPluginResetSession({
-              pluginId: record.id,
-              loadConfig: runtimeLoadConfig,
-              isGatewayRuntimeAvailable,
-              loadSessionResetModule,
-            })
-          : undefined,
+        registrationMode === "full" ? createPluginResetSession({ pluginId: record.id }) : undefined,
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) =>
         registrationMode === "full"
