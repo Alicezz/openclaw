@@ -2740,7 +2740,7 @@ public struct CronAddParams: Codable, Sendable {
     public let failurealert: AnyCodable?
 
     public init(
-        id: String?,
+        id: String? = nil,
         name: String,
         agentid: AnyCodable?,
         sessionkey: AnyCodable?,
