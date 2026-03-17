@@ -1045,6 +1045,11 @@ export async function redispatchSubagentRunAfterRestart(
           defaultRuntime.log(
             `[warn] subagent-resume: finally-path onComplete failed run=${runId}: ${String(err)}`,
           );
+          // Release the resume lock so this run can be retried on the next
+          // reconciliation pass.  Without this, the run stays in `resumedRuns`
+          // permanently (until process restart) because `resumeSubagentRun` has
+          // already added it before dispatching.
+          onResumeCleanup?.(runId);
         }
       }
     }
