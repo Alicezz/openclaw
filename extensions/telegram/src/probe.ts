@@ -1,7 +1,7 @@
 import type { BaseProbeResult } from "openclaw/plugin-sdk/channel-runtime";
 import type { TelegramNetworkConfig } from "openclaw/plugin-sdk/telegram";
 import { fetchWithTimeout } from "openclaw/plugin-sdk/text-runtime";
-import { resolveTelegramFetch } from "./fetch.js";
+import { resolveTelegramApiBase, resolveTelegramFetch } from "./fetch.js";
 import { makeProxyFetch } from "./proxy.js";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
@@ -23,6 +23,7 @@ export type TelegramProbeOptions = {
   proxyUrl?: string;
   network?: TelegramNetworkConfig;
   accountId?: string;
+  apiRoot?: string;
 };
 
 const probeFetcherCache = new Map<string, typeof fetch>();
@@ -56,7 +57,8 @@ function buildProbeFetcherCacheKey(token: string, options?: TelegramProbeOptions
   const autoSelectFamilyKey =
     typeof autoSelectFamily === "boolean" ? String(autoSelectFamily) : "default";
   const dnsResultOrderKey = options?.network?.dnsResultOrder ?? "default";
-  return `${cacheIdentityKind}:${cacheIdentity}::${proxyKey}::${autoSelectFamilyKey}::${dnsResultOrderKey}`;
+  const apiRootKey = options?.apiRoot?.trim() ?? "";
+  return `${cacheIdentityKind}:${cacheIdentity}::${proxyKey}::${autoSelectFamilyKey}::${dnsResultOrderKey}::${apiRootKey}`;
 }
 
 function setCachedProbeFetcher(cacheKey: string, fetcher: typeof fetch): typeof fetch {
@@ -82,7 +84,10 @@ function resolveProbeFetcher(token: string, options?: TelegramProbeOptions): typ
 
   const proxyUrl = options?.proxyUrl?.trim();
   const proxyFetch = proxyUrl ? makeProxyFetch(proxyUrl) : undefined;
-  const resolved = resolveTelegramFetch(proxyFetch, { network: options?.network });
+  const resolved = resolveTelegramFetch(proxyFetch, {
+    network: options?.network,
+    apiRoot: options?.apiRoot,
+  });
 
   if (cacheKey) {
     return setCachedProbeFetcher(cacheKey, resolved);
@@ -100,7 +105,8 @@ export async function probeTelegram(
   const deadlineMs = started + timeoutBudgetMs;
   const options = resolveProbeOptions(proxyOrOptions);
   const fetcher = resolveProbeFetcher(token, options);
-  const base = `${TELEGRAM_API_BASE}/bot${token}`;
+  const apiBase = resolveTelegramApiBase(options?.apiRoot);
+  const base = `${apiBase}/bot${token}`;
   const retryDelayMs = Math.max(50, Math.min(1000, Math.floor(timeoutBudgetMs / 5)));
   const resolveRemainingBudgetMs = () => Math.max(0, deadlineMs - Date.now());
 
