@@ -1300,6 +1300,7 @@ export type PluginHookName =
   | "subagent_delivery_target"
   | "subagent_spawned"
   | "subagent_ended"
+  | "before_tools_resolve"
   | "gateway_start"
   | "gateway_stop";
 
@@ -1327,6 +1328,7 @@ export const PLUGIN_HOOK_NAMES = [
   "subagent_delivery_target",
   "subagent_spawned",
   "subagent_ended",
+  "before_tools_resolve",
   "gateway_start",
   "gateway_stop",
 ] as const satisfies readonly PluginHookName[];
@@ -1623,6 +1625,31 @@ export type PluginHookAfterToolCallEvent = {
   durationMs?: number;
 };
 
+// before_tools_resolve hook — fires once when the tool list is assembled for
+// an agent run, before tools are sent to the LLM. Allows plugins to
+// dynamically filter which tools are available based on caller identity.
+export type PluginHookBeforeToolsResolveEvent = {
+  /** Names of all tools currently available after static policy filtering. */
+  toolNames: string[];
+};
+
+export type PluginHookBeforeToolsResolveResult = {
+  /** Tool names to remove from the available set. */
+  deny?: string[];
+  /** If provided, only these tools are kept (intersection with current set). */
+  allow?: string[];
+};
+
+export type PluginHookBeforeToolsResolveContext = {
+  agentId?: string;
+  sessionKey?: string;
+  sessionId?: string;
+  channelId?: string;
+  messageProvider?: string;
+  requesterSenderId?: string;
+  senderIsOwner?: boolean;
+};
+
 // tool_result_persist hook
 export type PluginHookToolResultPersistContext = {
   agentId?: string;
@@ -1833,6 +1860,13 @@ export type PluginHookHandlerMap = {
     event: PluginHookAfterToolCallEvent,
     ctx: PluginHookToolContext,
   ) => Promise<void> | void;
+  before_tools_resolve: (
+    event: PluginHookBeforeToolsResolveEvent,
+    ctx: PluginHookBeforeToolsResolveContext,
+  ) =>
+    | Promise<PluginHookBeforeToolsResolveResult | void>
+    | PluginHookBeforeToolsResolveResult
+    | void;
   tool_result_persist: (
     event: PluginHookToolResultPersistEvent,
     ctx: PluginHookToolResultPersistContext,
