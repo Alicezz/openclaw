@@ -857,6 +857,12 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        mdns: z
+          .object({
+            enabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .superRefine((gateway, ctx) => {
