@@ -1,15 +1,14 @@
 import type { ClawdbotConfig, PluginRuntime, RuntimeEnv } from "openclaw/plugin-sdk/feishu";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createPluginRuntimeMock } from "../../../test/helpers/extensions/plugin-runtime-mock.js";
 import type { FeishuMessageEvent } from "./bot.js";
-import {
-  buildBroadcastSessionKey,
-  buildFeishuAgentBody,
-  handleFeishuMessage,
-  resolveBroadcastAgents,
-  toMessageResourceType,
-} from "./bot.js";
-import { setFeishuRuntime } from "./runtime.js";
+
+let createPluginRuntimeMock: typeof import("../../../test/helpers/extensions/plugin-runtime-mock.js").createPluginRuntimeMock;
+let buildBroadcastSessionKey: typeof import("./bot.js").buildBroadcastSessionKey;
+let buildFeishuAgentBody: typeof import("./bot.js").buildFeishuAgentBody;
+let handleFeishuMessage: typeof import("./bot.js").handleFeishuMessage;
+let resolveBroadcastAgents: typeof import("./bot.js").resolveBroadcastAgents;
+let toMessageResourceType: typeof import("./bot.js").toMessageResourceType;
+let setFeishuRuntime: typeof import("./runtime.js").setFeishuRuntime;
 
 const {
   mockCreateFeishuReplyDispatcher,
@@ -88,6 +87,26 @@ vi.mock("../../../src/infra/outbound/session-binding-service.js", () => ({
     touch: mockTouchBinding,
   }),
 }));
+
+// Avoid loading firecrawl (optionalStringEnum) when vi.resetModules clears cache
+vi.mock("../../../src/plugins/web-search-providers.js", () => ({
+  resolvePluginWebSearchProviders: () => [],
+  resolveRuntimeWebSearchProviders: () => [],
+}));
+
+beforeEach(async () => {
+  vi.resetModules();
+  ({ createPluginRuntimeMock } =
+    await import("../../../test/helpers/extensions/plugin-runtime-mock.js"));
+  ({
+    buildBroadcastSessionKey,
+    buildFeishuAgentBody,
+    handleFeishuMessage,
+    resolveBroadcastAgents,
+    toMessageResourceType,
+  } = await import("./bot.js"));
+  ({ setFeishuRuntime } = await import("./runtime.js"));
+});
 
 function createRuntimeEnv(): RuntimeEnv {
   return {
