@@ -686,7 +686,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   const invocationCwd = tryResolveInvocationCwd();
 
   const timeoutMs = parseTimeoutMsOrExit(opts.timeout);
-  const shouldRestart = opts.restart !== false;
+  let shouldRestart = opts.restart !== false;
   if (timeoutMs === null) {
     return;
   }
@@ -896,6 +896,10 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       if (loaded) {
         restartScriptPath = await prepareRestartScript(process.env, gatewayPort);
         refreshGatewayServiceEnv = true;
+      } else {
+        // Service is not installed on this node; skip restart entirely so we
+        // don't accidentally spin up a new gateway process via runDaemonRestart().
+        shouldRestart = false;
       }
     } catch {
       // Ignore errors during pre-check; fallback to standard restart
