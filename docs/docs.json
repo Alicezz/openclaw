@@ -1151,6 +1151,7 @@
                   "platforms/android",
                   "platforms/ios",
                   "platforms/digitalocean",
+                  "platforms/easyrunner",
                   "platforms/oracle",
                   "platforms/raspberry-pi"
                 ]
