@@ -12,7 +12,7 @@ import perplexityPlugin from "../../../extensions/perplexity/index.js";
 import xaiPlugin from "../../../extensions/xai/index.js";
 import zaiPlugin from "../../../extensions/zai/index.js";
 import { createCapturedPluginRegistration } from "../captured-registration.js";
-import { resolvePluginProviders } from "../providers.js";
+import { loadPluginManifestRegistry } from "../manifest-registry.js";
 import type {
   ImageGenerationProviderPlugin,
   MediaUnderstandingProviderPlugin,
@@ -99,19 +99,78 @@ export const providerContractRegistry: ProviderContractEntry[] = buildCapability
   select: () => [],
 });
 
-const loadedBundledProviderRegistry: ProviderContractEntry[] = resolvePluginProviders({
-  bundledProviderAllowlistCompat: true,
-  bundledProviderVitestCompat: true,
-  cache: false,
-  activate: false,
-})
-  .filter((provider): provider is ProviderPlugin & { pluginId: string } =>
-    Boolean(provider.pluginId),
-  )
-  .map((provider) => ({
-    pluginId: provider.pluginId,
-    provider,
-  }));
+// Keep this loader map aligned with the bundled provider ids discovered from
+// manifest-registry so contract coverage keeps matching the real bundled set.
+const bundledProviderContractPluginLoaders: Record<
+  string,
+  () => Promise<{ default: RegistrablePlugin }>
+> = {
+  "amazon-bedrock": () => import("../../../extensions/amazon-bedrock/index.js"),
+  anthropic: () => import("../../../extensions/anthropic/index.js"),
+  byteplus: () => import("../../../extensions/byteplus/index.js"),
+  chutes: () => import("../../../extensions/chutes/index.js"),
+  "cloudflare-ai-gateway": () => import("../../../extensions/cloudflare-ai-gateway/index.js"),
+  "copilot-proxy": () => import("../../../extensions/copilot-proxy/index.js"),
+  "github-copilot": () => import("../../../extensions/github-copilot/index.js"),
+  google: () => import("../../../extensions/google/index.js"),
+  huggingface: () => import("../../../extensions/huggingface/index.js"),
+  kilocode: () => import("../../../extensions/kilocode/index.js"),
+  kimi: () => import("../../../extensions/kimi-coding/index.js"),
+  minimax: () => import("../../../extensions/minimax/index.js"),
+  mistral: () => import("../../../extensions/mistral/index.js"),
+  modelstudio: () => import("../../../extensions/modelstudio/index.js"),
+  moonshot: () => import("../../../extensions/moonshot/index.js"),
+  nvidia: () => import("../../../extensions/nvidia/index.js"),
+  ollama: () => import("../../../extensions/ollama/index.js"),
+  openai: () => import("../../../extensions/openai/index.js"),
+  opencode: () => import("../../../extensions/opencode/index.js"),
+  "opencode-go": () => import("../../../extensions/opencode-go/index.js"),
+  openrouter: () => import("../../../extensions/openrouter/index.js"),
+  qianfan: () => import("../../../extensions/qianfan/index.js"),
+  "qwen-portal-auth": () => import("../../../extensions/qwen-portal-auth/index.js"),
+  sglang: () => import("../../../extensions/sglang/index.js"),
+  synthetic: () => import("../../../extensions/synthetic/index.js"),
+  together: () => import("../../../extensions/together/index.js"),
+  venice: () => import("../../../extensions/venice/index.js"),
+  "vercel-ai-gateway": () => import("../../../extensions/vercel-ai-gateway/index.js"),
+  vllm: () => import("../../../extensions/vllm/index.js"),
+  volcengine: () => import("../../../extensions/volcengine/index.js"),
+  xai: () => import("../../../extensions/xai/index.js"),
+  xiaomi: () => import("../../../extensions/xiaomi/index.js"),
+  zai: () => import("../../../extensions/zai/index.js"),
+};
+
+async function loadBundledProviderContractPlugins(): Promise<RegistrablePlugin[]> {
+  const bundledProviderPluginIds = loadPluginManifestRegistry({})
+    .plugins.filter((plugin) => plugin.origin === "bundled" && plugin.providers.length > 0)
+    .map((plugin) => plugin.id)
+    .toSorted((left, right) => left.localeCompare(right));
+
+  const modules = await Promise.all(
+    bundledProviderPluginIds.map((pluginId) => {
+      const load = bundledProviderContractPluginLoaders[pluginId];
+      if (!load) {
+        throw new Error(`missing bundled provider contract loader for ${pluginId}`);
+      }
+      return load();
+    }),
+  );
+
+  return modules.map((mod, index) => {
+    const plugin = mod.default as RegistrablePlugin | undefined;
+    if (!plugin) {
+      throw new Error(
+        `bundled provider contract plugin missing default export for ${bundledProviderPluginIds[index]}`,
+      );
+    }
+    return plugin;
+  });
+}
+
+const loadedBundledProviderRegistry: ProviderContractEntry[] = buildCapabilityContractRegistry({
+  plugins: await loadBundledProviderContractPlugins(),
+  select: (captured) => captured.providers,
+});
 
 providerContractRegistry.splice(
   0,

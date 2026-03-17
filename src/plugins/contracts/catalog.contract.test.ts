@@ -16,16 +16,12 @@ type ResolveOwningPluginIdsForProvider =
 type ResolveNonBundledProviderPluginIds =
   typeof import("../providers.js").resolveNonBundledProviderPluginIds;
 
-const resolvePluginProvidersMock = vi.hoisted(() =>
-  vi.fn<ResolvePluginProviders>((_) => uniqueProviderContractProviders),
-);
+const resolvePluginProvidersMock = vi.hoisted(() => vi.fn<ResolvePluginProviders>());
 const resolveOwningPluginIdsForProviderMock = vi.hoisted(() =>
-  vi.fn<ResolveOwningPluginIdsForProvider>((params) =>
-    resolveProviderContractPluginIdsForProvider(params.provider),
-  ),
+  vi.fn<ResolveOwningPluginIdsForProvider>(),
 );
 const resolveNonBundledProviderPluginIdsMock = vi.hoisted(() =>
-  vi.fn<ResolveNonBundledProviderPluginIds>((_) => [] as string[]),
+  vi.fn<ResolveNonBundledProviderPluginIds>(),
 );
 
 vi.mock("../providers.js", () => ({

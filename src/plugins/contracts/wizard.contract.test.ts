@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderPlugin } from "../types.js";
-import { providerContractPluginIds, uniqueProviderContractProviders } from "./registry.js";
 
-const resolvePluginProvidersMock = vi.fn();
+const resolvePluginProvidersMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../providers.js", () => ({
   resolvePluginProviders: (...args: unknown[]) => resolvePluginProvidersMock(...args),
@@ -12,6 +11,8 @@ let buildProviderPluginMethodChoice: typeof import("../provider-wizard.js").buil
 let resolveProviderModelPickerEntries: typeof import("../provider-wizard.js").resolveProviderModelPickerEntries;
 let resolveProviderPluginChoice: typeof import("../provider-wizard.js").resolveProviderPluginChoice;
 let resolveProviderWizardOptions: typeof import("../provider-wizard.js").resolveProviderWizardOptions;
+let contractProviders: ProviderPlugin[] = [];
+let providerContractPluginIds: string[] = [];
 
 function resolveExpectedWizardChoiceValues(providers: ProviderPlugin[]) {
   const values: string[] = [];
@@ -72,6 +73,23 @@ function resolveExpectedModelPickerValues(providers: ProviderPlugin[]) {
 describe("provider wizard contract", () => {
   beforeEach(async () => {
     vi.resetModules();
+    const providersModule =
+      await vi.importActual<typeof import("../providers.js")>("../providers.js");
+    contractProviders = providersModule.resolvePluginProviders({
+      bundledProviderAllowlistCompat: true,
+      bundledProviderVitestCompat: true,
+      env: {
+        ...process.env,
+        VITEST: process.env.VITEST || "1",
+      },
+      cache: false,
+      activate: false,
+    });
+    providerContractPluginIds = [
+      ...new Set(
+        contractProviders.map((provider) => provider.pluginId).filter(Boolean) as string[],
+      ),
+    ].toSorted((left, right) => left.localeCompare(right));
     ({
       buildProviderPluginMethodChoice,
       resolveProviderModelPickerEntries,
@@ -79,7 +97,7 @@ describe("provider wizard contract", () => {
       resolveProviderWizardOptions,
     } = await import("../provider-wizard.js"));
     resolvePluginProvidersMock.mockReset();
-    resolvePluginProvidersMock.mockReturnValue(uniqueProviderContractProviders);
+    resolvePluginProvidersMock.mockReturnValue(contractProviders);
   });
 
   it("exposes every registered provider setup choice through the shared wizard layer", () => {
@@ -98,7 +116,7 @@ describe("provider wizard contract", () => {
 
     expect(
       options.map((option) => option.value).toSorted((left, right) => left.localeCompare(right)),
-    ).toEqual(resolveExpectedWizardChoiceValues(uniqueProviderContractProviders));
+    ).toEqual(resolveExpectedWizardChoiceValues(contractProviders));
     expect(options.map((option) => option.value)).toEqual([
       ...new Set(options.map((option) => option.value)),
     ]);
@@ -107,7 +125,7 @@ describe("provider wizard contract", () => {
   it("round-trips every shared wizard choice back to its provider and auth method", () => {
     for (const option of resolveProviderWizardOptions({ config: {}, env: process.env })) {
       const resolved = resolveProviderPluginChoice({
-        providers: uniqueProviderContractProviders,
+        providers: contractProviders,
         choice: option.value,
       });
       expect(resolved).not.toBeNull();
@@ -121,10 +139,10 @@ describe("provider wizard contract", () => {
 
     expect(
       entries.map((entry) => entry.value).toSorted((left, right) => left.localeCompare(right)),
-    ).toEqual(resolveExpectedModelPickerValues(uniqueProviderContractProviders));
+    ).toEqual(resolveExpectedModelPickerValues(contractProviders));
     for (const entry of entries) {
       const resolved = resolveProviderPluginChoice({
-        providers: uniqueProviderContractProviders,
+        providers: contractProviders,
         choice: entry.value,
       });
       expect(resolved).not.toBeNull();
