@@ -22,6 +22,7 @@ import {
   handleStatusCommand,
   handleWhoamiCommand,
 } from "./commands-info.js";
+import { handleMcpCommand } from "./commands-mcp.js";
 import { handleModelsCommand } from "./commands-models.js";
 import { handlePluginCommand } from "./commands-plugin.js";
 import { handlePTTCommand } from "./commands-ptt.js";
@@ -196,6 +197,7 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleSubagentsCommand,
       handlePTTCommand,
       handleAcpCommand,
+      handleMcpCommand,
       handleConfigCommand,
       handleDebugCommand,
       handleModelsCommand,
