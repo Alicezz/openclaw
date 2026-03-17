@@ -51,6 +51,7 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { createNonExitingRuntime, type RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { summarizeStringEntries } from "openclaw/plugin-sdk/text-runtime";
 import { resolveDiscordAccount } from "../accounts.js";
+import { attachFetchToCarbonRequestClient } from "../carbon-rest-proxy.js";
 import { getDiscordGatewayEmitter } from "../monitor.gateway.js";
 import { fetchDiscordApplicationId } from "../probe.js";
 import { normalizeDiscordToken } from "../token.js";
@@ -775,6 +776,9 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       },
       clientPlugins,
     );
+    if (rawDiscordCfg.proxy?.trim()) {
+      attachFetchToCarbonRequestClient(client.rest, discordRestFetch);
+    }
     const earlyGatewayErrorGuard = attachEarlyGatewayErrorGuard(client);
     releaseEarlyGatewayErrorGuard = earlyGatewayErrorGuard.release;
 
