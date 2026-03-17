@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginRecord } from "./registry.js";
 import type { PluginRuntime } from "./runtime/types.js";
@@ -7,39 +7,6 @@ import type {
   PluginRegistrationMode,
   PluginResetSessionResult,
 } from "./types.js";
-
-const ensureUndiciMockCleanup = (() => {
-  let patched = false;
-  return () => {
-    if (patched) {
-      return;
-    }
-    patched = true;
-
-    const registerCleanup = () => {
-      afterAll(() => {
-        vi.doUnmock("undici");
-        vi.resetModules();
-      });
-    };
-
-    const wrapMock = <Fn extends typeof vi.mock | typeof vi.doMock>(original: Fn): Fn => {
-      const wrapped = (specifier: unknown, ...rest: unknown[]) => {
-        if (specifier === "undici") {
-          registerCleanup();
-        }
-        return (original as (...args: unknown[]) => unknown)(specifier, ...rest);
-      };
-      return wrapped as Fn;
-    };
-
-    // Bind to preserve the original `vi` context before wrapping.
-    const originalMock = vi.mock.bind(vi);
-    const originalDoMock = vi.doMock.bind(vi);
-    vi.mock = wrapMock(originalMock);
-    vi.doMock = wrapMock(originalDoMock);
-  };
-})();
 
 const mockPluginSideEffects = () => {
   vi.doMock("../agents/sandbox/constants.js", () => {
@@ -164,7 +131,6 @@ function createRecord(): PluginRecord {
 }
 
 async function createApiHarness(options?: RegistryImportOptions) {
-  ensureUndiciMockCleanup();
   vi.resetModules();
   mockPluginSideEffects();
 
