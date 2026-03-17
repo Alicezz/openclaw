@@ -900,6 +900,7 @@ export async function compactEmbeddedPiSessionDirect(
               {
                 messageCount: messageCountBefore,
                 tokenCount: tokenCountBefore,
+                messages: session.messages,
               },
               {
                 sessionId: params.sessionId,
