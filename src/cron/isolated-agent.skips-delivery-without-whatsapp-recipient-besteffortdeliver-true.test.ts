@@ -364,7 +364,10 @@ describe("runCronIsolatedAgentTurn", () => {
     });
   });
 
-  it("skips announce when messaging tool already sent to target", async () => {
+  it("does not skip announce when message tool was disabled despite stale didSendViaMessagingTool (#42244)", async () => {
+    // When delivery.mode is "announce" the message tool is disabled. Any
+    // residual didSendViaMessagingTool flag from a prior turn or subagent
+    // must not suppress announce delivery.
     await withTelegramAnnounceFixture(async ({ home, storePath, deps }) => {
       mockAgentPayloads([{ text: "sent" }], {
         didSendViaMessagingTool: true,
@@ -380,7 +383,9 @@ describe("runCronIsolatedAgentTurn", () => {
 
       expectDeliveredOk(res);
       expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
-      expect(deps.sendMessageTelegram).not.toHaveBeenCalled();
+      // Announce delivery should fire despite the stale flag — the message
+      // tool was disabled so the flag is not a valid delivery signal.
+      expect(deps.sendMessageTelegram).toHaveBeenCalledTimes(1);
     });
   });
 
