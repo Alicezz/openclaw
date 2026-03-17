@@ -10,6 +10,17 @@ import { mockPublicPinnedHostname } from "./test-helpers/ssrf.js";
 type MemoryIndexManager = import("./index.js").MemoryIndexManager;
 type MemoryIndexModule = typeof import("./index.js");
 
+vi.mock("./remote-http.js", () => ({
+  withRemoteHttpResponse: async <T>(params: {
+    url: string;
+    init?: RequestInit;
+    onResponse: (response: Response) => Promise<T>;
+  }) => {
+    const response = await fetch(params.url, params.init);
+    return await params.onResponse(response);
+  },
+}));
+
 const embedBatch = vi.fn(async (_texts: string[]) => [] as number[][]);
 const embedQuery = vi.fn(async () => [0.5, 0.5, 0.5]);
 let getMemorySearchManager: MemoryIndexModule["getMemorySearchManager"];
