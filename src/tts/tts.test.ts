@@ -69,8 +69,6 @@ const {
   isValidVoiceId,
   isValidOpenAIVoice,
   isValidOpenAIModel,
-  OPENAI_TTS_MODELS,
-  OPENAI_TTS_VOICES,
   parseTtsDirectives,
   resolveOpenAITtsInstructions,
   resolveModelOverridePolicy,
@@ -78,6 +76,10 @@ const {
   resolveOutputFormat,
   resolveEdgeOutputFormat,
 } = _test;
+
+// Pull the supported voice/model lists from tts-core directly.
+// Some runners can mis-handle re-export/test harness bindings.
+const { OPENAI_TTS_MODELS, OPENAI_TTS_VOICES } = ttsCore;
 
 const mockAssistantMessage = (content: AssistantMessage["content"]): AssistantMessage => ({
   role: "assistant",

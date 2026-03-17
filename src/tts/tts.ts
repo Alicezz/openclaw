@@ -36,14 +36,17 @@ import {
   isValidOpenAIModel,
   isValidOpenAIVoice,
   isValidVoiceId,
-  OPENAI_TTS_MODELS,
-  OPENAI_TTS_VOICES,
+  OPENAI_TTS_MODELS as OPENAI_TTS_MODELS_CORE,
+  OPENAI_TTS_VOICES as OPENAI_TTS_VOICES_CORE,
   resolveOpenAITtsInstructions,
   parseTtsDirectives,
   scheduleCleanup,
   summarizeText,
 } from "./tts-core.js";
-export { OPENAI_TTS_MODELS, OPENAI_TTS_VOICES } from "./tts-core.js";
+
+// Re-export as concrete values (avoid any bundler/test runner edge cases with re-export bindings).
+export const OPENAI_TTS_MODELS = OPENAI_TTS_MODELS_CORE;
+export const OPENAI_TTS_VOICES = OPENAI_TTS_VOICES_CORE;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_TTS_MAX_LENGTH = 1500;
