@@ -15,7 +15,10 @@ import {
   type StringSelectMenuInteraction,
 } from "@buape/carbon";
 import { ApplicationCommandOptionType, ButtonStyle } from "discord-api-types/v10";
-import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
+import {
+  resolveDefaultModelForAgent,
+  resolveHumanDelayConfig,
+} from "openclaw/plugin-sdk/agent-runtime";
 import { resolveCommandAuthorizedFromAuthorizers } from "openclaw/plugin-sdk/channel-runtime";
 import { resolveNativeCommandSessionTargets } from "openclaw/plugin-sdk/channel-runtime";
 import { createReplyPrefixOptions } from "openclaw/plugin-sdk/channel-runtime";
@@ -134,8 +137,11 @@ function resolveDiscordNativeCommandAllowlistAccess(params: {
 function buildDiscordCommandOptions(params: {
   command: ChatCommandDefinition;
   cfg: ReturnType<typeof loadConfig>;
+  resolveChoiceContext?: (
+    interaction: AutocompleteInteraction,
+  ) => Promise<{ provider?: string; model?: string } | null>;
 }): CommandOptions | undefined {
-  const { command, cfg } = params;
+  const { command, cfg, resolveChoiceContext } = params;
   const args = command.args;
   if (!args || args.length === 0) {
     return undefined;
@@ -168,7 +174,17 @@ function buildDiscordCommandOptions(params: {
           const focused = interaction.options.getFocused();
           const focusValue =
             typeof focused?.value === "string" ? focused.value.trim().toLowerCase() : "";
-          const choices = resolveCommandArgChoices({ command, arg, cfg });
+          const context =
+            typeof arg.choices === "function" && resolveChoiceContext
+              ? await resolveChoiceContext(interaction)
+              : null;
+          const choices = resolveCommandArgChoices({
+            command,
+            arg,
+            cfg,
+            provider: context?.provider,
+            model: context?.model,
+          });
           const filtered = focusValue
             ? choices.filter((choice) => choice.label.toLowerCase().includes(focusValue))
             : choices;
@@ -423,7 +439,11 @@ function buildDiscordModelPickerNoticePayload(message: string): { components: Co
 }
 
 async function resolveDiscordModelPickerRoute(params: {
-  interaction: CommandInteraction | ButtonInteraction | StringSelectMenuInteraction;
+  interaction:
+    | CommandInteraction
+    | ButtonInteraction
+    | StringSelectMenuInteraction
+    | AutocompleteInteraction;
   cfg: ReturnType<typeof loadConfig>;
   accountId: string;
   threadBindings: ThreadBindingManager;
@@ -472,6 +492,48 @@ async function resolveDiscordModelPickerRoute(params: {
     parentConversationId: threadParentId,
     boundSessionKey: threadBinding?.targetSessionKey,
   });
+}
+
+async function resolveDiscordNativeChoiceContext(params: {
+  interaction: AutocompleteInteraction;
+  cfg: ReturnType<typeof loadConfig>;
+  accountId: string;
+  threadBindings: ThreadBindingManager;
+}): Promise<{ provider?: string; model?: string } | null> {
+  try {
+    const route = await resolveDiscordModelPickerRoute({
+      interaction: params.interaction,
+      cfg: params.cfg,
+      accountId: params.accountId,
+      threadBindings: params.threadBindings,
+    });
+    const fallback = resolveDefaultModelForAgent({
+      cfg: params.cfg,
+      agentId: route.agentId,
+    });
+    const storePath = resolveStorePath(params.cfg.session?.store, {
+      agentId: route.agentId,
+    });
+    const sessionStore = loadSessionStore(storePath);
+    const sessionEntry = sessionStore[route.sessionKey];
+    const override = resolveStoredModelOverride({
+      sessionEntry,
+      sessionStore,
+      sessionKey: route.sessionKey,
+    });
+    if (!override?.model) {
+      return {
+        provider: fallback.provider,
+        model: fallback.model,
+      };
+    }
+    return {
+      provider: override.provider || fallback.provider,
+      model: override.model,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function resolveDiscordModelPickerCurrentModel(params: {
@@ -1222,6 +1284,13 @@ export function createDiscordNativeCommand(params: {
   const commandOptions = buildDiscordCommandOptions({
     command: commandDefinition,
     cfg,
+    resolveChoiceContext: async (interaction) =>
+      resolveDiscordNativeChoiceContext({
+        interaction,
+        cfg,
+        accountId,
+        threadBindings,
+      }),
   });
   const options = commandOptions
     ? (commandOptions satisfies CommandOptions)
