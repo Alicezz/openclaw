@@ -148,12 +148,15 @@
 
 /* Context usage warning pill */
 .context-notice {
+  margin: 0 auto 8px;
+}
+
+.context-notice:not(.context-notice--stacked) {
   align-self: center;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 7px 14px;
-  margin: 0 auto 8px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--ctx-color, #d97706) 35%, transparent);
   background: var(--ctx-bg, rgba(217, 119, 6, 0.12));
