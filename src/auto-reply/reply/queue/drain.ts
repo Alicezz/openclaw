@@ -3,15 +3,17 @@ import { resolveGlobalMap } from "../../../shared/global-singleton.js";
 import {
   buildCollectPrompt,
   beginQueueDrain,
+  buildQueueSummaryLine,
+  buildQueueSummaryPrompt,
   clearQueueSummaryState,
   drainCollectQueueStep,
   drainNextQueueItem,
   hasCrossChannelItems,
-  previewQueueSummaryPrompt,
   waitForQueueDebounce,
 } from "../../../utils/queue-helpers.js";
+import { applyDeferredMediaUnderstandingToQueuedRun } from "../followup-media.js";
 import { isRoutableChannel } from "../route-reply.js";
-import { FOLLOWUP_QUEUES } from "./state.js";
+import { FOLLOWUP_QUEUES, type FollowupQueueState } from "./state.js";
 import type { FollowupRun } from "./types.js";
 
 // Persists the most recent runFollowup callback per queue key so that
@@ -68,6 +70,82 @@ function resolveCrossChannelKey(item: FollowupRun): { cross?: true; key?: string
   };
 }
 
+function clearFollowupQueueSummaryState(queue: FollowupQueueState): void {
+  clearQueueSummaryState(queue);
+  queue.summaryItems = [];
+}
+
+export async function applyDeferredMediaToQueuedRuns(items: FollowupRun[]): Promise<void> {
+  await Promise.allSettled(
+    items.map(
+      async (item) =>
+        await applyDeferredMediaUnderstandingToQueuedRun(item, { logLabel: "followup queue" }),
+    ),
+  );
+}
+
+/**
+ * Strip leading thread/system context lines from a prompt so that only the
+ * user message body (including any transcript injected by deferred media)
+ * remains.  The prompt built in get-reply-run.ts prepends blocks like
+ * `[Thread history - for context]\n…` and system-event blocks before the
+ * actual user body.  For overflow summaries we want the concise body, not
+ * the contextual boilerplate.
+ */
+const THREAD_CONTEXT_PREFIX_RE = /^\[Thread (?:history|starter) - for context\][\s\S]*?\n\n/;
+
+function stripLeadingThreadContext(text: string): string {
+  return text.replace(THREAD_CONTEXT_PREFIX_RE, "").trim();
+}
+
+async function resolveSummaryLines(items: FollowupRun[]): Promise<string[]> {
+  // Parallelize the media understanding API calls upfront (same pattern as
+  // applyDeferredMediaToQueuedRuns), then build summary lines sequentially
+  // so line order matches the original item order.
+  await Promise.allSettled(
+    items.map((item) =>
+      applyDeferredMediaUnderstandingToQueuedRun(item, {
+        logLabel: "followup queue",
+        // Suppress transcript echoes for overflow summary items — dropped
+        // messages must not produce user-visible side effects.
+        skipTranscriptEcho: true,
+      }),
+    ),
+  );
+  // After deferred media, prefer the concise summaryLine (the original user
+  // message body) when it exists.  Only fall back to the full prompt — with
+  // leading thread/system context stripped — when summaryLine is absent, so
+  // that transcript content injected by deferred media still surfaces.
+  return items.map((item) => {
+    const concise = item.summaryLine?.trim() || stripLeadingThreadContext(item.prompt).trim();
+    return buildQueueSummaryLine(concise || "");
+  });
+}
+
+export async function buildMediaAwareQueueSummaryPrompt(params: {
+  dropPolicy: FollowupQueueState["dropPolicy"];
+  droppedCount: number;
+  summaryLines: string[];
+  summaryItems: FollowupRun[];
+  noun: string;
+}): Promise<string | undefined> {
+  if (params.dropPolicy !== "summarize" || params.droppedCount <= 0) {
+    return undefined;
+  }
+  const summaryLines =
+    params.summaryItems.length > 0
+      ? await resolveSummaryLines(params.summaryItems)
+      : params.summaryLines;
+  return buildQueueSummaryPrompt({
+    state: {
+      dropPolicy: params.dropPolicy,
+      droppedCount: params.droppedCount,
+      summaryLines: [...summaryLines],
+    },
+    noun: params.noun,
+  });
+}
+
 export function scheduleFollowupDrain(
   key: string,
   runFollowup: (run: FollowupRun) => Promise<void>,
@@ -107,7 +185,14 @@ export function scheduleFollowupDrain(
           }
 
           const items = queue.items.slice();
-          const summary = previewQueueSummaryPrompt({ state: queue, noun: "message" });
+          await applyDeferredMediaToQueuedRuns(items);
+          const summary = await buildMediaAwareQueueSummaryPrompt({
+            dropPolicy: queue.dropPolicy,
+            droppedCount: queue.droppedCount,
+            summaryLines: queue.summaryLines,
+            summaryItems: queue.summaryItems,
+            noun: "message",
+          });
           const run = items.at(-1)?.run ?? queue.lastRun;
           if (!run) {
             break;
@@ -129,12 +214,18 @@ export function scheduleFollowupDrain(
           });
           queue.items.splice(0, items.length);
           if (summary) {
-            clearQueueSummaryState(queue);
+            clearFollowupQueueSummaryState(queue);
           }
           continue;
         }
 
-        const summaryPrompt = previewQueueSummaryPrompt({ state: queue, noun: "message" });
+        const summaryPrompt = await buildMediaAwareQueueSummaryPrompt({
+          dropPolicy: queue.dropPolicy,
+          droppedCount: queue.droppedCount,
+          summaryLines: queue.summaryLines,
+          summaryItems: queue.summaryItems,
+          noun: "message",
+        });
         if (summaryPrompt) {
           const run = queue.lastRun;
           if (!run) {
@@ -155,7 +246,7 @@ export function scheduleFollowupDrain(
           ) {
             break;
           }
-          clearQueueSummaryState(queue);
+          clearFollowupQueueSummaryState(queue);
           continue;
         }
 
