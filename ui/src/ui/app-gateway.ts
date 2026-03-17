@@ -45,6 +45,66 @@ import type {
   UpdateAvailable,
 } from "./types.ts";
 
+// Debounced chat history reload for chat.inbound events.
+// Two-phase refresh: first at 500ms (optimistic), second at 3500ms (guaranteed).
+// The inbound message may not be persisted to session history yet when the
+// WebSocket event arrives, so the second refresh ensures we catch it.
+// Note: module-level timers are fine — Control UI maintains a single gateway connection.
+let _chatInboundTimerFast: ReturnType<typeof setTimeout> | null = null;
+let _chatInboundTimerSlow: ReturnType<typeof setTimeout> | null = null;
+
+function clearChatInboundTimers(): void {
+  if (_chatInboundTimerFast) {
+    clearTimeout(_chatInboundTimerFast);
+    _chatInboundTimerFast = null;
+  }
+  if (_chatInboundTimerSlow) {
+    clearTimeout(_chatInboundTimerSlow);
+    _chatInboundTimerSlow = null;
+  }
+}
+
+const STALE_STREAM_MS = 30_000;
+
+function debouncedLoadChatHistory(host: GatewayHost, triggerSessionKey: string): void {
+  clearChatInboundTimers();
+  _chatInboundTimerFast = setTimeout(() => {
+    _chatInboundTimerFast = null;
+    if (host.sessionKey !== triggerSessionKey) {
+      return;
+    }
+    const streamStartedAt = (host as unknown as { chatStreamStartedAt?: number | null })
+      .chatStreamStartedAt;
+    if (
+      host.chatRunId ||
+      host.chatStream ||
+      (streamStartedAt && Date.now() - streamStartedAt < STALE_STREAM_MS)
+    ) {
+      return;
+    }
+    void loadChatHistory(host as unknown as OpenClawApp);
+  }, 500);
+  // Second refresh scheduled independently so it still fires even when the
+  // fast timer is skipped (e.g. streaming was active at 500ms but finished
+  // before 3500ms). Total delay matches the original 500+3000=3500ms.
+  _chatInboundTimerSlow = setTimeout(() => {
+    _chatInboundTimerSlow = null;
+    if (host.sessionKey !== triggerSessionKey) {
+      return;
+    }
+    const streamStartedAt = (host as unknown as { chatStreamStartedAt?: number | null })
+      .chatStreamStartedAt;
+    if (
+      host.chatRunId ||
+      host.chatStream ||
+      (streamStartedAt && Date.now() - streamStartedAt < STALE_STREAM_MS)
+    ) {
+      return;
+    }
+    void loadChatHistory(host as unknown as OpenClawApp);
+  }, 3500);
+}
+
 function isGenericBrowserFetchFailure(message: string): boolean {
   return /^(?:typeerror:\s*)?(?:fetch failed|failed to fetch)$/i.test(message.trim());
 }
@@ -337,6 +397,49 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host as unknown as Parameters<typeof handleAgentEvent>[0],
       evt.payload as AgentEventPayload | undefined,
     );
+    // Reload history when agent run ends so both user inbound message
+    // and assistant reply appear in the UI (channel messages only emit
+    // agent events, not chat events).
+    const agentPayload = evt.payload as AgentEventPayload | undefined;
+    if (
+      agentPayload?.stream === "lifecycle" &&
+      agentPayload.data?.phase === "end" &&
+      host.tab === "chat" &&
+      agentPayload.sessionKey === host.sessionKey &&
+      (!host.chatRunId || host.chatRunId === agentPayload.runId)
+    ) {
+      // Cancel the fast timer — lifecycle.end provides the immediate reload.
+      if (_chatInboundTimerFast) {
+        clearTimeout(_chatInboundTimerFast);
+        _chatInboundTimerFast = null;
+      }
+      void loadChatHistory(host as unknown as OpenClawApp);
+      // P2 fix: force-scope slow fallback timer to the current ending session.
+      // Always reschedule (clearing any stale timer) so cross-session lifecycle
+      // ends don't starve each other's persistence-lag retry.
+      const endSessionKey = agentPayload.sessionKey;
+      if (_chatInboundTimerSlow) {
+        clearTimeout(_chatInboundTimerSlow);
+        _chatInboundTimerSlow = null;
+      }
+      _chatInboundTimerSlow = setTimeout(() => {
+        _chatInboundTimerSlow = null;
+        if (host.sessionKey !== endSessionKey) {
+          return;
+        }
+        // Skip if a new run started during the delay window
+        const streamStartedAt = (host as unknown as { chatStreamStartedAt?: number | null })
+          .chatStreamStartedAt;
+        if (
+          host.chatRunId ||
+          host.chatStream ||
+          (streamStartedAt && Date.now() - streamStartedAt < STALE_STREAM_MS)
+        ) {
+          return;
+        }
+        void loadChatHistory(host as unknown as OpenClawApp);
+      }, 3000);
+    }
     return;
   }
 
@@ -368,6 +471,14 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     (host as GatewayHostWithShutdownMessage).pendingShutdownMessage = shutdownMessage;
     host.lastError = shutdownMessage;
     host.lastErrorCode = null;
+    return;
+  }
+
+  if (evt.event === "chat.inbound") {
+    const payload = evt.payload as { sessionKey?: string } | undefined;
+    if (host.tab === "chat" && payload?.sessionKey && payload.sessionKey === host.sessionKey) {
+      debouncedLoadChatHistory(host, payload.sessionKey);
+    }
     return;
   }
 

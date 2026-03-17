@@ -242,6 +242,7 @@ export function resetToolStream(host: ToolStreamHost) {
   host.toolStreamOrder = [];
   host.chatToolMessages = [];
   host.chatStreamSegments = [];
+  (host as unknown as { _chatStreamType?: string })._chatStreamType = undefined;
 }
 
 export type CompactionStatus = {
@@ -402,6 +403,44 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
 
   if (payload.stream === "lifecycle" || payload.stream === "fallback") {
     handleLifecycleFallbackEvent(host as CompactionHost, payload);
+    return;
+  }
+
+  // Stream assistant replies and thinking to the chat UI so channel-routed
+  // messages (Telegram, Discord, etc.) get real-time display. These only
+  // arrive as agent events, not chat events.
+  if (
+    (payload.stream === "assistant" || payload.stream === "thinking") &&
+    (host as unknown as { tab?: string }).tab === "chat" &&
+    payload.sessionKey === host.sessionKey &&
+    (!host.chatRunId || host.chatRunId === payload.runId)
+  ) {
+    // Respect the user's "show thinking" setting
+    const settings = (host as unknown as { settings?: { chatShowThinking?: boolean } }).settings;
+    if (payload.stream === "thinking" && settings?.chatShowThinking === false) {
+      return;
+    }
+    const text = typeof payload.data?.text === "string" ? payload.data.text : null;
+    // Filter NO_REPLY sentinel — matches isSilentReplyStream in controllers/chat.ts
+    if (text && !/^\s*NO_REPLY\s*$/.test(text)) {
+      // Detect stream type change (thinking→assistant or vice versa).
+      // When the stream type switches, commit the previous segment so it
+      // renders above the new streaming text. This replaces the old
+      // length-based heuristic which missed short thinking → long assistant
+      // transitions.
+      const prevStreamType = (host as unknown as { _chatStreamType?: string })._chatStreamType;
+      if (host.chatStream && prevStreamType && prevStreamType !== payload.stream) {
+        host.chatStreamSegments = [
+          ...host.chatStreamSegments,
+          { text: host.chatStream, ts: Date.now() },
+        ];
+      }
+      (host as unknown as { _chatStreamType?: string })._chatStreamType = payload.stream;
+      host.chatStream = text;
+      if (!host.chatStreamStartedAt) {
+        host.chatStreamStartedAt = Date.now();
+      }
+    }
     return;
   }
 
