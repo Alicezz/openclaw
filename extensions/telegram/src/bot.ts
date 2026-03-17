@@ -470,7 +470,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     opts,
   });
 
-  const { validatedCustomCommandNames } = registerTelegramNativeCommands({
+  const { validatedCustomCommandIndices } = registerTelegramNativeCommands({
     bot,
     cfg,
     runtime,
@@ -506,7 +506,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     shouldSkipUpdate,
     processMessage,
     logger,
-    validatedCustomCommandNames,
+    validatedCustomCommandIndices,
   });
 
   const originalStop = bot.stop.bind(bot);

@@ -9,6 +9,7 @@ import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/config-runtime";
 import {
   normalizeTelegramCommandName,
   resolveTelegramCustomCommands,
+  resolveValidatedCustomCommandIndices,
   TELEGRAM_COMMAND_NAME_PATTERN,
 } from "openclaw/plugin-sdk/config-runtime";
 import type {
@@ -117,8 +118,8 @@ export type RegisterTelegramHandlerParams = {
     replyMedia?: TelegramMediaRef[],
   ) => Promise<void>;
   logger: ReturnType<typeof getChildLogger>;
-  /** Validated custom command names from registerTelegramNativeCommands (dedup + conflict-free). */
-  validatedCustomCommandNames?: Set<string>;
+  /** Validated custom command indices from registerTelegramNativeCommands (dedup + conflict-free). */
+  validatedCustomCommandIndices?: Set<number>;
 };
 
 export type RegisterTelegramNativeCommandsParams = {
@@ -895,17 +896,16 @@ export const registerTelegramNativeCommands = ({
       }
 
       // Register bot.command handlers for customCommands with menus (multi-level menu support).
-      // Use the validated command names to filter, and track seen names to avoid registering
-      // duplicate handlers when the raw config has multiple entries with the same command name.
-      const validCommandNames = new Set(customCommands.map((c) => c.command));
-      const seenMenuCommands = new Set<string>();
-      const menuCommands = (telegramCfg.customCommands ?? []).filter((c) => {
-        if (!c.menus || !c.menus.main || !validCommandNames.has(c.command)) return false;
-        const normalized = c.command.toLowerCase();
-        if (seenMenuCommands.has(normalized)) return false;
-        seenMenuCommands.add(normalized);
-        return true;
+      // Use validated indices to ensure only entries accepted by resolveTelegramCustomCommands
+      // can register handlers. This prevents rejected duplicates (e.g. a second /work with menus
+      // when the first /work without menus was accepted) from installing active handlers.
+      const validatedIndices = resolveValidatedCustomCommandIndices({
+        commands: telegramCfg.customCommands,
+        reservedCommands,
       });
+      const menuCommands = (telegramCfg.customCommands ?? []).filter(
+        (c, i) => validatedIndices.has(i) && c.menus && c.menus.main,
+      );
       for (const mc of menuCommands) {
         bot.command(mc.command, async (ctx: TelegramNativeCommandContext) => {
           const msg = ctx.message;
@@ -946,7 +946,25 @@ export const registerTelegramNativeCommands = ({
     }).catch(() => {});
   }
 
-  // Expose the validated custom command names so callers (e.g. bot-handlers callback routing)
-  // can filter against the same set without re-deriving reservedCommands.
-  return { validatedCustomCommandNames: new Set(customCommands.map((c) => c.command)) };
+  // Expose the validated custom command indices so callers (e.g. bot-handlers callback routing)
+  // can filter the raw customCommands array against the same validated set.
+  // Uses the same reservedCommands derivation as the nativeEnabled block (native + skill commands).
+  {
+    const allReserved = new Set(
+      listNativeCommandSpecs().map((command) => normalizeTelegramCommandName(command.name)),
+    );
+    if (nativeEnabled && nativeSkillsEnabled) {
+      const boundRoute = resolveAgentRoute({ cfg, channel: "telegram", accountId });
+      if (boundRoute) {
+        for (const sc of listSkillCommandsForAgents({ cfg, agentIds: [boundRoute.agentId] })) {
+          allReserved.add(sc.name.toLowerCase());
+        }
+      }
+    }
+    const validatedCustomCommandIndices = resolveValidatedCustomCommandIndices({
+      commands: telegramCfg.customCommands,
+      reservedCommands: allReserved,
+    });
+    return { validatedCustomCommandIndices };
+  }
 };

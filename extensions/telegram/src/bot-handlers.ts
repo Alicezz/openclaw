@@ -143,7 +143,7 @@ export const registerTelegramHandlers = ({
   shouldSkipUpdate,
   processMessage,
   logger,
-  validatedCustomCommandNames,
+  validatedCustomCommandIndices,
 }: RegisterTelegramHandlerParams) => {
   const DEFAULT_TEXT_FRAGMENT_MAX_GAP_MS = 1500;
   const TELEGRAM_TEXT_FRAGMENT_START_THRESHOLD_CHARS = 4000;
@@ -1533,16 +1533,12 @@ export const registerTelegramHandlers = ({
       // This prevents unrelated inline keyboards (or other customCommands) with
       // colliding callback_data values from being intercepted.
       // Only consider validated commands (dedup + native-conflict-free) to avoid rejected
-      // entries from intercepting callbacks. validatedCustomCommandNames is passed from
-      // registerTelegramNativeCommands which resolves against reservedCommands.
-      const seenMenuCommandNames = new Set<string>();
-      const menuCustomCommands = (telegramCfg.customCommands ?? []).filter((c) => {
+      // entries from intercepting callbacks. validatedCustomCommandIndices is passed from
+      // registerTelegramNativeCommands and contains the exact raw array indices that passed
+      // validation, so rejected duplicates cannot participate even if they share a command name.
+      const menuCustomCommands = (telegramCfg.customCommands ?? []).filter((c, i) => {
         if (!c.menus || !c.routes) return false;
-        if (validatedCustomCommandNames && !validatedCustomCommandNames.has(c.command))
-          return false;
-        const normalized = c.command.toLowerCase();
-        if (seenMenuCommandNames.has(normalized)) return false;
-        seenMenuCommandNames.add(normalized);
+        if (validatedCustomCommandIndices && !validatedCustomCommandIndices.has(i)) return false;
         return true;
       });
       const cbMessageButtons: string[] = [];
