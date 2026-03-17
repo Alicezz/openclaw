@@ -5,7 +5,7 @@ import { formatUncaughtError } from "../infra/errors.js";
 import { isMainModule } from "../infra/is-main.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { assertSupportedRuntime } from "../infra/runtime-guard.js";
-import { enableConsoleCapture } from "../logging.js";
+import { enableConsoleCapture, routeLogsToStderr } from "../logging.js";
 import {
   getCommandPathWithRootOptions,
   getPrimaryCommand,
@@ -127,9 +127,18 @@ export async function runCli(argv: string[] = process.argv) {
     });
 
     const parseArgv = rewriteUpdateFlagArgv(normalizedArgv);
+
+    // Determine primary command first, so ACP protocol-safe routing happens before registration side-effects.
+    const primary = getPrimaryCommand(parseArgv);
+
+    // Route logs to stderr for ACP mode before registration side-effects,
+    // so stdout remains clean for protocol clients even when acp has option args.
+    if (primary === "acp") {
+      routeLogsToStderr();
+    }
+
     // Register the primary command (builtin or subcli) so help and command parsing
     // are correct even with lazy command registration.
-    const primary = getPrimaryCommand(parseArgv);
     if (primary) {
       const { getProgramContext } = await import("./program/program-context.js");
       const ctx = getProgramContext(program);
