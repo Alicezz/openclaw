@@ -34,7 +34,7 @@ import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
-import { startFileWatcher, stopFileWatcher } from "../infra/oag-event-bus.js";
+import { onOagEvent, startFileWatcher, stopFileWatcher } from "../infra/oag-event-bus.js";
 import { checkEvolutionHealth } from "../infra/oag-evolution-guard.js";
 import { collectActiveIncidents, recordOagIncident } from "../infra/oag-incident-collector.js";
 import {
@@ -931,6 +931,13 @@ export async function startGatewayServer(
         broadcast("heartbeat", evt, { dropIfSlow: true });
       });
 
+  // Forward OAG lifecycle events to admin WebSocket clients
+  const oagEventUnsub = minimalTestGateway
+    ? null
+    : onOagEvent((event) => {
+        broadcast("oag", event, { dropIfSlow: true });
+      });
+
   let heartbeatRunner: HeartbeatRunner = minimalTestGateway
     ? {
         stop: () => {},
@@ -1252,6 +1259,7 @@ export async function startGatewayServer(
     mediaCleanup,
     agentUnsub,
     heartbeatUnsub,
+    oagEventUnsub,
     chatRunState,
     clients,
     configReloader,

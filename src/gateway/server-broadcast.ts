@@ -13,6 +13,7 @@ const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
   "device.pair.resolved": [PAIRING_SCOPE],
   "node.pair.requested": [PAIRING_SCOPE],
   "node.pair.resolved": [PAIRING_SCOPE],
+  oag: [ADMIN_SCOPE],
 };
 
 export type GatewayBroadcastStateVersion = {
