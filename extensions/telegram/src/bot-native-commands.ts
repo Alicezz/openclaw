@@ -79,6 +79,7 @@ import { buildInlineKeyboard } from "./send.js";
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
 
 type TelegramNativeCommandContext = Context & { match?: string };
+type TelegramNativeCommandMessage = NonNullable<TelegramNativeCommandContext["msg"]>;
 
 type TelegramCommandAuthResult = {
   chatId: number;
@@ -145,8 +146,15 @@ export type RegisterTelegramNativeCommandsParams = {
   opts: { token: string };
 };
 
+function isChannelPostContext(ctx: TelegramNativeCommandContext) {
+  if (typeof ctx.hasChatType === "function") {
+    return ctx.hasChatType("channel");
+  }
+  return ctx.channelPost != null;
+}
+
 async function resolveTelegramCommandAuth(params: {
-  msg: NonNullable<TelegramNativeCommandContext["message"]>;
+  msg: TelegramNativeCommandMessage;
   bot: Bot;
   cfg: OpenClawConfig;
   accountId: string;
@@ -160,6 +168,7 @@ async function resolveTelegramCommandAuth(params: {
     messageThreadId?: number,
   ) => { groupConfig?: TelegramGroupConfig; topicConfig?: TelegramTopicConfig };
   requireAuth: boolean;
+  isChannelPost?: boolean;
 }): Promise<TelegramCommandAuthResult | null> {
   const {
     msg,
@@ -173,9 +182,10 @@ async function resolveTelegramCommandAuth(params: {
     resolveGroupPolicy,
     resolveTelegramGroupConfig,
     requireAuth,
+    isChannelPost,
   } = params;
   const chatId = msg.chat.id;
-  const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
+  const isGroup = isChannelPost || msg.chat.type === "group" || msg.chat.type === "supergroup";
   const messageThreadId = (msg as { message_thread_id?: number }).message_thread_id;
   const isForum = (msg.chat as { is_forum?: boolean }).is_forum === true;
   const threadSpec = resolveTelegramThreadSpec({
@@ -285,7 +295,7 @@ async function resolveTelegramCommandAuth(params: {
     resolveGroupPolicy,
     enforcePolicy: useAccessGroups,
     useTopicAndGroupOverrides: false,
-    enforceAllowlistAuthorization: requireAuth && !commandsAllowFromConfigured,
+    enforceAllowlistAuthorization: !isChannelPost && requireAuth && !commandsAllowFromConfigured,
     allowEmptyAllowlistEntries: true,
     requireSenderForAllowlistAuthorization: true,
     checkChatAllowlist: useAccessGroups,
@@ -318,18 +328,33 @@ async function resolveTelegramCommandAuth(params: {
   const groupSenderAllowed = isGroup
     ? isSenderAllowed({ allow: effectiveGroupAllow, senderId, senderUsername })
     : false;
-  const commandAuthorized = commandsAllowFromConfigured
-    ? Boolean(commandsAllowFromAccess?.isAuthorizedSender)
-    : resolveCommandAuthorizedFromAuthorizers({
-        useAccessGroups,
-        authorizers: [
-          { configured: dmAllow.hasEntries, allowed: senderAllowed },
-          ...(isGroup
-            ? [{ configured: effectiveGroupAllow.hasEntries, allowed: groupSenderAllowed }]
-            : []),
-        ],
-        modeWhenAccessGroupsOff: "configured",
-      });
+  const channelPolicy = isChannelPost && useAccessGroups ? resolveGroupPolicy(chatId) : null;
+  const commandAuthorizers = isChannelPost
+    ? useAccessGroups
+      ? [
+          // Channel posts have no human sender identity, so explicit chat allow is the auth source.
+          {
+            configured: true,
+            // policyAccess already rejects denied chats above; groupConfig here means
+            // the channel matched an explicit chat entry rather than only the "*" default.
+            allowed: Boolean(channelPolicy?.groupConfig),
+          },
+        ]
+      : []
+    : [
+        { configured: dmAllow.hasEntries, allowed: senderAllowed },
+        ...(isGroup
+          ? [{ configured: effectiveGroupAllow.hasEntries, allowed: groupSenderAllowed }]
+          : []),
+      ];
+  const commandAuthorized =
+    !isChannelPost && commandsAllowFromConfigured
+      ? Boolean(commandsAllowFromAccess?.isAuthorizedSender)
+      : resolveCommandAuthorizedFromAuthorizers({
+          useAccessGroups,
+          authorizers: commandAuthorizers,
+          modeWhenAccessGroupsOff: "configured",
+        });
   if (requireAuth && !commandAuthorized) {
     return await rejectNotAuthorized();
   }
@@ -457,7 +482,7 @@ export const registerTelegramNativeCommands = ({
   });
 
   const resolveCommandRuntimeContext = async (params: {
-    msg: NonNullable<TelegramNativeCommandContext["message"]>;
+    msg: TelegramNativeCommandMessage;
     isGroup: boolean;
     isForum: boolean;
     resolvedThreadId?: number;
@@ -555,7 +580,8 @@ export const registerTelegramNativeCommands = ({
       for (const command of nativeCommands) {
         const normalizedCommandName = normalizeTelegramCommandName(command.name);
         bot.command(normalizedCommandName, async (ctx: TelegramNativeCommandContext) => {
-          const msg = ctx.message;
+          const isChannelPost = isChannelPostContext(ctx);
+          const msg = ctx.msg;
           if (!msg) {
             return;
           }
@@ -574,6 +600,7 @@ export const registerTelegramNativeCommands = ({
             resolveGroupPolicy,
             resolveTelegramGroupConfig,
             requireAuth: true,
+            isChannelPost,
           });
           if (!auth) {
             return;
@@ -807,7 +834,8 @@ export const registerTelegramNativeCommands = ({
 
       for (const pluginCommand of pluginCatalog.commands) {
         bot.command(pluginCommand.command, async (ctx: TelegramNativeCommandContext) => {
-          const msg = ctx.message;
+          const isChannelPost = isChannelPostContext(ctx);
+          const msg = ctx.msg;
           if (!msg) {
             return;
           }
@@ -838,6 +866,7 @@ export const registerTelegramNativeCommands = ({
             resolveGroupPolicy,
             resolveTelegramGroupConfig,
             requireAuth: match.command.requireAuth !== false,
+            isChannelPost,
           });
           if (!auth) {
             return;
