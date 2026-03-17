@@ -23,20 +23,21 @@ const ensureUndiciMockCleanup = (() => {
       });
     };
 
-    const wrapMock =
-      (original: (...args: unknown[]) => unknown) =>
-      (specifier: unknown, ...rest: unknown[]) => {
+    const wrapMock = <Fn extends typeof vi.mock | typeof vi.doMock>(original: Fn): Fn => {
+      const wrapped = (specifier: unknown, ...rest: unknown[]) => {
         if (specifier === "undici") {
           registerCleanup();
         }
-        return original(specifier, ...rest);
+        return (original as (...args: unknown[]) => unknown)(specifier, ...rest);
       };
+      return wrapped as Fn;
+    };
 
     // Bind to preserve the original `vi` context before wrapping.
     const originalMock = vi.mock.bind(vi);
     const originalDoMock = vi.doMock.bind(vi);
-    vi.mock = wrapMock(originalMock) as typeof vi.mock;
-    vi.doMock = wrapMock(originalDoMock) as typeof vi.doMock;
+    vi.mock = wrapMock(originalMock);
+    vi.doMock = wrapMock(originalDoMock);
   };
 })();
 
