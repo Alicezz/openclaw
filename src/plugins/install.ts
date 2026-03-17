@@ -30,6 +30,7 @@ import {
 import { validateRegistryNpmSpec } from "../infra/npm-registry-spec.js";
 import { extensionUsesSkippedScannerPath, isPathInside } from "../security/scan-paths.js";
 import * as skillScanner from "../security/skill-scanner.js";
+import { resolveConfigDir, resolveUserPath } from "../utils.js";
 import { CONFIG_DIR, resolveUserPath } from "../utils.js";
 import { detectBundleManifestFormat, loadBundleManifest } from "./bundle-manifest.js";
 import {
@@ -237,7 +238,7 @@ function pickFileInstallCommonParams(params: FileInstallCommonParams): FileInsta
 export function resolvePluginInstallDir(pluginId: string, extensionsDir?: string): string {
   const extensionsBase = extensionsDir
     ? resolveUserPath(extensionsDir)
-    : path.join(CONFIG_DIR, "extensions");
+    : path.join(resolveConfigDir(), "extensions");
   const pluginIdError = validatePluginId(pluginId);
   if (pluginIdError) {
     throw new Error(pluginIdError);
@@ -516,7 +517,7 @@ async function installPluginFromPackageDir(
 
   const extensionsDir = params.extensionsDir
     ? resolveUserPath(params.extensionsDir)
-    : path.join(CONFIG_DIR, "extensions");
+    : path.join(resolveConfigDir(), "extensions");
   const targetDirResult = await resolveCanonicalInstallTarget({
     baseDir: extensionsDir,
     id: pluginId,
@@ -656,7 +657,7 @@ export async function installPluginFromFile(params: {
 
   const extensionsDir = params.extensionsDir
     ? resolveUserPath(params.extensionsDir)
-    : path.join(CONFIG_DIR, "extensions");
+    : path.join(resolveConfigDir(), "extensions");
   await fs.mkdir(extensionsDir, { recursive: true });
 
   const base = path.basename(filePath, path.extname(filePath));
