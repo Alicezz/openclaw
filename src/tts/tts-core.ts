@@ -12,6 +12,7 @@ import {
 import { createConfiguredOllamaStreamFn } from "../agents/ollama-stream.js";
 import { resolveModelAsync } from "../agents/pi-embedded-runner/model.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { isValidXaiVoice, parseXaiOutputFormat, XAI_TTS_VOICES } from "./providers/xai.js";
 import type {
   ResolvedTtsConfig,
   ResolvedTtsModelOverrides,
@@ -190,6 +191,17 @@ export function parseTtsDirectives(
               warnings.push(`invalid ElevenLabs voiceId "${rawValue}"`);
             }
             break;
+          case "xai_voiceid":
+          case "xai_voice":
+            if (!policy.allowVoice) {
+              break;
+            }
+            if (isValidXaiVoice(rawValue)) {
+              overrides.xai = { ...overrides.xai, voiceId: rawValue };
+            } else {
+              warnings.push(`invalid xAI voiceId "${rawValue}"`);
+            }
+            break;
           case "model":
           case "modelid":
           case "model_id":
@@ -315,6 +327,11 @@ export function parseTtsDirectives(
             overrides.elevenlabs = {
               ...overrides.elevenlabs,
               languageCode: normalizeLanguageCode(rawValue),
+            };
+            // Also allow for xAI
+            overrides.xai = {
+              ...overrides.xai,
+              language: rawValue,
             };
             break;
           case "seed":
