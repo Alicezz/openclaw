@@ -1,6 +1,7 @@
 import { lookup as dnsLookupCb, type LookupAddress } from "node:dns";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { Agent, EnvHttpProxyAgent, ProxyAgent, type Dispatcher } from "undici";
+import * as undici from "undici";
+import type { Dispatcher } from "undici";
 import {
   extractEmbeddedIpv4FromIpv6,
   isBlockedSpecialUseIpv4Address,
@@ -352,18 +353,55 @@ function withPinnedLookup(
   return connect ? { ...connect, lookup } : { lookup };
 }
 
+function isDispatcher(value: unknown): value is Dispatcher {
+  return typeof value === "object" && value !== null && "dispatch" in value;
+}
+
+function getUndiciDefaultAgent(): unknown {
+  try {
+    return Reflect.get(undici, "default") as { Agent?: unknown } | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function createUndiciAgent(connect?: Record<string, unknown>): Dispatcher {
+  const options = { connect };
+  const candidates = [
+    undici.Agent,
+    (getUndiciDefaultAgent() as { Agent?: unknown } | undefined)?.Agent,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "function") {
+      continue;
+    }
+    try {
+      return Reflect.construct(candidate, [options]) as Dispatcher;
+    } catch (error) {
+      if (!(error instanceof TypeError) || !String(error.message).includes("constructor")) {
+        throw error;
+      }
+    }
+    const dispatcher = candidate(options) as unknown;
+    if (isDispatcher(dispatcher)) {
+      return dispatcher;
+    }
+  }
+
+  throw new TypeError("undici Agent constructor unavailable");
+}
+
 export function createPinnedDispatcher(
   pinned: PinnedHostname,
   policy?: PinnedDispatcherPolicy,
 ): Dispatcher {
   if (!policy || policy.mode === "direct") {
-    return new Agent({
-      connect: withPinnedLookup(pinned.lookup, policy?.connect),
-    });
+    return createUndiciAgent(withPinnedLookup(pinned.lookup, policy?.connect));
   }
 
   if (policy.mode === "env-proxy") {
-    return new EnvHttpProxyAgent({
+    return new undici.EnvHttpProxyAgent({
       connect: withPinnedLookup(pinned.lookup, policy.connect),
       ...(policy.proxyTls ? { proxyTls: { ...policy.proxyTls } } : {}),
     });
@@ -371,9 +409,9 @@ export function createPinnedDispatcher(
 
   const proxyUrl = policy.proxyUrl.trim();
   if (!policy.proxyTls) {
-    return new ProxyAgent(proxyUrl);
+    return new undici.ProxyAgent(proxyUrl);
   }
-  return new ProxyAgent({
+  return new undici.ProxyAgent({
     uri: proxyUrl,
     proxyTls: { ...policy.proxyTls },
   });
