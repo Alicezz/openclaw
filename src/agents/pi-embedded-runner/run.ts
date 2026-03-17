@@ -109,7 +109,7 @@ const ANTHROPIC_MAGIC_STRING_REPLACEMENT = "ANTHROPIC MAGIC STRING TRIGGER REFUS
 // Detect model safety-filter rejections (stop_reason: sensitive).
 // This is NOT a timeout — it is a content policy block that requires a user-facing message.
 const SENSITIVE_STOP_REASON_RE =
-  /\bunhandled\s+stop reason:\s*sensitive\b|\bstop reason:\s*sensitive\b|\breason:\s*sensitive\b/i;
+  /\bunhandled\s+stop[_ ]reason:\s*sensitive\b|\bstop[_ ]reason:\s*sensitive\b|\breason:\s*sensitive\b/i;
 
 function scrubAnthropicRefusalMagic(prompt: string): string {
   if (!prompt.includes(ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL)) {
