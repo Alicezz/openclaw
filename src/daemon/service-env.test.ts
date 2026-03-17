@@ -8,6 +8,8 @@ import {
   buildServiceEnvironment,
   getMinimalServicePathParts,
   getMinimalServicePathPartsFromEnv,
+  isNvmNode,
+  resolveLinuxSystemCaBundle,
 } from "./service-env.js";
 
 describe("getMinimalServicePathParts - Linux user directories", () => {
@@ -419,16 +421,18 @@ describe("buildNodeServiceEnvironment", () => {
 });
 
 describe("shared Node TLS env defaults", () => {
+  // Pass an explicit non-nvm execPath so tests are deterministic regardless of
+  // whether the test runner itself runs under nvm.
   const builders = [
     {
       name: "gateway service env",
       build: (env: Record<string, string | undefined>, platform?: NodeJS.Platform) =>
-        buildServiceEnvironment({ env, port: 18789, platform }),
+        buildServiceEnvironment({ env, port: 18789, platform, execPath: "/usr/bin/node" }),
     },
     {
       name: "node service env",
       build: (env: Record<string, string | undefined>, platform?: NodeJS.Platform) =>
-        buildNodeServiceEnvironment({ env, platform }),
+        buildNodeServiceEnvironment({ env, platform, execPath: "/usr/bin/node" }),
     },
   ] as const;
 
@@ -461,6 +465,110 @@ describe("shared Node TLS env defaults", () => {
     const env = build({ HOME: "/home/user", NODE_USE_SYSTEM_CA: "0" }, "darwin");
     expect(env.NODE_USE_SYSTEM_CA).toBe("0");
   });
+});
+
+describe("isNvmNode", () => {
+  it("returns true when NVM_DIR env var is set", () => {
+    expect(isNvmNode({ NVM_DIR: "/home/user/.nvm" })).toBe(true);
+  });
+
+  it("returns true when execPath contains /.nvm/", () => {
+    expect(isNvmNode({}, "/home/user/.nvm/versions/node/v22.22.0/bin/node")).toBe(true);
+  });
+
+  it("returns false when neither NVM_DIR nor nvm execPath", () => {
+    expect(isNvmNode({}, "/usr/bin/node")).toBe(false);
+  });
+
+  it("returns false for empty env and system execPath", () => {
+    expect(isNvmNode({}, "/usr/local/bin/node")).toBe(false);
+  });
+
+  it("returns true when NVM_DIR is set even with system execPath", () => {
+    expect(isNvmNode({ NVM_DIR: "/home/user/.nvm" }, "/usr/bin/node")).toBe(true);
+  });
+});
+
+describe("resolveLinuxSystemCaBundle", () => {
+  it("returns a known CA bundle path when one exists", () => {
+    const result = resolveLinuxSystemCaBundle();
+    if (process.platform === "linux") {
+      // On a real Linux host, at least one standard CA bundle should exist.
+      expect(result).toMatch(/\.(crt|pem)$/);
+    }
+    // On non-Linux CI or minimal containers, result may be undefined.
+  });
+});
+
+describe("shared Node TLS env — Linux nvm detection", () => {
+  const nvmExecPath = "/home/user/.nvm/versions/node/v22.22.0/bin/node";
+  const nonNvmExecPath = "/usr/bin/node";
+
+  const builders = [
+    {
+      name: "gateway service env",
+      build: (
+        env: Record<string, string | undefined>,
+        platform?: NodeJS.Platform,
+        execPath?: string,
+      ) => buildServiceEnvironment({ env, port: 18789, platform, execPath }),
+    },
+    {
+      name: "node service env",
+      build: (
+        env: Record<string, string | undefined>,
+        platform?: NodeJS.Platform,
+        execPath?: string,
+      ) => buildNodeServiceEnvironment({ env, platform, execPath }),
+    },
+  ] as const;
+
+  // The expected CA path depends on what the host actually has on disk.
+  const expectedCaBundle = resolveLinuxSystemCaBundle();
+
+  it.each(builders)(
+    "$name defaults NODE_EXTRA_CA_CERTS on Linux when NVM_DIR is set",
+    ({ build }) => {
+      const env = build(
+        { HOME: "/home/user", NVM_DIR: "/home/user/.nvm" },
+        "linux",
+        nonNvmExecPath,
+      );
+      expect(env.NODE_EXTRA_CA_CERTS).toBe(expectedCaBundle);
+    },
+  );
+
+  it.each(builders)(
+    "$name defaults NODE_EXTRA_CA_CERTS on Linux when execPath is under nvm",
+    ({ build }) => {
+      const env = build({ HOME: "/home/user" }, "linux", nvmExecPath);
+      expect(env.NODE_EXTRA_CA_CERTS).toBe(expectedCaBundle);
+    },
+  );
+
+  it.each(builders)(
+    "$name does not default NODE_EXTRA_CA_CERTS on Linux without nvm",
+    ({ build }) => {
+      const env = build({ HOME: "/home/user" }, "linux", nonNvmExecPath);
+      expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    },
+  );
+
+  it.each(builders)(
+    "$name respects user-provided NODE_EXTRA_CA_CERTS on Linux with nvm",
+    ({ build }) => {
+      const env = build(
+        {
+          HOME: "/home/user",
+          NVM_DIR: "/home/user/.nvm",
+          NODE_EXTRA_CA_CERTS: "/custom/ca-bundle.crt",
+        },
+        "linux",
+        nvmExecPath,
+      );
+      expect(env.NODE_EXTRA_CA_CERTS).toBe("/custom/ca-bundle.crt");
+    },
+  );
 });
 
 describe("resolveGatewayStateDir", () => {

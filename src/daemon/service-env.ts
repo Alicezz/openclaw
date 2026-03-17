@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { VERSION } from "../version.js";
@@ -14,6 +15,48 @@ import {
   resolveNodeSystemdServiceName,
   resolveNodeWindowsTaskName,
 } from "./constants.js";
+
+/** Known system CA bundle paths across common Linux distros. */
+const LINUX_CA_BUNDLE_PATHS = [
+  "/etc/ssl/certs/ca-certificates.crt", // Debian, Ubuntu, Alpine
+  "/etc/pki/tls/certs/ca-bundle.crt", // RHEL, Fedora, CentOS
+  "/etc/ssl/ca-bundle.pem", // openSUSE
+] as const;
+
+/**
+ * Find the system CA bundle on this Linux host.
+ * Returns the first existing path, or `undefined` if none is found.
+ */
+export function resolveLinuxSystemCaBundle(): string | undefined {
+  for (const candidate of LINUX_CA_BUNDLE_PATHS) {
+    try {
+      fs.accessSync(candidate, fs.constants.R_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Detect if Node.js was installed via nvm.
+ * nvm-installed Node uses a bundled CA certificate store that may be missing modern
+ * root CAs (ISRG Root X1/X2, DigiCert Global Root G2, etc.), causing TLS failures
+ * with Node's built-in fetch (undici) for the majority of real-world HTTPS sites.
+ *
+ * Pass `execPath` explicitly to also check the binary path (e.g. `process.execPath`).
+ * Without it, only the `NVM_DIR` env var is checked.
+ */
+export function isNvmNode(env?: Record<string, string | undefined>, execPath?: string): boolean {
+  if (env?.NVM_DIR) {
+    return true;
+  }
+  if (execPath !== undefined) {
+    return execPath.includes("/.nvm/");
+  }
+  return false;
+}
 
 export type MinimalServicePathOptions = {
   platform?: NodeJS.Platform;
@@ -247,10 +290,12 @@ export function buildServiceEnvironment(params: {
   port: number;
   launchdLabel?: string;
   platform?: NodeJS.Platform;
+  /** Override process.execPath for nvm detection (testing). */
+  execPath?: string;
 }): Record<string, string | undefined> {
   const { env, port, launchdLabel } = params;
   const platform = params.platform ?? process.platform;
-  const sharedEnv = resolveSharedServiceEnvironmentFields(env, platform);
+  const sharedEnv = resolveSharedServiceEnvironmentFields(env, platform, params.execPath);
   const profile = env.OPENCLAW_PROFILE;
   const resolvedLaunchdLabel =
     launchdLabel || (platform === "darwin" ? resolveGatewayLaunchAgentLabel(profile) : undefined);
@@ -271,10 +316,12 @@ export function buildServiceEnvironment(params: {
 export function buildNodeServiceEnvironment(params: {
   env: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
+  /** Override process.execPath for nvm detection (testing). */
+  execPath?: string;
 }): Record<string, string | undefined> {
   const { env } = params;
   const platform = params.platform ?? process.platform;
-  const sharedEnv = resolveSharedServiceEnvironmentFields(env, platform);
+  const sharedEnv = resolveSharedServiceEnvironmentFields(env, platform, params.execPath);
   const gatewayToken =
     env.OPENCLAW_GATEWAY_TOKEN?.trim() || env.CLAWDBOT_GATEWAY_TOKEN?.trim() || undefined;
   return {
@@ -313,6 +360,7 @@ function buildCommonServiceEnvironment(
 function resolveSharedServiceEnvironmentFields(
   env: Record<string, string | undefined>,
   platform: NodeJS.Platform,
+  execPath?: string,
 ): SharedServiceEnvironmentFields {
   const stateDir = env.OPENCLAW_STATE_DIR;
   const configPath = env.OPENCLAW_CONFIG_PATH;
@@ -322,8 +370,15 @@ function resolveSharedServiceEnvironmentFields(
   // On macOS, launchd services don't inherit the shell environment, so Node's undici/fetch
   // cannot locate the system CA bundle. Default to /etc/ssl/cert.pem so TLS verification
   // works correctly when running as a LaunchAgent without extra user configuration.
+  // On Linux, nvm-installed Node uses a bundled CA store that is missing modern root CAs.
+  // Default to the system CA bundle when nvm is detected and the bundle exists on disk.
   const nodeCaCerts =
-    env.NODE_EXTRA_CA_CERTS ?? (platform === "darwin" ? "/etc/ssl/cert.pem" : undefined);
+    env.NODE_EXTRA_CA_CERTS ??
+    (platform === "darwin"
+      ? "/etc/ssl/cert.pem"
+      : platform === "linux" && isNvmNode(env, execPath ?? process.execPath)
+        ? resolveLinuxSystemCaBundle()
+        : undefined);
   const nodeUseSystemCa = env.NODE_USE_SYSTEM_CA ?? (platform === "darwin" ? "1" : undefined);
   return {
     stateDir,
