@@ -10,6 +10,7 @@ import type {
 import { registerInternalHook } from "../hooks/internal-hooks.js";
 import type { HookEntry } from "../hooks/types.js";
 import { resolveUserPath } from "../utils.js";
+import { registerPluginCommand, validatePluginCommandDefinition } from "./commands.js";
 import { normalizePluginHttpPath } from "./http-path.js";
 import { findOverlappingPluginHttpRoute } from "./http-route-overlap.js";
 import { registerPluginInteractiveHandler } from "./interactive.js";
@@ -218,74 +219,6 @@ type PluginTypedHookPolicy = {
   allowPromptInjection?: boolean;
 };
 
-const RESERVED_PLUGIN_COMMANDS = new Set([
-  "help",
-  "commands",
-  "status",
-  "whoami",
-  "context",
-  "btw",
-  "stop",
-  "restart",
-  "reset",
-  "new",
-  "compact",
-  "config",
-  "debug",
-  "allowlist",
-  "activation",
-  "skill",
-  "subagents",
-  "kill",
-  "steer",
-  "tell",
-  "model",
-  "models",
-  "queue",
-  "send",
-  "bash",
-  "exec",
-  "think",
-  "verbose",
-  "reasoning",
-  "elevated",
-  "usage",
-]);
-
-const VALID_PLUGIN_COMMAND_NAME_RE = /^[a-z][a-z0-9_-]*$/;
-
-const validatePluginCommandName = (rawName: string): string | null => {
-  const trimmed = rawName.trim().toLowerCase();
-  if (!trimmed) {
-    return "Command name cannot be empty";
-  }
-  if (!VALID_PLUGIN_COMMAND_NAME_RE.test(trimmed)) {
-    return "Command name must start with a letter and contain only letters, numbers, hyphens, and underscores";
-  }
-  if (RESERVED_PLUGIN_COMMANDS.has(trimmed)) {
-    return `Command name "${trimmed}" is reserved by a built-in command`;
-  }
-  return null;
-};
-
-const validatePluginCommandDefinitionLocal = (
-  command: OpenClawPluginCommandDefinition,
-): string | null => {
-  if (typeof command.handler !== "function") {
-    return "Command handler must be a function";
-  }
-  if (typeof command.name !== "string") {
-    return "Command name must be a string";
-  }
-  if (typeof command.description !== "string") {
-    return "Command description must be a string";
-  }
-  if (!command.description.trim()) {
-    return "Command description cannot be empty";
-  }
-  return validatePluginCommandName(command.name);
-};
-
 const FALLBACK_AGENT_ID = "main";
 const DEFAULT_MAIN_SESSION_KEY = "main";
 const VALID_AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -491,52 +424,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.diagnostics.push(diag);
   };
 
-  type CommandModule = typeof import("./commands.js");
-
-  type PendingCommandRegistration = {
-    record: PluginRecord;
-    command: OpenClawPluginCommandDefinition;
-    name: string;
-  };
-  const pendingCommandRegistrations: PendingCommandRegistration[] = [];
-  let pendingCommandFlushScheduled = false;
-
-  type CommandModuleState = {
-    module?: CommandModule;
-    promise?: Promise<CommandModule> | null;
-  };
-  const commandModuleStateKey = Symbol.for("openclaw.pluginCommandModuleState");
-  const commandModuleState = (() => {
-    const globalStore = globalThis as typeof globalThis & {
-      [commandModuleStateKey]?: CommandModuleState;
-    };
-    const existing = globalStore[commandModuleStateKey];
-    if (existing) {
-      return existing;
-    }
-    const nextState: CommandModuleState = {
-      module: undefined,
-      promise: null,
-    };
-    globalStore[commandModuleStateKey] = nextState;
-    return nextState;
-  })();
-
-  const ensureCommandModuleLoad = () => {
-    if (commandModuleState.module || commandModuleState.promise) {
-      return commandModuleState.promise;
-    }
-    commandModuleState.promise = import("./commands.js")
-      .then((module) => {
-        commandModuleState.module = module;
-        return module;
-      })
-      .finally(() => {
-        commandModuleState.promise = null;
-      });
-    return commandModuleState.promise;
-  };
-
   const finalizeCommandRegistration = (
     record: PluginRecord,
     command: OpenClawPluginCommandDefinition,
@@ -551,81 +438,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       rootDir: record.rootDir,
     });
   };
-
-  const flushPendingCommandRegistrations = (commandModule: CommandModule) => {
-    if (pendingCommandRegistrations.length === 0) {
-      return;
-    }
-
-    const pending = pendingCommandRegistrations.splice(0);
-    for (const entry of pending) {
-      const result = commandModule.registerPluginCommand(entry.record.id, entry.command, {
-        pluginName: entry.record.name,
-        pluginRoot: entry.record.rootDir,
-      });
-      if (!result.ok) {
-        pushDiagnostic({
-          level: "error",
-          pluginId: entry.record.id,
-          source: entry.record.source,
-          message: `command registration failed: ${result.error}`,
-        });
-        continue;
-      }
-      finalizeCommandRegistration(entry.record, entry.command, entry.name);
-    }
-  };
-
-  const handleCommandModuleLoadFailure = (error: unknown) => {
-    const message = error instanceof Error ? error.message || "Unknown error" : String(error);
-    const pending = pendingCommandRegistrations.splice(0);
-    for (const entry of pending) {
-      pushDiagnostic({
-        level: "error",
-        pluginId: entry.record.id,
-        source: entry.record.source,
-        message: `command registration failed: ${message}`,
-      });
-    }
-  };
-
-  const schedulePendingCommandFlush = () => {
-    if (pendingCommandFlushScheduled || pendingCommandRegistrations.length === 0) {
-      return;
-    }
-
-    const module = commandModuleState.module;
-    if (module) {
-      pendingCommandFlushScheduled = true;
-      try {
-        flushPendingCommandRegistrations(module);
-      } finally {
-        pendingCommandFlushScheduled = false;
-      }
-      return;
-    }
-
-    const modulePromise = ensureCommandModuleLoad();
-    if (!modulePromise) {
-      return;
-    }
-
-    pendingCommandFlushScheduled = true;
-    modulePromise
-      .then((loadedModule) => {
-        flushPendingCommandRegistrations(loadedModule);
-      })
-      .catch((error) => {
-        handleCommandModuleLoadFailure(error);
-      })
-      .finally(() => {
-        pendingCommandFlushScheduled = false;
-      });
-  };
-
-  if (!registryParams.suppressGlobalCommands) {
-    void ensureCommandModuleLoad();
-  }
 
   const normalizeResetSessionError = (error: unknown): string => {
     if (error instanceof Error) {
@@ -1203,29 +1015,41 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       return;
     }
 
+    const definitionError = validatePluginCommandDefinition(command);
+    if (definitionError) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `command registration failed: ${definitionError}`,
+      });
+      return;
+    }
+
     // For snapshot (non-activating) loads, record the command locally without touching the
     // global plugin command registry so running gateway commands stay intact.
-    // We still validate the command definition so diagnostics match the real activation path.
     // NOTE: cross-plugin duplicate command detection is intentionally skipped here because
     // snapshot registries are isolated and never write to the global command table. Conflicts
     // will surface when the plugin is loaded via the normal activation path at gateway startup.
     if (registryParams.suppressGlobalCommands) {
-      const validationError = validatePluginCommandDefinitionLocal(command);
-      if (validationError) {
-        pushDiagnostic({
-          level: "error",
-          pluginId: record.id,
-          source: record.source,
-          message: `command registration failed: ${validationError}`,
-        });
-        return;
-      }
       finalizeCommandRegistration(record, command, name);
       return;
     }
 
-    pendingCommandRegistrations.push({ record, command, name });
-    schedulePendingCommandFlush();
+    const result = registerPluginCommand(record.id, command, {
+      pluginName: record.name,
+      pluginRoot: record.rootDir,
+    });
+    if (!result.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `command registration failed: ${result.error ?? "Unknown error"}`,
+      });
+      return;
+    }
+    finalizeCommandRegistration(record, command, name);
   };
 
   const registerTypedHook = <K extends PluginHookName>(
