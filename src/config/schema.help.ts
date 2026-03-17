@@ -667,7 +667,7 @@ export const FIELD_HELP: Record<string, string> = {
   "tools.message.broadcast.enabled": "Enable broadcast action (default: true).",
   "tools.web.search.enabled": "Enable the web_search tool (requires a provider API key).",
   "tools.web.search.provider":
-    'Search provider ("brave", "firecrawl", "gemini", "grok", "kimi", or "perplexity"). Auto-detected from available API keys if omitted.',
+    'Search provider ("brave", "firecrawl", "gemini", "grok", "kimi", "perplexity", or "tavily"). Auto-detected from available API keys if omitted.',
   "tools.web.search.apiKey": "Brave Search API key (fallback: BRAVE_API_KEY env var).",
   "tools.web.search.maxResults": "Number of results to return (1-10).",
   "tools.web.search.timeoutSeconds": "Timeout in seconds for web_search requests.",
@@ -678,6 +678,10 @@ export const FIELD_HELP: Record<string, string> = {
     "Firecrawl API key for web search (fallback: FIRECRAWL_API_KEY env var).",
   "tools.web.search.firecrawl.baseUrl":
     'Firecrawl Search base URL override (default: "https://api.firecrawl.dev").',
+  "tools.web.search.tavily.apiKey":
+    "Tavily API key for web search (fallback: TAVILY_API_KEY env var).",
+  "tools.web.search.tavily.baseUrl":
+    'Tavily Search base URL override (default: "https://api.tavily.com").',
   "tools.web.search.gemini.apiKey":
     "Gemini API key for Google Search grounding (fallback: GEMINI_API_KEY env var).",
   "tools.web.search.gemini.model": 'Gemini model override (default: "gemini-2.5-flash").',

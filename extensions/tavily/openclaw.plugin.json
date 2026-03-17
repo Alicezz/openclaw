@@ -1,0 +1,11 @@
+{
+  "id": "tavily",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": { "type": "string" },
+      "baseUrl": { "type": "string" }
+    }
+  }
+}

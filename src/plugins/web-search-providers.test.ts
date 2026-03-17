@@ -20,6 +20,7 @@ describe("resolvePluginWebSearchProviders", () => {
       "xai:grok",
       "moonshot:kimi",
       "perplexity:perplexity",
+      "tavily:tavily",
       "firecrawl:firecrawl",
     ]);
   });
@@ -40,6 +41,7 @@ describe("resolvePluginWebSearchProviders", () => {
       "xai",
       "moonshot",
       "perplexity",
+      "tavily",
       "firecrawl",
     ]);
   });

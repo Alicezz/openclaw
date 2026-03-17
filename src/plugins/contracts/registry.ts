@@ -9,6 +9,7 @@ import mistralPlugin from "../../../extensions/mistral/index.js";
 import moonshotPlugin from "../../../extensions/moonshot/index.js";
 import openAIPlugin from "../../../extensions/openai/index.js";
 import perplexityPlugin from "../../../extensions/perplexity/index.js";
+import tavilyPlugin from "../../../extensions/tavily/index.js";
 import xaiPlugin from "../../../extensions/xai/index.js";
 import zaiPlugin from "../../../extensions/zai/index.js";
 import { createCapturedPluginRegistration } from "../captured-registration.js";
@@ -58,6 +59,7 @@ const bundledWebSearchPlugins: Array<RegistrablePlugin & { credentialValue: unkn
   { ...googlePlugin, credentialValue: "AIza-test" },
   { ...moonshotPlugin, credentialValue: "sk-test" },
   { ...perplexityPlugin, credentialValue: "pplx-test" },
+  { ...tavilyPlugin, credentialValue: "tvly-test" },
   { ...xaiPlugin, credentialValue: "xai-test" },
 ];
 

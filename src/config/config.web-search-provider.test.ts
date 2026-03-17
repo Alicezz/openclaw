@@ -143,6 +143,7 @@ describe("web search provider auto-detection", () => {
     delete process.env.MOONSHOT_API_KEY;
     delete process.env.PERPLEXITY_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.TAVILY_API_KEY;
     delete process.env.XAI_API_KEY;
     delete process.env.KIMI_API_KEY;
     delete process.env.MOONSHOT_API_KEY;
@@ -165,6 +166,11 @@ describe("web search provider auto-detection", () => {
   it("auto-detects gemini when only GEMINI_API_KEY is set", () => {
     process.env.GEMINI_API_KEY = "test-gemini-key"; // pragma: allowlist secret
     expect(resolveSearchProvider({})).toBe("gemini");
+  });
+
+  it("auto-detects tavily when only TAVILY_API_KEY is set", () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key"; // pragma: allowlist secret
+    expect(resolveSearchProvider({})).toBe("tavily");
   });
 
   it("auto-detects firecrawl when only FIRECRAWL_API_KEY is set", () => {

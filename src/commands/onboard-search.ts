@@ -16,7 +16,15 @@ export type SearchProvider = NonNullable<
   NonNullable<NonNullable<NonNullable<OpenClawConfig["tools"]>["web"]>["search"]>["provider"]
 >;
 
-const SEARCH_PROVIDER_IDS = ["brave", "firecrawl", "gemini", "grok", "kimi", "perplexity"] as const;
+const SEARCH_PROVIDER_IDS = [
+  "brave",
+  "firecrawl",
+  "gemini",
+  "grok",
+  "kimi",
+  "perplexity",
+  "tavily",
+] as const;
 
 function isSearchProvider(value: string): value is SearchProvider {
   return (SEARCH_PROVIDER_IDS as readonly string[]).includes(value);
@@ -122,10 +130,10 @@ export function applySearchKey(
       web: { ...config.tools?.web, search },
     },
   };
-  if (provider !== "firecrawl") {
+  if (provider !== "firecrawl" && provider !== "tavily") {
     return next;
   }
-  return enablePluginInConfig(next, "firecrawl").config;
+  return enablePluginInConfig(next, provider).config;
 }
 
 function applyProviderOnly(config: OpenClawConfig, provider: SearchProvider): OpenClawConfig {
@@ -143,10 +151,10 @@ function applyProviderOnly(config: OpenClawConfig, provider: SearchProvider): Op
       },
     },
   };
-  if (provider !== "firecrawl") {
+  if (provider !== "firecrawl" && provider !== "tavily") {
     return next;
   }
-  return enablePluginInConfig(next, "firecrawl").config;
+  return enablePluginInConfig(next, provider).config;
 }
 
 function preserveDisabledState(original: OpenClawConfig, result: OpenClawConfig): OpenClawConfig {
