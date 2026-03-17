@@ -19,7 +19,12 @@ function isRawToolCallBlock(block: unknown): block is RawToolCallBlock {
   const type = (block as { type?: unknown }).type;
   return (
     typeof type === "string" &&
-    (type === "toolCall" || type === "toolUse" || type === "functionCall")
+    (type === "toolCall" ||
+      type === "toolUse" ||
+      type === "functionCall" ||
+      type === "tool_use" ||
+      type === "tool_call" ||
+      type === "function_call")
   );
 }
 
@@ -257,7 +262,10 @@ export function repairToolCallInputs(
         if (
           (block as { type?: unknown }).type === "toolCall" ||
           (block as { type?: unknown }).type === "toolUse" ||
-          (block as { type?: unknown }).type === "functionCall"
+          (block as { type?: unknown }).type === "functionCall" ||
+          (block as { type?: unknown }).type === "tool_use" ||
+          (block as { type?: unknown }).type === "tool_call" ||
+          (block as { type?: unknown }).type === "function_call"
         ) {
           // Only sanitize (redact) sessions_spawn blocks; all others are passed through
           // unchanged to preserve provider-specific shapes (e.g. toolUse.input for Anthropic).
