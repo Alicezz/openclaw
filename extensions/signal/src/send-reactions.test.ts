@@ -1,29 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as configModule from "../../../src/config/config.js";
+import * as accountsModule from "./accounts.js";
+import * as clientAdapterModule from "./client-adapter.js";
 import { removeReactionSignal, sendReactionSignal } from "./send-reactions.js";
 
 const rpcMock = vi.fn();
 
-vi.mock("../../../src/config/config.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../src/config/config.js")>();
-  return {
-    ...actual,
-    loadConfig: () => ({}),
-  };
-});
-
-vi.mock("./accounts.js", () => ({
-  resolveSignalAccount: () => ({
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(configModule, "loadConfig").mockReturnValue({} as any);
+  vi.spyOn(accountsModule, "resolveSignalAccount").mockReturnValue({
     accountId: "default",
     enabled: true,
     baseUrl: "http://signal.local",
     configured: true,
     config: { account: "+15550001111" },
-  }),
-}));
-
-vi.mock("./client.js", () => ({
-  signalRpcRequest: (...args: unknown[]) => rpcMock(...args),
-}));
+  } as any);
+  vi.spyOn(clientAdapterModule, "signalRpcRequest").mockImplementation(rpcMock as any);
+});
 
 describe("sendReactionSignal", () => {
   beforeEach(() => {
