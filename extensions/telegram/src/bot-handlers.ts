@@ -1527,13 +1527,30 @@ export const registerTelegramHandlers = ({
 
       // Config-driven menu navigation for customCommands with menus.
       // First matching route wins (ordered by customCommands array position).
+      // Callbacks are scoped: we verify that the originating message's inline keyboard
+      // actually contains the callback_data before routing, so unrelated inline keyboards
+      // with colliding callback_data values are never intercepted.
       const menuCustomCommands = (telegramCfg.customCommands ?? []).filter(
         (c) => c.menus && c.routes,
       );
+      const cbMessageButtons: string[] = [];
+      const inlineKb = (
+        callbackMessage as {
+          reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> };
+        }
+      ).reply_markup?.inline_keyboard;
+      if (inlineKb) {
+        for (const row of inlineKb) {
+          for (const btn of row) {
+            if (btn.callback_data) cbMessageButtons.push(btn.callback_data);
+          }
+        }
+      }
       let menuHandled = false;
       for (const mc of menuCustomCommands) {
         const targetMenuName = mc.routes![data];
-        if (targetMenuName && mc.menus![targetMenuName]) {
+        // Only handle if the callback_data exists in the originating message's buttons
+        if (targetMenuName && mc.menus![targetMenuName] && cbMessageButtons.includes(data)) {
           const menu = mc.menus![targetMenuName];
           try {
             await editCallbackMessage(menu.text, {
