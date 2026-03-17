@@ -63,6 +63,8 @@ const mockPluginSideEffects = () => {
   }));
 };
 
+type SessionResetModule = typeof import("../gateway/session-reset-service.js");
+
 type SessionResetDeps = {
   loadConfig: ReturnType<typeof vi.fn>;
   performGatewaySessionReset: ReturnType<typeof vi.fn>;
@@ -88,6 +90,7 @@ function createRecord(): PluginRecord {
     channelIds: [],
     providerIds: [],
     speechProviderIds: [],
+    mediaUnderstandingProviderIds: [],
     gatewayMethods: [],
     cliCommands: [],
     services: [],
@@ -113,11 +116,17 @@ async function createApiHarness(options?: RegistryImportOptions) {
     })),
   };
 
-  const loadSessionResetModule =
+  const createSessionResetModuleMock = (): SessionResetModule => ({
+    archiveSessionTranscriptsForSession: vi.fn(() => []),
+    cleanupSessionBeforeMutation: vi.fn(async () => undefined),
+    emitSessionUnboundLifecycleEvent: vi.fn(async () => {}),
+    performGatewaySessionReset:
+      deps.performGatewaySessionReset as SessionResetModule["performGatewaySessionReset"],
+  });
+
+  const loadSessionResetModule: () => Promise<SessionResetModule> =
     typeof options?.sessionResetImportError === "undefined"
-      ? async () => ({
-          performGatewaySessionReset: deps.performGatewaySessionReset,
-        })
+      ? async () => createSessionResetModuleMock()
       : async () => {
           throw options.sessionResetImportError;
         };
