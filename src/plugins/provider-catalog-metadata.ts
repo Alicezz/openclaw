@@ -8,6 +8,8 @@ import type {
 const OPENAI_PROVIDER_ID = "openai";
 const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 const OPENAI_DIRECT_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
+const OPENAI_CODEX_GPT54_CONTEXT_TOKENS = 1_050_000;
+const OPENAI_CODEX_GPT54_MAX_TOKENS = 128_000;
 const SUPPRESSED_SPARK_PROVIDERS = new Set(["openai", "azure-openai-responses"]);
 
 export function resolveBundledProviderBuiltInModelSuppression(
@@ -93,6 +95,8 @@ export function augmentBundledProviderCatalog(
           ...openAiCodexGpt54Template,
           id: "gpt-5.4",
           name: "gpt-5.4",
+          contextWindow: OPENAI_CODEX_GPT54_CONTEXT_TOKENS,
+          maxTokens: OPENAI_CODEX_GPT54_MAX_TOKENS,
         }
       : undefined,
     openAiCodexSparkTemplate

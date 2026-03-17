@@ -232,6 +232,29 @@ function resolveExplicitModelWithRegistry(params: {
   return undefined;
 }
 
+function preferResolvedModel(
+  discoveredModel: Model<Api> | undefined,
+  dynamicModel: Model<Api> | undefined,
+): Model<Api> | undefined {
+  if (!dynamicModel) {
+    return discoveredModel;
+  }
+  if (!discoveredModel) {
+    return dynamicModel;
+  }
+  const dynamicContextWindow = dynamicModel.contextWindow ?? 0;
+  const discoveredContextWindow = discoveredModel.contextWindow ?? 0;
+  if (dynamicContextWindow > discoveredContextWindow) {
+    return dynamicModel;
+  }
+  const dynamicMaxTokens = dynamicModel.maxTokens ?? 0;
+  const discoveredMaxTokens = discoveredModel.maxTokens ?? 0;
+  if (dynamicMaxTokens > discoveredMaxTokens) {
+    return dynamicModel;
+  }
+  return discoveredModel;
+}
+
 export function resolveModelWithRegistry(params: {
   provider: string;
   modelId: string;
@@ -239,15 +262,11 @@ export function resolveModelWithRegistry(params: {
   cfg?: OpenClawConfig;
   agentDir?: string;
 }): Model<Api> | undefined {
+  const { provider, modelId, cfg, modelRegistry, agentDir } = params;
   const explicitModel = resolveExplicitModelWithRegistry(params);
   if (explicitModel?.kind === "suppressed") {
     return undefined;
   }
-  if (explicitModel?.kind === "resolved") {
-    return explicitModel.model;
-  }
-
-  const { provider, modelId, cfg, modelRegistry, agentDir } = params;
   const providerConfig = resolveConfiguredProviderConfig(cfg, provider);
   const pluginDynamicModel = runProviderDynamicModel({
     provider,
@@ -261,13 +280,12 @@ export function resolveModelWithRegistry(params: {
       providerConfig,
     },
   });
-  if (pluginDynamicModel) {
-    return normalizeResolvedModel({
-      provider,
-      cfg,
-      agentDir,
-      model: pluginDynamicModel,
-    });
+  const preferredResolvedModel =
+    explicitModel?.kind === "resolved"
+      ? preferResolvedModel(explicitModel.model, pluginDynamicModel)
+      : pluginDynamicModel;
+  if (preferredResolvedModel) {
+    return preferredResolvedModel;
   }
 
   const configuredModel = providerConfig?.models?.find((candidate) => candidate.id === modelId);
