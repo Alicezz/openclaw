@@ -390,7 +390,6 @@ export function createEmptyPluginRegistry(): PluginRegistry {
 export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const registry = createEmptyPluginRegistry();
   const coreGatewayMethods = new Set(Object.keys(registryParams.coreGatewayHandlers ?? {}));
-  const canGatewayHandleSessionReset = coreGatewayMethods.has("sessions.reset");
   const isGatewayRuntimeAvailable = () => {
     const subagentRuntime = registryParams.runtime.subagent;
     return (
@@ -407,17 +406,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const gatewayResetUnavailableError =
     "resetSession is only available while the gateway is running.";
   let sessionResetModuleCache: GatewaySessionResetModule | null = null;
-  const loadSessionResetModule =
-    canGatewayHandleSessionReset && registryParams.loadSessionResetModule
-      ? registryParams.loadSessionResetModule
-      : canGatewayHandleSessionReset
-        ? async () => {
-            if (!sessionResetModuleCache) {
-              sessionResetModuleCache = await import("../gateway/session-reset-service.js");
-            }
-            return sessionResetModuleCache;
-          }
-        : null;
+  const loadSessionResetModule = (() => {
+    if (registryParams.loadSessionResetModule) {
+      return registryParams.loadSessionResetModule;
+    }
+    return async () => {
+      if (!sessionResetModuleCache) {
+        sessionResetModuleCache = await import("../gateway/session-reset-service.js");
+      }
+      return sessionResetModuleCache;
+    };
+  })();
   const resetSessionsInFlight = new Set<string>();
 
   const pushDiagnostic = (diag: PluginDiagnostic) => {
@@ -459,7 +458,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const createPluginResetSession = (params: {
     pluginId: string;
     loadConfig: () => OpenClawConfig;
-    loadSessionResetModule: (() => Promise<GatewaySessionResetModule>) | null;
+    loadSessionResetModule: () => Promise<GatewaySessionResetModule>;
     isGatewayRuntimeAvailable: () => boolean;
   }): NonNullable<OpenClawPluginApi["resetSession"]> => {
     return async (key, reason = "new") => {
@@ -476,7 +475,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
           throw new Error("resetSession key must be a non-empty string");
         }
 
-        if (!params.isGatewayRuntimeAvailable() || !params.loadSessionResetModule) {
+        if (!params.isGatewayRuntimeAvailable()) {
           return createResetSessionFailure(trimmedKey, gatewayResetUnavailableError);
         }
 

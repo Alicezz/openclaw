@@ -298,19 +298,6 @@ describe("plugin resetSession", () => {
       expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
     });
 
-    it("fails fast when the gateway does not expose sessions.reset", async () => {
-      const { api, deps } = await createApiHarness({ gatewaySupportsReset: false });
-
-      await expect(api.resetSession?.("agent:main:demo")).resolves.toEqual({
-        ok: false,
-        key: "agent:main:demo",
-        error: "resetSession is only available while the gateway is running.",
-      });
-
-      expect(deps.loadConfig).not.toHaveBeenCalled();
-      expect(deps.performGatewaySessionReset).not.toHaveBeenCalled();
-    });
-
     it("does not attempt to import the reset service when the gateway is unavailable", async () => {
       const { api } = await createApiHarness({
         runtimeAvailable: false,
@@ -322,6 +309,18 @@ describe("plugin resetSession", () => {
         key: "agent:main:demo",
         error: "resetSession is only available while the gateway is running.",
       });
+    });
+
+    it("still resolves the reset service when the registry was constructed without sessions.reset", async () => {
+      const { api, deps } = await createApiHarness({ gatewaySupportsReset: false });
+
+      await expect(api.resetSession?.("agent:main:demo")).resolves.toEqual({
+        ok: true,
+        key: "agent:main:demo",
+        sessionId: "session-default",
+      });
+
+      expect(deps.performGatewaySessionReset).toHaveBeenCalledTimes(1);
     });
   });
 
