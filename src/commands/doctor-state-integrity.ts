@@ -10,6 +10,7 @@ import {
   isPrimarySessionTranscriptFileName,
   loadSessionStore,
   resolveMainSessionKey,
+  resolveSessionFilePath,
   resolveSessionTranscriptsDirForAgent,
   resolveSessionTranscriptPathInDir,
   resolveStorePath,
@@ -40,6 +41,19 @@ function existsFile(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveExistingSessionTranscriptPath(
+  sessionId: string,
+  entry: { sessionFile?: string } | undefined,
+  sessionsDir: string,
+): string {
+  const configuredPath = resolveSessionFilePath(sessionId, entry, { sessionsDir });
+  if (existsFile(configuredPath)) {
+    return configuredPath;
+  }
+  const defaultPath = resolveSessionTranscriptPathInDir(sessionId, sessionsDir);
+  return existsFile(defaultPath) ? defaultPath : configuredPath;
 }
 
 function canWriteDir(dir: string): boolean {
@@ -711,7 +725,7 @@ export async function noteStateIntegrity(
       if (!sessionId) {
         return false;
       }
-      const transcriptPath = resolveSessionTranscriptPathInDir(sessionId, sessionsDir);
+      const transcriptPath = resolveExistingSessionTranscriptPath(sessionId, entry, sessionsDir);
       return !existsFile(transcriptPath);
     });
     if (missing.length > 0) {
@@ -728,7 +742,11 @@ export async function noteStateIntegrity(
     const mainKey = resolveMainSessionKey(cfg);
     const mainEntry = store[mainKey];
     if (mainEntry?.sessionId) {
-      const transcriptPath = resolveSessionTranscriptPathInDir(mainEntry.sessionId, sessionsDir);
+      const transcriptPath = resolveExistingSessionTranscriptPath(
+        mainEntry.sessionId,
+        mainEntry,
+        sessionsDir,
+      );
       if (!existsFile(transcriptPath)) {
         warnings.push(
           `- Main session transcript missing (${shortenHomePath(transcriptPath)}). History will appear to reset.`,
@@ -752,7 +770,7 @@ export async function noteStateIntegrity(
       }
       try {
         referencedTranscriptPaths.add(
-          path.resolve(resolveSessionTranscriptPathInDir(entry.sessionId, sessionsDir)),
+          path.resolve(resolveExistingSessionTranscriptPath(entry.sessionId, entry, sessionsDir)),
         );
       } catch {
         // ignore invalid legacy paths
