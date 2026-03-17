@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { setGlobalDispatcher, EnvHttpProxyAgent } from "undici";
+setGlobalDispatcher(new EnvHttpProxyAgent());
+
 import module from "node:module";
 import { fileURLToPath } from "node:url";
 

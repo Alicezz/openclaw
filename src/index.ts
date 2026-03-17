@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { setGlobalDispatcher, EnvHttpProxyAgent } from "undici";
+setGlobalDispatcher(new EnvHttpProxyAgent());
+
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { formatUncaughtError } from "./infra/errors.js";
