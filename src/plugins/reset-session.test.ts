@@ -105,6 +105,11 @@ const mockPluginSideEffects = () => {
   vi.doMock("../auto-reply/reply/get-reply-directives.js", () => ({
     resolveReplyDirectives: vi.fn(async () => ({ kind: "reply", reply: undefined })),
   }));
+
+  vi.doMock("./web-search-providers.js", () => ({
+    resolvePluginWebSearchProviders: () => [],
+    resolveRuntimeWebSearchProviders: () => [],
+  }));
 };
 
 type SessionResetModule = typeof import("../gateway/session-reset-service.js");
@@ -255,6 +260,7 @@ afterEach(() => {
   vi.doUnmock("../auto-reply/reply/get-reply-directives.js");
   vi.doUnmock("../gateway/session-reset-service.js");
   vi.doUnmock("openclaw/plugin-sdk/text-runtime");
+  vi.doUnmock("./web-search-providers.js");
 });
 
 describe("plugin resetSession", () => {
