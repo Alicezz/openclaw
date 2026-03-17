@@ -1591,6 +1591,83 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("preserves resolveSenderNames opt-out for DM and group display lookups", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+    const contactGet = vi.fn().mockResolvedValue({ data: { user: { name: "Sender Name" } } });
+    const chatGet = vi.fn().mockResolvedValue({ code: 0, data: { name: "Ops Group" } });
+    const chatMembersGet = vi.fn().mockResolvedValue({
+      code: 0,
+      data: { items: [{ member_id: "ou-dm-user", name: "DM Display" }] },
+    });
+    mockCreateFeishuClient.mockReturnValue({
+      contact: { user: { get: contactGet } },
+      im: {
+        chat: { get: chatGet },
+        chatMembers: { get: chatMembersGet },
+      },
+    });
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          resolveSenderNames: false,
+          groups: {
+            "oc-group": {
+              requireMention: false,
+            },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-dm-user" } },
+        message: {
+          message_id: "msg-dm-opt-out",
+          chat_id: "oc-dm",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello dm" }),
+        },
+      },
+    });
+
+    expect(chatMembersGet).not.toHaveBeenCalled();
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        BodyForAgent: expect.stringContaining("ou-dm-user: hello dm"),
+      }),
+    );
+
+    mockFinalizeInboundContext.mockClear();
+    mockDispatchReplyFromConfig.mockClear();
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-group-user" } },
+        message: {
+          message_id: "msg-group-opt-out",
+          chat_id: "oc-group",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello group" }),
+        },
+      },
+    });
+
+    expect(contactGet).not.toHaveBeenCalled();
+    expect(chatGet).not.toHaveBeenCalled();
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        BodyForAgent: expect.stringContaining("ou-group-user: hello group"),
+      }),
+    );
+  });
+
   it("dispatches once and appends permission notice to the main agent body", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
     mockCreateFeishuClient.mockReturnValue({

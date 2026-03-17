@@ -1198,7 +1198,8 @@ export async function handleFeishuMessage(params: {
   // - direct chat: members-only lookup for stable peer naming
   // - group chat: contact user lookup (with user_id/open_id fallback)
   let permissionErrorForAgent: PermissionError | undefined;
-  if (isDirect) {
+  const resolveSenderNamesEnabled = feishuCfg?.resolveSenderNames ?? true;
+  if (isDirect && resolveSenderNamesEnabled) {
     const directName = await resolveFeishuDirectNameFromChatMember({
       account,
       chatId: ctx.chatId,
@@ -1216,7 +1217,7 @@ export async function handleFeishuMessage(params: {
     }
   }
 
-  if (isGroup && (feishuCfg?.resolveSenderNames ?? true)) {
+  if (isGroup && resolveSenderNamesEnabled) {
     const senderResult = await resolveFeishuSenderName({
       account,
       senderId: ctx.senderOpenId,
@@ -1241,11 +1242,13 @@ export async function handleFeishuMessage(params: {
   const groupDisplayName = isGroup
     ? buildFeishuGroupDisplayName({
         chatId: ctx.chatId,
-        groupName: await resolveFeishuGroupName({
-          account,
-          chatId: ctx.chatId,
-          log,
-        }),
+        groupName: resolveSenderNamesEnabled
+          ? await resolveFeishuGroupName({
+              account,
+              chatId: ctx.chatId,
+              log,
+            })
+          : undefined,
       })
     : undefined;
 
