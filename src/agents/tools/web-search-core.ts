@@ -1600,6 +1600,7 @@ type ParallelSearchResult = {
   title?: string;
   url?: string;
   text?: string;
+  excerpts?: string[];
 };
 
 type ParallelSearchResponse = {
@@ -1640,7 +1641,7 @@ async function runParallelSearch(params: {
       const results = (data.results ?? []).map((r) => ({
         title: wrapWebContent(r.title ?? "", "web_search"),
         url: r.url ?? "",
-        text: wrapWebContent(r.text ?? "", "web_search"),
+        text: wrapWebContent(r.text || (r.excerpts ?? []).join("\n\n") || "", "web_search"),
       }));
       const sliced = params.count ? results.slice(0, params.count) : results;
       return sliced;
