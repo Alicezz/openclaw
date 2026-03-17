@@ -892,9 +892,12 @@ export const registerTelegramNativeCommands = ({
         });
       }
 
-      // Register bot.command handlers for customCommands with menus (multi-level menu support)
+      // Register bot.command handlers for customCommands with menus (multi-level menu support).
+      // Cross-reference against the validated customCommands set so entries rejected as
+      // duplicates or native-command conflicts do not install active handlers.
+      const validCommandNames = new Set(customCommands.map((c) => c.command));
       const menuCommands = (telegramCfg.customCommands ?? []).filter(
-        (c) => c.menus && c.menus.main,
+        (c) => c.menus && c.menus.main && validCommandNames.has(c.command),
       );
       for (const mc of menuCommands) {
         bot.command(mc.command, async (ctx: TelegramNativeCommandContext) => {

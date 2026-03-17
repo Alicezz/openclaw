@@ -1526,10 +1526,11 @@ export const registerTelegramHandlers = ({
       }
 
       // Config-driven menu navigation for customCommands with menus.
-      // First matching route wins (ordered by customCommands array position).
-      // Callbacks are scoped: we verify that the originating message's inline keyboard
-      // actually contains the callback_data before routing, so unrelated inline keyboards
-      // with colliding callback_data values are never intercepted.
+      // Callbacks are scoped to their originating command: we collect all known
+      // callback_data values for a command (from its menus + routes) and check
+      // that every button on the originating message belongs to that command.
+      // This prevents unrelated inline keyboards (or other customCommands) with
+      // colliding callback_data values from being intercepted.
       const menuCustomCommands = (telegramCfg.customCommands ?? []).filter(
         (c) => c.menus && c.routes,
       );
@@ -1549,8 +1550,21 @@ export const registerTelegramHandlers = ({
       let menuHandled = false;
       for (const mc of menuCustomCommands) {
         const targetMenuName = mc.routes![data];
-        // Only handle if the callback_data exists in the originating message's buttons
-        if (targetMenuName && mc.menus![targetMenuName] && cbMessageButtons.includes(data)) {
+        if (!targetMenuName || !mc.menus![targetMenuName]) continue;
+        // Build the set of all callback_data values owned by this command
+        const ownedCallbackData = new Set<string>(Object.keys(mc.routes!));
+        for (const menu of Object.values(mc.menus!)) {
+          for (const row of menu.buttons) {
+            for (const btn of row) {
+              ownedCallbackData.add(btn.callback_data);
+            }
+          }
+        }
+        // Only handle if every button on the originating message belongs to this command
+        if (
+          cbMessageButtons.length > 0 &&
+          cbMessageButtons.every((cb) => ownedCallbackData.has(cb))
+        ) {
           const menu = mc.menus![targetMenuName];
           try {
             await editCallbackMessage(menu.text, {
