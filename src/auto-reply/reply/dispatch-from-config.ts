@@ -46,6 +46,7 @@ import { getReplyFromConfig } from "../reply.js";
 import type { FinalizedMsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { formatAbortReplyText, tryFastAbortFromMessage } from "./abort.js";
+import { getGlobalChannelChatBroadcast } from "./channel-chat-broadcast.js";
 import { shouldBypassAcpDispatchForCommand, tryDispatchAcpReply } from "./dispatch-acp.js";
 import { shouldSkipDuplicateInbound } from "./inbound-dedupe.js";
 import type { ReplyDispatcher, ReplyDispatchKind } from "./reply-dispatcher.js";
@@ -179,6 +180,27 @@ export async function dispatchReplyFromConfig(params: {
       state: "idle",
       reason,
     });
+  };
+
+  // Notify web UI that session history changed (external channel messages only).
+  // Web UI messages (provider === "webchat") already broadcast via createAgentEventHandler.
+  // Guard on ctx.Provider (not ctx.Surface) so relayed external turns where
+  // Surface is "webchat" but Provider is a real channel still trigger the broadcast.
+  const notifyWebUi = () => {
+    const channelChatBroadcast = getGlobalChannelChatBroadcast();
+    const provider = normalizeMessageChannel(ctx.Provider);
+    if (channelChatBroadcast && sessionKey && provider !== INTERNAL_MESSAGE_CHANNEL) {
+      channelChatBroadcast(
+        "chat",
+        {
+          runId: `channel-${messageId ?? `ts-${Date.now()}`}`,
+          sessionKey,
+          seq: 0,
+          state: "final",
+        },
+        sessionKey,
+      );
+    }
   };
 
   if (shouldSkipDuplicateInbound(ctx)) {
@@ -452,6 +474,7 @@ export async function dispatchReplyFromConfig(params: {
       counts.final += routedFinalCount;
       recordProcessed("completed", { reason: "fast_abort" });
       markIdle("message_completed");
+      notifyWebUi();
       return { queuedFinal, counts };
     }
 
@@ -498,6 +521,7 @@ export async function dispatchReplyFromConfig(params: {
       markIdle,
     });
     if (acpDispatch) {
+      notifyWebUi();
       return acpDispatch;
     }
 
@@ -746,6 +770,7 @@ export async function dispatchReplyFromConfig(params: {
       pluginFallbackReason ? { reason: pluginFallbackReason } : undefined,
     );
     markIdle("message_completed");
+    notifyWebUi();
     return { queuedFinal, counts };
   } catch (err) {
     recordProcessed("error", { error: String(err) });
