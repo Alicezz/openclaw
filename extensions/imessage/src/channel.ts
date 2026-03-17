@@ -3,7 +3,8 @@ import {
   buildAccountScopedDmSecurityPolicy,
   collectAllowlistProviderRestrictSendersWarnings,
 } from "openclaw/plugin-sdk/channel-config-helpers";
-import { buildAgentSessionKey, type RoutePeer } from "openclaw/plugin-sdk/core";
+import { resolveOutboundSendDep } from "openclaw/plugin-sdk/channel-runtime";
+import { buildOutboundBaseSessionKey } from "openclaw/plugin-sdk/core";
 import {
   collectStatusIssuesFromLastError,
   DEFAULT_ACCOUNT_ID,
@@ -14,6 +15,7 @@ import {
   resolveIMessageGroupToolPolicy,
   type ChannelPlugin,
 } from "openclaw/plugin-sdk/imessage";
+import { type RoutePeer } from "openclaw/plugin-sdk/routing";
 import { buildPassiveProbedChannelStatusSummary } from "../../shared/channel-status-summary.js";
 import { resolveIMessageAccount, type ResolvedIMessageAccount } from "./accounts.js";
 import { getIMessageRuntime } from "./runtime.js";
@@ -34,14 +36,7 @@ function buildIMessageBaseSessionKey(params: {
   accountId?: string | null;
   peer: RoutePeer;
 }) {
-  return buildAgentSessionKey({
-    agentId: params.agentId,
-    channel: "imessage",
-    accountId: params.accountId,
-    peer: params.peer,
-    dmScope: params.cfg.session?.dmScope ?? "main",
-    identityLinks: params.cfg.session?.identityLinks,
-  });
+  return buildOutboundBaseSessionKey({ ...params, channel: "imessage" });
 }
 
 function resolveIMessageOutboundSessionRoute(params: {
@@ -178,7 +173,9 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount> = {
     chunkerMode: "text",
     textChunkLimit: 4000,
     sendText: async ({ cfg, to, text, accountId, deps, replyToId }) => {
-      const result = await (await loadIMessageChannelRuntime()).sendIMessageOutbound({
+      const result = await (
+        await loadIMessageChannelRuntime()
+      ).sendIMessageOutbound({
         cfg,
         to,
         text,
@@ -189,7 +186,9 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount> = {
       return { channel: "imessage", ...result };
     },
     sendMedia: async ({ cfg, to, text, mediaUrl, mediaLocalRoots, accountId, deps, replyToId }) => {
-      const result = await (await loadIMessageChannelRuntime()).sendIMessageOutbound({
+      const result = await (
+        await loadIMessageChannelRuntime()
+      ).sendIMessageOutbound({
         cfg,
         to,
         text,
