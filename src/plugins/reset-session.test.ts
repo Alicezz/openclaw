@@ -86,6 +86,7 @@ function createRecord(): PluginRecord {
     hookNames: [],
     channelIds: [],
     providerIds: [],
+    speechProviderIds: [],
     gatewayMethods: [],
     cliCommands: [],
     services: [],
