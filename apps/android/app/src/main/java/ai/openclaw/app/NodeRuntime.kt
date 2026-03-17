@@ -399,9 +399,8 @@ class NodeRuntime(
   }
 
   private fun applyMainSessionKey(candidate: String?) {
-    val trimmed = normalizeMainKey(candidate) ?: return
-    if (isCanonicalMainSessionKey(_mainSessionKey.value)) return
-    if (_mainSessionKey.value == trimmed) return
+    val trimmed = normalizeMainKey(candidate)
+    if (!shouldReplaceMainSessionKey(_mainSessionKey.value, trimmed)) return
     _mainSessionKey.value = trimmed
     talkMode.setMainSessionKey(trimmed)
     chat.applyMainSessionKey(trimmed)
