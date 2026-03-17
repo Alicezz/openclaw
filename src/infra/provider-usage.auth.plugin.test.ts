@@ -7,12 +7,14 @@ vi.mock("../plugins/provider-runtime.js", () => ({
     resolveProviderUsageAuthWithPluginMock(...args),
 }));
 
-import { resolveProviderAuths } from "./provider-usage.auth.js";
+let resolveProviderAuths: typeof import("./provider-usage.auth.js").resolveProviderAuths;
 
 describe("resolveProviderAuths plugin seam", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
     resolveProviderUsageAuthWithPluginMock.mockReset();
     resolveProviderUsageAuthWithPluginMock.mockResolvedValue(null);
+    ({ resolveProviderAuths } = await import("./provider-usage.auth.js"));
   });
 
   it("skips plugin resolution when built-in auth is unavailable", async () => {

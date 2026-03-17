@@ -14,8 +14,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import WebSocket from "ws";
-import type { ClientOptions } from "ws";
+import WebSocket, { type ClientOptions } from "ws";
 import { resolveProviderAttributionHeaders } from "./provider-attribution.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,10 +308,7 @@ export class OpenAIWebSocketManager extends EventEmitter<InternalEvents> {
   private readonly wsUrl: string;
   private readonly maxRetries: number;
   private readonly backoffDelaysMs: readonly number[];
-  private readonly socketFactory: (
-    url: string,
-    options: ClientOptions,
-  ) => WebSocket;
+  private readonly socketFactory: (url: string, options: ClientOptions) => WebSocket;
 
   constructor(options: OpenAIWebSocketManagerOptions = {}) {
     super();

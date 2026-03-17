@@ -1,3 +1,4 @@
+import amazonBedrockPlugin from "../../../extensions/amazon-bedrock/index.js";
 import anthropicPlugin from "../../../extensions/anthropic/index.js";
 import bravePlugin from "../../../extensions/brave/index.js";
 import byteplusPlugin from "../../../extensions/byteplus/index.js";
@@ -35,8 +36,9 @@ import volcenginePlugin from "../../../extensions/volcengine/index.js";
 import xaiPlugin from "../../../extensions/xai/index.js";
 import xiaomiPlugin from "../../../extensions/xiaomi/index.js";
 import zaiPlugin from "../../../extensions/zai/index.js";
-import { createCapturedPluginRegistration } from "../../test-utils/plugin-registration.js";
+import { createCapturedPluginRegistration } from "../captured-registration.js";
 import type {
+  ImageGenerationProviderPlugin,
   MediaUnderstandingProviderPlugin,
   ProviderPlugin,
   SpeechProviderPlugin,
@@ -62,17 +64,20 @@ type WebSearchProviderContractEntry = CapabilityContractEntry<WebSearchProviderP
 type SpeechProviderContractEntry = CapabilityContractEntry<SpeechProviderPlugin>;
 type MediaUnderstandingProviderContractEntry =
   CapabilityContractEntry<MediaUnderstandingProviderPlugin>;
+type ImageGenerationProviderContractEntry = CapabilityContractEntry<ImageGenerationProviderPlugin>;
 
 type PluginRegistrationContractEntry = {
   pluginId: string;
   providerIds: string[];
   speechProviderIds: string[];
   mediaUnderstandingProviderIds: string[];
+  imageGenerationProviderIds: string[];
   webSearchProviderIds: string[];
   toolNames: string[];
 };
 
 const bundledProviderPlugins: RegistrablePlugin[] = [
+  amazonBedrockPlugin,
   anthropicPlugin,
   byteplusPlugin,
   cloudflareAiGatewayPlugin,
@@ -128,6 +133,8 @@ const bundledMediaUnderstandingPlugins: RegistrablePlugin[] = [
   zaiPlugin,
 ];
 
+const bundledImageGenerationPlugins: RegistrablePlugin[] = [googlePlugin, openAIPlugin];
+
 function captureRegistrations(plugin: RegistrablePlugin) {
   const captured = createCapturedPluginRegistration();
   plugin.register(captured.api);
@@ -152,6 +159,39 @@ export const providerContractRegistry: ProviderContractEntry[] = buildCapability
   select: (captured) => captured.providers,
 });
 
+export const uniqueProviderContractProviders: ProviderPlugin[] = [
+  ...new Map(providerContractRegistry.map((entry) => [entry.provider.id, entry.provider])).values(),
+];
+
+export const providerContractPluginIds = [
+  ...new Set(providerContractRegistry.map((entry) => entry.pluginId)),
+].toSorted((left, right) => left.localeCompare(right));
+
+export const providerContractCompatPluginIds = providerContractPluginIds.map((pluginId) =>
+  pluginId === "kimi-coding" ? "kimi" : pluginId,
+);
+
+export function requireProviderContractProvider(providerId: string): ProviderPlugin {
+  const provider = uniqueProviderContractProviders.find((entry) => entry.id === providerId);
+  if (!provider) {
+    throw new Error(`provider contract entry missing for ${providerId}`);
+  }
+  return provider;
+}
+
+export function resolveProviderContractProvidersForPluginIds(
+  pluginIds: readonly string[],
+): ProviderPlugin[] {
+  const allowed = new Set(pluginIds);
+  return [
+    ...new Map(
+      providerContractRegistry
+        .filter((entry) => allowed.has(entry.pluginId))
+        .map((entry) => [entry.provider.id, entry.provider]),
+    ).values(),
+  ];
+}
+
 export const webSearchProviderContractRegistry: WebSearchProviderContractEntry[] =
   bundledWebSearchPlugins.flatMap((plugin) => {
     const captured = captureRegistrations(plugin);
@@ -174,12 +214,19 @@ export const mediaUnderstandingProviderContractRegistry: MediaUnderstandingProvi
     select: (captured) => captured.mediaUnderstandingProviders,
   });
 
+export const imageGenerationProviderContractRegistry: ImageGenerationProviderContractEntry[] =
+  buildCapabilityContractRegistry({
+    plugins: bundledImageGenerationPlugins,
+    select: (captured) => captured.imageGenerationProviders,
+  });
+
 const bundledPluginRegistrationList = [
   ...new Map(
     [
       ...bundledProviderPlugins,
       ...bundledSpeechPlugins,
       ...bundledMediaUnderstandingPlugins,
+      ...bundledImageGenerationPlugins,
       ...bundledWebSearchPlugins,
     ].map((plugin) => [plugin.id, plugin]),
   ).values(),
@@ -195,6 +242,7 @@ export const pluginRegistrationContractRegistry: PluginRegistrationContractEntry
       mediaUnderstandingProviderIds: captured.mediaUnderstandingProviders.map(
         (provider) => provider.id,
       ),
+      imageGenerationProviderIds: captured.imageGenerationProviders.map((provider) => provider.id),
       webSearchProviderIds: captured.webSearchProviders.map((provider) => provider.id),
       toolNames: captured.tools.map((tool) => tool.name),
     };

@@ -317,6 +317,7 @@ describe("acp session UX bridge behavior", () => {
       "low",
       "medium",
       "high",
+      "xhigh",
       "adaptive",
     ]);
     expect(result.configOptions).toEqual(

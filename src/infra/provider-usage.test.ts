@@ -11,6 +11,9 @@ import {
   loadProviderUsageSummary,
   type UsageSummary,
 } from "./provider-usage.js";
+import { loadUsageWithAuth, usageNow } from "./provider-usage.test-support.js";
+
+const WINDOWS_CI_TIMEOUT_MS = process.platform === "win32" ? 240_000 : 120_000;
 
 vi.mock("../plugins/provider-runtime.js", () => ({
   resetProviderRuntimeHookCacheForTest: vi.fn(),
@@ -18,22 +21,6 @@ vi.mock("../plugins/provider-runtime.js", () => ({
 }));
 
 const minimaxRemainsEndpoint = "api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
-const usageNow = Date.UTC(2026, 0, 7, 0, 0, 0);
-type ProviderAuth = NonNullable<
-  NonNullable<Parameters<typeof loadProviderUsageSummary>[0]>["auth"]
->[number];
-const WINDOWS_CI_TIMEOUT_MS = process.platform === "win32" ? 240_000 : 120_000;
-
-async function loadUsageWithAuth(
-  auth: ProviderAuth[],
-  mockFetch: ReturnType<typeof createProviderUsageFetch>,
-) {
-  return await loadProviderUsageSummary({
-    now: usageNow,
-    auth,
-    fetch: mockFetch as unknown as typeof fetch,
-  });
-}
 
 function expectSingleAnthropicProvider(summary: UsageSummary) {
   expect(summary.providers).toHaveLength(1);
@@ -61,7 +48,11 @@ async function expectMinimaxUsage(
 ) {
   const mockFetch = createMinimaxOnlyFetch(payload);
 
-  const summary = await loadUsageWithAuth([{ provider: "minimax", token: "token-1b" }], mockFetch);
+  const summary = await loadUsageWithAuth(
+    loadProviderUsageSummary,
+    [{ provider: "minimax", token: "token-1b" }],
+    mockFetch,
+  );
 
   const minimax = summary.providers.find((p) => p.provider === "minimax");
   expect(minimax?.windows[0]?.usedPercent).toBe(expected.usedPercent);
@@ -174,6 +165,7 @@ describe("provider usage loading", () => {
       });
 
       const summary = await loadUsageWithAuth(
+        loadProviderUsageSummary,
         [
           { provider: "anthropic", token: "token-1" },
           { provider: "minimax", token: "token-1b" },
@@ -354,6 +346,7 @@ describe("provider usage loading", () => {
       });
 
       const summary = await loadUsageWithAuth(
+        loadProviderUsageSummary,
         [{ provider: "anthropic", token: "sk-ant-oauth-1" }],
         mockFetch,
       );
