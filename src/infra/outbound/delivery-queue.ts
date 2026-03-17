@@ -10,6 +10,7 @@ import type { OutboundChannel } from "./targets.js";
 const QUEUE_DIRNAME = "delivery-queue";
 const FAILED_DIRNAME = "failed";
 const MAX_RETRIES = 5;
+const MAX_RECOVERY_ENTRY_AGE_MS = 10 * 60_000;
 
 /** Backoff delays in milliseconds indexed by retry count (1-based). */
 const BACKOFF_MS: readonly number[] = [
@@ -237,6 +238,14 @@ export async function moveToFailed(id: string, stateDir?: string): Promise<void>
   await fs.promises.rename(src, dest);
 }
 
+export function isDeliveryExpired(
+  entry: Pick<QueuedDelivery, "enqueuedAt">,
+  now = Date.now(),
+  maxAgeMs = MAX_RECOVERY_ENTRY_AGE_MS,
+): boolean {
+  return now - entry.enqueuedAt > maxAgeMs;
+}
+
 /** Compute the backoff delay in ms for a given retry count. */
 export function computeBackoffMs(retryCount: number): number {
   if (retryCount <= 0) {
@@ -361,6 +370,19 @@ export async function recoverPendingDeliveries(opts: {
       continue;
     }
 
+    if (isDeliveryExpired(entry, now)) {
+      opts.log.warn(
+        `Delivery ${entry.id} is stale after ${now - entry.enqueuedAt}ms — moving to failed/ without retry`,
+      );
+      try {
+        await moveToFailed(entry.id, opts.stateDir);
+      } catch (err) {
+        opts.log.error(`Failed to move stale entry ${entry.id} to failed/: ${String(err)}`);
+      }
+      failed += 1;
+      continue;
+    }
+
     const retryEligibility = isEntryEligibleForRecoveryRetry(entry, now);
     if (!retryEligibility.eligible) {
       deferredBackoff += 1;
@@ -417,7 +439,7 @@ export async function recoverPendingDeliveries(opts: {
   return { recovered, failed, skippedMaxRetries, deferredBackoff };
 }
 
-export { MAX_RETRIES };
+export { MAX_RECOVERY_ENTRY_AGE_MS, MAX_RETRIES };
 
 const PERMANENT_ERROR_PATTERNS: readonly RegExp[] = [
   /no conversation reference found/i,

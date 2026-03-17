@@ -535,7 +535,7 @@ describe("delivery-queue", () => {
         { channel: "whatsapp", to: "+1", payloads: [{ text: "later" }] },
         tmpDir,
       );
-      setEntryState(id, { retryCount: 3, lastAttemptAt: start.getTime() });
+      setEntryState(id, { retryCount: 1, lastAttemptAt: start.getTime() });
 
       const firstDeliver = vi.fn().mockResolvedValue([]);
       const firstRun = await runRecovery({ deliver: firstDeliver, maxRecoveryMs: 60_000 });
@@ -547,7 +547,7 @@ describe("delivery-queue", () => {
       });
       expect(firstDeliver).not.toHaveBeenCalled();
 
-      vi.setSystemTime(new Date(start.getTime() + 600_000 + 1));
+      vi.setSystemTime(new Date(start.getTime() + 25_000 + 1));
       const secondDeliver = vi.fn().mockResolvedValue([]);
       const secondRun = await runRecovery({ deliver: secondDeliver, maxRecoveryMs: 60_000 });
       expect(secondRun.result).toEqual({
