@@ -505,7 +505,7 @@ describe("local media root guard", () => {
   });
 });
 
-describe("animated image optimization skip", () => {
+describe("image format handling", () => {
   let gifFile = "";
   let staticWebpFile = "";
 
@@ -537,14 +537,24 @@ describe("animated image optimization skip", () => {
     expect(result.contentType).toBe("image/gif");
   });
 
-  it("preserves static WebP format without converting to JPEG", async () => {
+  it("converts static WebP to JPEG (WhatsApp does not support WebP)", async () => {
     const result = await loadWebMedia(staticWebpFile, {
       maxBytes: 1024 * 1024,
       localRoots: [fixtureRoot],
     });
 
-    // WebP should be preserved as-is, not converted to JPEG
-    // WebP is already an efficient format
+    // WhatsApp does not support WebP; it must be converted to JPEG.
+    expect(result.contentType).toBe("image/jpeg");
+  });
+
+  it("preserves WebP when preserveWebp is true (e.g. Discord)", async () => {
+    const result = await loadWebMedia(staticWebpFile, {
+      maxBytes: 1024 * 1024,
+      localRoots: [fixtureRoot],
+      preserveWebp: true,
+    });
+
+    // Channels that support WebP natively (e.g. Discord) should get it back as-is.
     expect(result.contentType).toBe("image/webp");
   });
 

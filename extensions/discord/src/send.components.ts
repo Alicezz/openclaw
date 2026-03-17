@@ -95,7 +95,10 @@ export async function sendDiscordComponentMessage(
   const expectedAttachmentName = uniqueAttachmentNames[0];
   let files: MessagePayloadFile[] | undefined;
   if (opts.mediaUrl) {
-    const media = await loadWebMedia(opts.mediaUrl, { localRoots: opts.mediaLocalRoots });
+    const media = await loadWebMedia(opts.mediaUrl, {
+      localRoots: opts.mediaLocalRoots,
+      preserveWebp: true,
+    });
     const filenameOverride = opts.filename?.trim();
     const fileName = filenameOverride || media.fileName || "upload";
     if (expectedAttachmentName && expectedAttachmentName !== fileName) {

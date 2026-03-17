@@ -1822,6 +1822,7 @@ async function deliverDiscordInteractionReply(params: {
       mediaList.map(async (url) => {
         const loaded = await loadWebMedia(url, {
           localRoots: params.mediaLocalRoots,
+          preserveWebp: true,
         });
         return {
           name: loaded.fileName ?? "upload",

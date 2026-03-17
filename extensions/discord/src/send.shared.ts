@@ -431,10 +431,10 @@ async function sendDiscordMedia(
   chunkMode?: ChunkMode,
   silent?: boolean,
 ) {
-  const media = await loadWebMedia(
-    mediaUrl,
-    buildOutboundMediaLoadOptions({ maxBytes, mediaLocalRoots }),
-  );
+  const media = await loadWebMedia(mediaUrl, {
+    ...buildOutboundMediaLoadOptions({ maxBytes, mediaLocalRoots }),
+    preserveWebp: true,
+  });
   const chunks = text ? buildDiscordTextChunks(text, { maxLinesPerMessage, chunkMode }) : [];
   const caption = chunks[0] ?? "";
   const messageReference = replyTo ? { message_id: replyTo, fail_if_not_exists: false } : undefined;
