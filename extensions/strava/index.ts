@@ -21,7 +21,7 @@ const stravaPlugin = {
 
     if (!clientId || !clientSecret) {
       api.logger.warn(
-        "strava: plugin not activated — set plugins.strava.clientId and plugins.strava.clientSecret in your config. " +
+        "strava: plugin not activated — set plugins.entries.strava.config.clientId and plugins.entries.strava.config.clientSecret in your config. " +
           "Create a Strava API app at https://www.strava.com/settings/api",
       );
       return;
@@ -45,6 +45,7 @@ const stravaPlugin = {
     // OAuth callback — receives the redirect from Strava after user authorizes.
     api.registerHttpRoute({
       path: OAUTH_CALLBACK_PATH,
+      auth: "plugin",
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         try {
           const url = new URL(req.url!, `http://${req.headers.host}`);
@@ -115,6 +116,7 @@ const stravaPlugin = {
     // Convenience redirect — visiting this URL starts the OAuth flow.
     api.registerHttpRoute({
       path: OAUTH_START_PATH,
+      auth: "plugin",
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const state = generateOAuthState();
         tokenStore.saveState(state);
