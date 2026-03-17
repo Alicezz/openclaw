@@ -611,6 +611,26 @@ export async function rehydrateSessionStoreEntries(
           ? entry.spawnDepth
           : getSubagentDepthFromSessionStore(entry.requesterSessionKey, { cfg }) + 1;
       const sessionFile = path.relative(sessionsDir, transcriptPath);
+
+      // Restore the model/provider override from the original spawn record so
+      // recovered subagents run with the same model that was originally selected,
+      // not the agent default.  The spawn path (subagent-spawn.ts) patches the
+      // session with `sessions.patch({ model: resolvedModel })`, which sets
+      // `modelOverride` / `providerOverride` on the SessionEntry.  We replicate
+      // that here from the stored `entry.model` field (format: "provider/model"
+      // or just "model").
+      const modelOverrideFields: Partial<SessionEntry> = {};
+      if (typeof entry.model === "string" && entry.model.trim()) {
+        const modelStr = entry.model.trim();
+        const slashIdx = modelStr.indexOf("/");
+        if (slashIdx > 0) {
+          modelOverrideFields.providerOverride = modelStr.slice(0, slashIdx);
+          modelOverrideFields.modelOverride = modelStr.slice(slashIdx + 1);
+        } else {
+          modelOverrideFields.modelOverride = modelStr;
+        }
+      }
+
       const synthetic: SessionEntry = {
         sessionId,
         updatedAt: targetCreatedAtMs,
@@ -620,6 +640,7 @@ export async function rehydrateSessionStoreEntries(
         ...(typeof entry.workspaceDir === "string" && entry.workspaceDir.trim()
           ? { spawnedWorkspaceDir: entry.workspaceDir }
           : undefined),
+        ...modelOverrideFields,
       };
 
       // Write the synthetic entry via updateSessionStore so that concurrent
@@ -964,6 +985,26 @@ export async function redispatchSubagentRunAfterRestart(
           groupId: entry.groupId,
           groupChannel: entry.groupChannel,
           groupSpace: entry.groupSpace,
+          // Preserve the original model selection so the redispatched run uses
+          // the same model that was originally selected at spawn time, not the
+          // agent default.  AgentParamsSchema accepts model/provider as optional
+          // fields.  The session-store entry (real or rehydrated) may also carry
+          // modelOverride/providerOverride, but passing model here ensures the
+          // gateway agent handler resolves model selection correctly even if the
+          // session-store entry was synthesized without the full patch flow.
+          ...(typeof entry.model === "string" && entry.model.trim()
+            ? (() => {
+                const modelStr = entry.model!.trim();
+                const slashIdx = modelStr.indexOf("/");
+                if (slashIdx > 0) {
+                  return {
+                    provider: modelStr.slice(0, slashIdx),
+                    model: modelStr.slice(slashIdx + 1),
+                  };
+                }
+                return { model: modelStr };
+              })()
+            : undefined),
           // Note: spawnedBy and workspaceDir are intentionally NOT passed here.
           // AgentParamsSchema has additionalProperties: false and does not define
           // these fields.  The original spawn path (subagent-spawn.ts) applies
@@ -984,38 +1025,59 @@ export async function redispatchSubagentRunAfterRestart(
       return;
     }
 
-    // Wait for the new dispatch to complete.
-    try {
-      const timeoutMs = Math.max(1, Math.floor(waitTimeoutMs));
-      const wait = await callGateway<{
-        status?: string;
-        startedAt?: number;
-        endedAt?: number;
-        error?: string;
-      }>({
-        method: "agent.wait",
-        params: { runId: newRunId, timeoutMs },
-        timeoutMs: timeoutMs + 10_000,
-      });
-      if (wait?.status !== "ok" && wait?.status !== "error" && wait?.status !== "timeout") {
-        return;
-      }
-      const endedAt = typeof wait.endedAt === "number" ? wait.endedAt : Date.now();
-      const outcome =
-        wait.status === "error"
-          ? {
-              status: "error" as const,
-              error: typeof wait.error === "string" ? wait.error : undefined,
-            }
-          : wait.status === "timeout"
-            ? { status: "timeout" as const }
-            : { status: "ok" as const };
+    // Wait for the new dispatch to complete.  If agent.wait fails (transient
+    // RPC disconnect/timeout), retry with exponential backoff on the SAME
+    // newRunId rather than re-entering resumeSubagentRun — which would
+    // re-classify as resumable-fresh and launch a duplicate dispatch.
+    const MAX_WAIT_RETRIES = 4;
+    const BASE_WAIT_RETRY_DELAY_MS = 2_000;
+    for (let waitAttempt = 0; waitAttempt <= MAX_WAIT_RETRIES; waitAttempt++) {
+      try {
+        const timeoutMs = Math.max(1, Math.floor(waitTimeoutMs));
+        const wait = await callGateway<{
+          status?: string;
+          startedAt?: number;
+          endedAt?: number;
+          error?: string;
+        }>({
+          method: "agent.wait",
+          params: { runId: newRunId, timeoutMs },
+          timeoutMs: timeoutMs + 10_000,
+        });
+        if (wait?.status !== "ok" && wait?.status !== "error" && wait?.status !== "timeout") {
+          return;
+        }
+        const endedAt = typeof wait.endedAt === "number" ? wait.endedAt : Date.now();
+        const outcome =
+          wait.status === "error"
+            ? {
+                status: "error" as const,
+                error: typeof wait.error === "string" ? wait.error : undefined,
+              }
+            : wait.status === "timeout"
+              ? { status: "timeout" as const }
+              : { status: "ok" as const };
 
-      await safeComplete(endedAt, outcome);
-    } catch (err) {
-      defaultRuntime.log(
-        `[warn] subagent-resume: agent.wait for redispatch failed run=${runId}: ${String(err)}`,
-      );
+        await safeComplete(endedAt, outcome);
+        break; // Successfully completed — exit retry loop.
+      } catch (err) {
+        if (waitAttempt < MAX_WAIT_RETRIES) {
+          const delayMs = BASE_WAIT_RETRY_DELAY_MS * 2 ** waitAttempt;
+          log.warn("agent.wait failed after successful redispatch; retrying on same run", {
+            runId,
+            newRunId,
+            attempt: waitAttempt + 1,
+            maxRetries: MAX_WAIT_RETRIES,
+            nextRetryMs: delayMs,
+            error: String(err),
+          });
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        } else {
+          defaultRuntime.log(
+            `[warn] subagent-resume: agent.wait retries exhausted for redispatch run=${runId} newRunId=${newRunId}: ${String(err)}`,
+          );
+        }
+      }
     }
   } finally {
     // Guarantee onComplete is always called even when an early return or
