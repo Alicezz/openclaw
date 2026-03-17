@@ -366,9 +366,37 @@ export function applyExtraParamsToAgent(
     agent.streamFn = createMoonshotThinkingWrapper(agent.streamFn, thinkingType);
   }
 
-  if (provider === "amazon-bedrock" && !isAnthropicBedrockModel(modelId)) {
-    log.debug(`disabling prompt caching for non-Anthropic Bedrock model ${provider}/${modelId}`);
-    agent.streamFn = createBedrockNoCacheWrapper(agent.streamFn);
+  if (provider === "amazon-bedrock") {
+    // Try to get the model name from configuration for better detection of Anthropic models
+    // when using Application Inference Profile ARNs.
+    // Check provider model name first (most reliable), then fall back to alias.
+    let modelName: string | undefined;
+
+    // Look up model name from provider config, trying normalized provider key variants
+    const providerKeyVariants = [provider, "amazon-bedrock", "bedrock", "aws-bedrock"];
+    for (const key of providerKeyVariants) {
+      const providerConfig = cfg?.models?.providers?.[key];
+      if (providerConfig?.models) {
+        const modelDef = providerConfig.models.find((m: { id?: string }) => m.id === modelId);
+        if (modelDef?.name) {
+          modelName = modelDef.name;
+          break;
+        }
+      }
+    }
+
+    if (!modelName) {
+      const modelKey = `${provider}/${modelId}`;
+      const modelConfig = cfg?.agents?.defaults?.models?.[modelKey];
+      if (modelConfig?.alias) {
+        modelName = modelConfig.alias;
+      }
+    }
+
+    if (!isAnthropicBedrockModel(modelId, modelName)) {
+      log.debug(`disabling prompt caching for non-Anthropic Bedrock model ${provider}/${modelId}`);
+      agent.streamFn = createBedrockNoCacheWrapper(agent.streamFn);
+    }
   }
 
   // Enable Z.AI tool_stream for real-time tool call streaming.

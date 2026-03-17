@@ -356,7 +356,39 @@ export function createBedrockNoCacheWrapper(baseStreamFn: StreamFn | undefined):
     });
 }
 
-export function isAnthropicBedrockModel(modelId: string): boolean {
+export function isAnthropicBedrockModel(modelId: string, modelName?: string): boolean {
   const normalized = modelId.toLowerCase();
-  return normalized.includes("anthropic.claude") || normalized.includes("anthropic/claude");
+
+  // Direct Anthropic Claude model IDs (e.g., anthropic.claude-sonnet-4-6, global.anthropic.claude-opus-4-6-v1)
+  if (normalized.includes("anthropic.claude") || normalized.includes("anthropic/claude")) {
+    return true;
+  }
+
+  // Application Inference Profile ARN — check model name for Claude identification
+  // ARN format: arn:<partition>:bedrock:<region>:<account>:application-inference-profile/<id>
+  // Supports all AWS partitions with Bedrock: aws, aws-cn, aws-us-gov
+  if (
+    /^arn:aws(-cn|-us-gov)?:bedrock:/.test(normalized) &&
+    normalized.includes(":application-inference-profile/")
+  ) {
+    return modelName ? modelName.toLowerCase().includes("claude") : false;
+  }
+
+  // Short/opaque inference profile IDs — fall back to model name only for IDs
+  // that look like short profile IDs (alphanumeric, no dots/colons/slashes).
+  // Excludes standard model IDs, other ARN resource types, and any dotted identifiers.
+  if (modelName && looksLikeShortProfileId(normalized)) {
+    return modelName.toLowerCase().includes("claude");
+  }
+
+  return false;
+}
+
+/**
+ * Returns true when the ID looks like a short Application Inference Profile ID
+ * (opaque alphanumeric string without dots, colons, or slashes).
+ * Examples: "gdkqufd9flgg", "s3rr0t98ews8"
+ */
+function looksLikeShortProfileId(normalizedId: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(normalizedId) || /^[a-z0-9]+$/.test(normalizedId);
 }
