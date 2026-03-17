@@ -8,6 +8,9 @@ import type { MatrixStoragePaths } from "./types.js";
 export const DEFAULT_ACCOUNT_KEY = "default";
 const STORAGE_META_FILENAME = "storage-meta.json";
 
+/** Fixed segment so storage (and E2EE device keys) persists across access token changes. */
+const STORAGE_DIR_NAME = "store";
+
 function sanitizePathSegment(value: string): string {
   const cleaned = value
     .trim()
@@ -63,7 +66,7 @@ export function resolveMatrixStoragePaths(params: {
     "accounts",
     accountKey,
     `${serverKey}__${userKey}`,
-    tokenHash,
+    STORAGE_DIR_NAME,
   );
   return {
     rootDir,
@@ -73,6 +76,106 @@ export function resolveMatrixStoragePaths(params: {
     accountKey,
     tokenHash,
   };
+}
+
+/** 16-char hex pattern used for legacy per-token storage dirs. */
+const TOKEN_HASH_DIR_PATTERN = /^[a-f0-9]{16}$/;
+
+function copyDirRecursive(src: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+function migrateFromLegacyDir(oldRoot: string, storagePaths: MatrixStoragePaths): boolean {
+  const oldCrypto = path.join(oldRoot, "crypto");
+  const oldStorage = path.join(oldRoot, "bot-storage.json");
+  const hasOldCrypto = fs.existsSync(oldCrypto);
+  const hasOldStorage = fs.existsSync(oldStorage);
+  if (!hasOldCrypto && !hasOldStorage) {
+    return false;
+  }
+
+  fs.mkdirSync(storagePaths.rootDir, { recursive: true });
+  try {
+    if (hasOldCrypto && !fs.existsSync(storagePaths.cryptoPath)) {
+      copyDirRecursive(oldCrypto, storagePaths.cryptoPath);
+    }
+    if (hasOldStorage && !fs.existsSync(storagePaths.storagePath)) {
+      fs.copyFileSync(oldStorage, storagePaths.storagePath);
+    }
+  } catch {
+    return false;
+  }
+
+  try {
+    fs.rmSync(oldRoot, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup only; ignore failures.
+  }
+
+  return true;
+}
+
+/**
+ * Migrate crypto and bot-storage from legacy tokenHash subdirs into the stable store dir.
+ * Ensures device keys persist across access token changes (fixes #48749).
+ */
+export function maybeMigrateFromTokenHashDirs(params: { storagePaths: MatrixStoragePaths }): void {
+  const accountBaseDir = path.dirname(params.storagePaths.rootDir);
+  if (!fs.existsSync(accountBaseDir)) {
+    return;
+  }
+  if (
+    fs.existsSync(params.storagePaths.cryptoPath) &&
+    fs.existsSync(params.storagePaths.storagePath)
+  ) {
+    return;
+  }
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(accountBaseDir);
+  } catch {
+    return;
+  }
+
+  const tokenHashDirs = entries
+    .filter((name) => name !== STORAGE_DIR_NAME && TOKEN_HASH_DIR_PATTERN.test(name))
+    .sort((a, b) => {
+      try {
+        const mtimeA = fs.statSync(path.join(accountBaseDir, a)).mtimeMs;
+        const mtimeB = fs.statSync(path.join(accountBaseDir, b)).mtimeMs;
+        return mtimeB - mtimeA; // newest first
+      } catch {
+        return 0;
+      }
+    });
+
+  // First pass: prefer dirs that have both crypto and bot-storage.
+  for (const dir of tokenHashDirs) {
+    const oldRoot = path.join(accountBaseDir, dir);
+    const hasCrypto = fs.existsSync(path.join(oldRoot, "crypto"));
+    const hasStorage = fs.existsSync(path.join(oldRoot, "bot-storage.json"));
+    if (hasCrypto && hasStorage && migrateFromLegacyDir(oldRoot, params.storagePaths)) {
+      return;
+    }
+  }
+
+  // Second pass: accept partial dirs (crypto only or storage only) as a fallback.
+  for (const dir of tokenHashDirs) {
+    const oldRoot = path.join(accountBaseDir, dir);
+    if (migrateFromLegacyDir(oldRoot, params.storagePaths)) {
+      return;
+    }
+  }
 }
 
 export function maybeMigrateLegacyStorage(params: {
