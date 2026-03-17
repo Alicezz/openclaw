@@ -15,7 +15,10 @@ import {
   type StringSelectMenuInteraction,
 } from "@buape/carbon";
 import { ApplicationCommandOptionType, ButtonStyle } from "discord-api-types/v10";
-import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
+import {
+  resolveDefaultModelForAgent,
+  resolveHumanDelayConfig,
+} from "openclaw/plugin-sdk/agent-runtime";
 import { resolveCommandAuthorizedFromAuthorizers } from "openclaw/plugin-sdk/channel-runtime";
 import { resolveNativeCommandSessionTargets } from "openclaw/plugin-sdk/channel-runtime";
 import { createReplyPrefixOptions } from "openclaw/plugin-sdk/channel-runtime";
@@ -504,12 +507,14 @@ async function resolveDiscordNativeChoiceContext(params: {
       accountId: params.accountId,
       threadBindings: params.threadBindings,
     });
-    const pickerData = await loadDiscordModelPickerData(params.cfg, route.agentId);
-    const fallback = pickerData.resolvedDefault;
+    const fallback = resolveDefaultModelForAgent({
+      cfg: params.cfg,
+      agentId: route.agentId,
+    });
     const storePath = resolveStorePath(params.cfg.session?.store, {
       agentId: route.agentId,
     });
-    const sessionStore = loadSessionStore(storePath, { skipCache: true });
+    const sessionStore = loadSessionStore(storePath);
     const sessionEntry = sessionStore[route.sessionKey];
     const override = resolveStoredModelOverride({
       sessionEntry,
