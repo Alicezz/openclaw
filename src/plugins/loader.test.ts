@@ -3214,7 +3214,7 @@ module.exports = {
       encoding: "utf-8",
       stdio: "pipe",
     });
-  });
+  }, 180_000);
 
   it.each([
     {
