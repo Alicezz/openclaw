@@ -24,6 +24,13 @@ export type SubagentRunRecord = {
   spawnDepth?: number;
   runTimeoutSeconds?: number;
   spawnMode?: SpawnSubagentMode;
+  /** Group scope metadata forwarded to the gateway agent dispatch so that
+   *  restart-recovery redispatch preserves the same group routing/policy as
+   *  the original spawn.  Mirrors the publicSpawnedMetadata spread in
+   *  subagent-spawn.ts. */
+  groupId?: string;
+  groupChannel?: string;
+  groupSpace?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;

@@ -950,6 +950,12 @@ export async function redispatchSubagentRunAfterRestart(
             entry.requesterOrigin?.threadId != null
               ? String(entry.requesterOrigin.threadId)
               : undefined,
+          // Forward group scope metadata so the redispatch preserves the same
+          // group routing/policy as the original spawn (mirrors the
+          // ...publicSpawnedMetadata spread in subagent-spawn.ts).
+          groupId: entry.groupId,
+          groupChannel: entry.groupChannel,
+          groupSpace: entry.groupSpace,
           // Note: spawnedBy and workspaceDir are intentionally NOT passed here.
           // AgentParamsSchema has additionalProperties: false and does not define
           // these fields.  The original spawn path (subagent-spawn.ts) applies
