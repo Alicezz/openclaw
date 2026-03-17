@@ -826,6 +826,20 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    pairing: z
+      .object({
+        notify: z
+          .object({
+            enabled: z.boolean().optional(),
+            target: z.string().optional(),
+            channel: z.string().optional(),
+            accountId: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     memory: MemorySchema,
     skills: z
       .object({

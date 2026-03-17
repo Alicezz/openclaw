@@ -42,9 +42,9 @@ function sanitizeField(value: string, maxLength: number): string {
   // Use character loop approach to avoid oxlint control-regex warnings.
   let cleaned = value;
 
-  // Remove C0 control chars (0x00-0x1F) except tab and newline
+  // Remove C0 control chars (0x00-0x1F) except tab
   for (let c = 0; c <= 0x1f; c++) {
-    if (c !== 0x09 && c !== 0x0a) {
+    if (c !== 0x09) {
       cleaned = cleaned.replaceAll(String.fromCharCode(c), "");
     }
   }
@@ -55,8 +55,14 @@ function sanitizeField(value: string, maxLength: number): string {
     cleaned = cleaned.replaceAll(String.fromCharCode(c), "");
   }
 
-  // Remove zero-width and bidi chars
-  const zeroWidthChars = [0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2028, 0x202f, 0xfeff];
+  // Remove zero-width, bidi override, and bidi isolate chars
+  const zeroWidthChars = [
+    0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2028, 0x202f, 0xfeff,
+    // Bidi overrides
+    0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+    // Bidi isolates (U+2066–U+2069)
+    0x2066, 0x2067, 0x2068, 0x2069,
+  ];
   for (const char of zeroWidthChars) {
     cleaned = cleaned.replaceAll(String.fromCharCode(char), "");
   }
