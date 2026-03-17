@@ -1,11 +1,11 @@
 import { beforeEach, describe, it, vi } from "vitest";
 import {
-  requireProviderContractProvider,
   expectAugmentedCodexCatalog,
   expectCodexBuiltInSuppression,
   expectCodexMissingAuthHint,
 } from "../provider-runtime.test-support.js";
 import {
+  requireProviderContractProvider,
   resolveProviderContractPluginIdsForProvider,
   resolveProviderContractProvidersForPluginIds,
   uniqueProviderContractProviders,
@@ -38,7 +38,6 @@ vi.mock("../providers.js", () => ({
 }));
 
 let augmentModelCatalogWithProviderPlugins: typeof import("../provider-runtime.js").augmentModelCatalogWithProviderPlugins;
-let buildProviderMissingAuthMessageWithPlugin: typeof import("../provider-runtime.js").buildProviderMissingAuthMessageWithPlugin;
 let resetProviderRuntimeHookCacheForTest: typeof import("../provider-runtime.js").resetProviderRuntimeHookCacheForTest;
 let resolveProviderBuiltInModelSuppression: typeof import("../provider-runtime.js").resolveProviderBuiltInModelSuppression;
 
@@ -47,7 +46,6 @@ describe("provider catalog contract", () => {
     vi.resetModules();
     ({
       augmentModelCatalogWithProviderPlugins,
-      buildProviderMissingAuthMessageWithPlugin,
       resetProviderRuntimeHookCacheForTest,
       resolveProviderBuiltInModelSuppression,
     } = await import("../provider-runtime.js"));
