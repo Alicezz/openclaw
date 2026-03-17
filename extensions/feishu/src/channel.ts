@@ -880,6 +880,8 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
     sendText: async (params) => (await loadFeishuChannelRuntime()).feishuOutbound.sendText!(params),
     sendMedia: async (params) =>
       (await loadFeishuChannelRuntime()).feishuOutbound.sendMedia!(params),
+    sendPayload: async (params) =>
+      (await loadFeishuChannelRuntime()).feishuOutbound.sendPayload!(params),
   },
   status: {
     defaultRuntime: createDefaultChannelRuntimeState(DEFAULT_ACCOUNT_ID, { port: null }),
