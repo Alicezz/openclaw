@@ -15,8 +15,18 @@ import type {
 
 export { DEFAULT_ACCOUNT_ID } from "../routing/account-id.js";
 
+type LineConfigWithMeta = LineConfig &
+  LineAccountConfig & {
+    accounts?: unknown;
+    defaultAccount?: unknown;
+  };
+
 function readFileIfExists(filePath: string | undefined): string | undefined {
   return tryReadSecretFileSync(filePath, "LINE credential file", { rejectSymlink: true });
+}
+
+function resolveLineConfig(cfg: OpenClawConfig): LineConfig | undefined {
+  return cfg.channels?.line as LineConfig | undefined;
 }
 
 function resolveToken(params: {
@@ -95,16 +105,30 @@ function resolveSecret(params: {
   return "";
 }
 
+function resolveLineAccountConfig(
+  cfg: OpenClawConfig,
+  accountId: string,
+): LineAccountConfig | undefined {
+  return resolveAccountEntry(resolveLineConfig(cfg)?.accounts, accountId);
+}
+
 export function resolveLineAccount(params: {
   cfg: OpenClawConfig;
   accountId?: string;
 }): ResolvedLineAccount {
   const cfg = params.cfg;
   const accountId = normalizeSharedAccountId(params.accountId);
-  const lineConfig = cfg.channels?.line as LineConfig | undefined;
-  const accounts = lineConfig?.accounts;
-  const accountConfig =
-    accountId !== DEFAULT_ACCOUNT_ID ? resolveAccountEntry(accounts, accountId) : undefined;
+  const lineConfig = resolveLineConfig(cfg);
+  const accountConfig = resolveLineAccountConfig(cfg, accountId);
+  const {
+    accounts: _ignoredAccounts,
+    defaultAccount: _ignoredDefaultAccount,
+    ...lineBase
+  } = (lineConfig ?? {}) as LineConfigWithMeta;
+  const mergedConfig: LineConfig & LineAccountConfig = {
+    ...lineBase,
+    ...accountConfig,
+  };
 
   const { token, tokenSource } = resolveToken({
     accountId,
@@ -118,23 +142,10 @@ export function resolveLineAccount(params: {
     accountConfig,
   });
 
-  const {
-    accounts: _ignoredAccounts,
-    defaultAccount: _ignoredDefaultAccount,
-    ...lineBase
-  } = (lineConfig ?? {}) as LineConfig & {
-    accounts?: unknown;
-    defaultAccount?: unknown;
-  };
-  const mergedConfig: LineConfig & LineAccountConfig = {
-    ...lineBase,
-    ...accountConfig,
-  };
-
   const enabled =
-    accountConfig?.enabled ??
-    (accountId === DEFAULT_ACCOUNT_ID ? (lineConfig?.enabled ?? true) : false);
-
+    accountId === DEFAULT_ACCOUNT_ID
+      ? (mergedConfig.enabled ?? true)
+      : Boolean(accountConfig) && (mergedConfig.enabled ?? true);
   const name =
     accountConfig?.name ?? (accountId === DEFAULT_ACCOUNT_ID ? lineConfig?.name : undefined);
 
@@ -150,7 +161,7 @@ export function resolveLineAccount(params: {
 }
 
 export function listLineAccountIds(cfg: OpenClawConfig): string[] {
-  const lineConfig = cfg.channels?.line as LineConfig | undefined;
+  const lineConfig = resolveLineConfig(cfg);
   const accounts = lineConfig?.accounts;
   const ids = new Set<string>();
 
@@ -163,7 +174,6 @@ export function listLineAccountIds(cfg: OpenClawConfig): string[] {
     ids.add(DEFAULT_ACCOUNT_ID);
   }
 
-  // Add named accounts
   if (accounts) {
     for (const id of Object.keys(accounts)) {
       ids.add(id);
@@ -174,9 +184,7 @@ export function listLineAccountIds(cfg: OpenClawConfig): string[] {
 }
 
 export function resolveDefaultLineAccountId(cfg: OpenClawConfig): string {
-  const preferred = normalizeOptionalAccountId(
-    (cfg.channels?.line as LineConfig | undefined)?.defaultAccount,
-  );
+  const preferred = normalizeOptionalAccountId(resolveLineConfig(cfg)?.defaultAccount);
   if (
     preferred &&
     listLineAccountIds(cfg).some((accountId) => normalizeSharedAccountId(accountId) === preferred)
