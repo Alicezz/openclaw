@@ -10,6 +10,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import path from "node:path";
+import { resolveAgentConfig } from "../agents/agent-scope.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
 import { normalizeChannelId } from "../channels/plugins/index.js";
 import type { ChannelId } from "../channels/plugins/types.js";
@@ -329,6 +330,55 @@ export function resolveTtsConfig(cfg: OpenClawConfig): ResolvedTtsConfig {
   };
 }
 
+/**
+ * Resolve TTS config for a specific agent by overlaying the agent's flat
+ * `voice` config on top of the global resolved config.  Only voice-identity
+ * fields are per-agent; infrastructure (apiKey, baseUrl, timeoutMs, …) stays global.
+ */
+export function resolveTtsConfigForAgent(cfg: OpenClawConfig, agentId?: string): ResolvedTtsConfig {
+  const global = resolveTtsConfig(cfg);
+  if (!agentId) {
+    return global;
+  }
+  const v = resolveAgentConfig(cfg, agentId)?.voice;
+  if (!v) {
+    return global;
+  }
+  return {
+    ...global,
+    auto:
+      normalizeTtsAutoMode(v.auto) ??
+      (v.enabled != null ? (v.enabled ? "always" : "off") : undefined) ??
+      global.auto,
+    mode: v.mode ?? global.mode,
+    provider: v.provider ?? global.provider,
+    providerSource: v.provider ? "config" : global.providerSource,
+    openai: {
+      ...global.openai,
+      ...(v.voice != null && { voice: v.voice }),
+      ...(v.model != null && { model: v.model }),
+      ...(v.speed != null && { speed: v.speed }),
+      ...(v.instructions != null && { instructions: v.instructions }),
+    },
+    elevenlabs: {
+      ...global.elevenlabs,
+      ...(v.voiceId != null && { voiceId: v.voiceId }),
+      ...(v.model != null && { modelId: v.model }),
+      ...(v.speed != null && {
+        voiceSettings: {
+          ...global.elevenlabs.voiceSettings,
+          speed: Math.max(0.5, Math.min(2, v.speed)),
+        },
+      }),
+    },
+    edge: {
+      ...global.edge,
+      ...(v.voice != null && { voice: v.voice }),
+      ...(v.lang != null && { lang: v.lang }),
+    },
+  };
+}
+
 export function resolveTtsPrefsPath(config: ResolvedTtsConfig): string {
   if (config.prefsPath?.trim()) {
     return resolveUserPath(config.prefsPath.trim());
@@ -367,8 +417,11 @@ export function resolveTtsAutoMode(params: {
   return params.config.auto;
 }
 
-export function buildTtsSystemPromptHint(cfg: OpenClawConfig): string | undefined {
-  const config = resolveTtsConfig(cfg);
+export function buildTtsSystemPromptHint(
+  cfg: OpenClawConfig,
+  agentId?: string,
+): string | undefined {
+  const config = resolveTtsConfigForAgent(cfg, agentId);
   const prefsPath = resolveTtsPrefsPath(config);
   const autoMode = resolveTtsAutoMode({ config, prefsPath });
   if (autoMode === "off") {
@@ -564,6 +617,7 @@ function resolveTtsRequestSetup(params: {
   cfg: OpenClawConfig;
   prefsPath?: string;
   providerOverride?: TtsProvider;
+  agentId?: string;
 }):
   | {
       config: ResolvedTtsConfig;
@@ -572,7 +626,7 @@ function resolveTtsRequestSetup(params: {
   | {
       error: string;
     } {
-  const config = resolveTtsConfig(params.cfg);
+  const config = resolveTtsConfigForAgent(params.cfg, params.agentId);
   const prefsPath = params.prefsPath ?? resolveTtsPrefsPath(config);
   if (params.text.length > config.maxTextLength) {
     return {
@@ -594,12 +648,15 @@ export async function textToSpeech(params: {
   prefsPath?: string;
   channel?: string;
   overrides?: TtsDirectiveOverrides;
+  /** Optional agent ID for per-agent voice overrides. */
+  agentId?: string;
 }): Promise<TtsResult> {
   const setup = resolveTtsRequestSetup({
     text: params.text,
     cfg: params.cfg,
     prefsPath: params.prefsPath,
     providerOverride: params.overrides?.provider,
+    agentId: params.agentId,
   });
   if ("error" in setup) {
     return { success: false, error: setup.error };
@@ -849,8 +906,10 @@ export async function maybeApplyTtsToPayload(params: {
   kind?: "tool" | "block" | "final";
   inboundAudio?: boolean;
   ttsAuto?: string;
+  /** Optional agent ID for per-agent voice overrides. */
+  agentId?: string;
 }): Promise<ReplyPayload> {
-  const config = resolveTtsConfig(params.cfg);
+  const config = resolveTtsConfigForAgent(params.cfg, params.agentId);
   const prefsPath = resolveTtsPrefsPath(config);
   const autoMode = resolveTtsAutoMode({
     config,
@@ -952,6 +1011,7 @@ export async function maybeApplyTtsToPayload(params: {
     prefsPath,
     channel: params.channel,
     overrides: directives.overrides,
+    agentId: params.agentId,
   });
 
   if (result.success && result.audioPath) {
@@ -1000,4 +1060,5 @@ export const _test = {
   summarizeText,
   resolveOutputFormat,
   resolveEdgeOutputFormat,
+  resolveTtsConfigForAgent,
 };
