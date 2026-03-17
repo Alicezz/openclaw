@@ -40,6 +40,25 @@ export function resolvePowerShellPath(): string {
 }
 
 export function getShellConfig(): { shell: string; args: string[] } {
+  // CLAWDBOT_SHELL override: force a specific shell for exec regardless of $SHELL.
+  // Checked first (before platform checks) to mirror detectRuntimeShell() ordering,
+  // which also honours CLAWDBOT_SHELL before its Windows block.
+  const overrideShell = process.env.CLAWDBOT_SHELL?.trim();
+  if (overrideShell) {
+    const name = normalizeShellName(overrideShell);
+    if (name) {
+      let shellPath: string;
+      if (path.isAbsolute(overrideShell)) {
+        shellPath = overrideShell;
+      } else if (overrideShell.includes(path.sep) || overrideShell.includes("/")) {
+        shellPath = path.resolve(overrideShell);
+      } else {
+        shellPath = resolveShellFromPath(name) ?? name;
+      }
+      return { shell: shellPath, args: ["-c"] };
+    }
+  }
+
   if (process.platform === "win32") {
     // Use PowerShell instead of cmd.exe on Windows.
     // Problem: Many Windows system utilities (ipconfig, systeminfo, etc.) write
@@ -54,6 +73,14 @@ export function getShellConfig(): { shell: string; args: string[] } {
 
   const envShell = process.env.SHELL?.trim();
   const shellName = envShell ? path.basename(envShell) : "";
+
+  // Nushell: use directly — structured data output is the point.
+  // Unlike Fish (which falls back to bash because it rejects bashisms),
+  // nushell should run as-is; the agent knows it's nushell via detectRuntimeShell().
+  if (shellName === "nu") {
+    return { shell: envShell!, args: ["-c"] };
+  }
+
   // Fish rejects common bashisms used by tools, so prefer bash when detected.
   if (shellName === "fish") {
     const bash = resolveShellFromPath("bash");
