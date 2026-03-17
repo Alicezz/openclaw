@@ -2060,6 +2060,7 @@ Notes:
         model: "minimax/MiniMax-M2.5",
         maxConcurrent: 1,
         runTimeoutSeconds: 900,
+        minRunTimeoutSeconds: 120,
         archiveAfterMinutes: 60,
       },
     },
@@ -2069,6 +2070,7 @@ Notes:
 
 - `model`: default model for spawned sub-agents. If omitted, sub-agents inherit the caller's model.
 - `runTimeoutSeconds`: default timeout (seconds) for `sessions_spawn` when the tool call omits `runTimeoutSeconds`. `0` means no timeout.
+- `minRunTimeoutSeconds`: floor (seconds) for positive sub-agent timeouts, including fallback from `runTimeoutSeconds`; `0` remains no timeout.
 - Per-subagent tool policy: `tools.subagents.tools.allow` / `tools.subagents.tools.deny`.
 
 ---
