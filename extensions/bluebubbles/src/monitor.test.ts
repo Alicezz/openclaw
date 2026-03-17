@@ -621,6 +621,44 @@ describe("BlueBubbles webhook monitor", () => {
       expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
     });
 
+    it("allows group messages without sender when groupPolicy=open", async () => {
+      const account = createMockAccount({
+        groupPolicy: "open",
+      });
+      const config: OpenClawConfig = {};
+      const core = createMockRuntime();
+      setBlueBubblesRuntime(core);
+
+      unregister = registerBlueBubblesWebhookTarget({
+        account,
+        config,
+        runtime: { log: vi.fn(), error: vi.fn() },
+        core,
+        path: "/bluebubbles-webhook",
+      });
+
+      const payload = {
+        type: "new-message",
+        data: {
+          text: "hello from group",
+          handle: null,
+          isGroup: true,
+          isFromMe: false,
+          guid: "msg-missing-sender-1",
+          chatGuid: "iMessage;+;chat123456",
+          date: Date.now(),
+        },
+      };
+
+      const req = createMockRequest("POST", "/bluebubbles-webhook", payload);
+      const res = createMockResponse();
+
+      await handleBlueBubblesWebhookRequest(req, res);
+      await flushAsync();
+
+      expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
+    });
+
     it("blocks group messages when groupPolicy=disabled", async () => {
       const account = createMockAccount({
         groupPolicy: "disabled",
@@ -723,6 +761,45 @@ describe("BlueBubbles webhook monitor", () => {
           isGroup: true,
           isFromMe: false,
           guid: "msg-1",
+          chatGuid: "iMessage;+;chat123456",
+          date: Date.now(),
+        },
+      };
+
+      const req = createMockRequest("POST", "/bluebubbles-webhook", payload);
+      const res = createMockResponse();
+
+      await handleBlueBubblesWebhookRequest(req, res);
+      await flushAsync();
+
+      expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
+    });
+
+    it("allows group messages without sender when groupAllowFrom matches the chat", async () => {
+      const account = createMockAccount({
+        groupPolicy: "allowlist",
+        groupAllowFrom: ["chat_guid:iMessage;+;chat123456"],
+      });
+      const config: OpenClawConfig = {};
+      const core = createMockRuntime();
+      setBlueBubblesRuntime(core);
+
+      unregister = registerBlueBubblesWebhookTarget({
+        account,
+        config,
+        runtime: { log: vi.fn(), error: vi.fn() },
+        core,
+        path: "/bluebubbles-webhook",
+      });
+
+      const payload = {
+        type: "new-message",
+        data: {
+          text: "hello from allowed group",
+          handle: null,
+          isGroup: true,
+          isFromMe: false,
+          guid: "msg-missing-sender-2",
           chatGuid: "iMessage;+;chat123456",
           date: Date.now(),
         },
@@ -998,6 +1075,53 @@ describe("BlueBubbles webhook monitor", () => {
       );
     });
 
+    it("keeps group messages with missing sender identity and degrades sender metadata", async () => {
+      const account = createMockAccount({ groupPolicy: "open" });
+      const config: OpenClawConfig = {};
+      const core = createMockRuntime();
+      setBlueBubblesRuntime(core);
+
+      unregister = registerBlueBubblesWebhookTarget({
+        account,
+        config,
+        runtime: { log: vi.fn(), error: vi.fn() },
+        core,
+        path: "/bluebubbles-webhook",
+      });
+
+      const payload = {
+        type: "new-message",
+        data: {
+          text: "hello everyone",
+          handle: null,
+          isGroup: true,
+          isFromMe: false,
+          guid: "msg-unknown-sender-1",
+          chatGuid: "iMessage;+;chat123456",
+          chatName: "Family Chat",
+          date: Date.now(),
+        },
+      };
+
+      const req = createMockRequest("POST", "/bluebubbles-webhook", payload);
+      const res = createMockResponse();
+
+      await handleBlueBubblesWebhookRequest(req, res);
+      await flushAsync();
+
+      expect(mockFormatInboundEnvelope).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: "Family Chat id:iMessage;+;chat123456",
+          chatType: "group",
+          sender: { name: undefined, id: undefined },
+        }),
+      );
+      const callArgs = getFirstDispatchCall();
+      expect(callArgs.ctx.SenderId).toBeUndefined();
+      expect(callArgs.ctx.SenderName).toBeUndefined();
+      expect(callArgs.ctx.ConversationLabel).toBe("Family Chat id:iMessage;+;chat123456");
+    });
+
     it("uses sender as from label for DM messages", async () => {
       const account = createMockAccount();
       const config: OpenClawConfig = {};
@@ -1176,6 +1300,364 @@ describe("BlueBubbles webhook monitor", () => {
         const callArgs = getFirstDispatchCall();
         expect(callArgs.ctx.MediaPaths).toEqual(["/tmp/test-media.jpg"]);
         expect(callArgs.ctx.Body).toContain("hello");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not coalesce distinct group messages when sender identity and messageId are both missing", async () => {
+      vi.useFakeTimers();
+      try {
+        const account = createMockAccount({ dmPolicy: "open", groupPolicy: "open" });
+        const config: OpenClawConfig = {};
+        const core = createMockRuntime();
+
+        // Use a timing-aware debouncer test double that respects debounceMs/buildKey/shouldDebounce.
+        // oxlint-disable-next-line typescript/no-explicit-any
+        core.channel.debounce.createInboundDebouncer = vi.fn((params: any) => {
+          // oxlint-disable-next-line typescript/no-explicit-any
+          type Item = any;
+          const buckets = new Map<
+            string,
+            { items: Item[]; timer: ReturnType<typeof setTimeout> | null }
+          >();
+
+          const flush = async (key: string) => {
+            const bucket = buckets.get(key);
+            if (!bucket) {
+              return;
+            }
+            if (bucket.timer) {
+              clearTimeout(bucket.timer);
+              bucket.timer = null;
+            }
+            const items = bucket.items;
+            bucket.items = [];
+            if (items.length > 0) {
+              try {
+                await params.onFlush(items);
+              } catch (err) {
+                params.onError?.(err);
+                throw err;
+              }
+            }
+          };
+
+          return {
+            enqueue: async (item: Item) => {
+              if (params.shouldDebounce && !params.shouldDebounce(item)) {
+                await params.onFlush([item]);
+                return;
+              }
+
+              const key = params.buildKey(item);
+              const existing = buckets.get(key);
+              const bucket = existing ?? { items: [], timer: null };
+              bucket.items.push(item);
+              if (bucket.timer) {
+                clearTimeout(bucket.timer);
+              }
+              bucket.timer = setTimeout(async () => {
+                await flush(key);
+              }, params.debounceMs);
+              buckets.set(key, bucket);
+            },
+            flushKey: vi.fn(async (key: string) => {
+              await flush(key);
+            }),
+          };
+        }) as unknown as PluginRuntime["channel"]["debounce"]["createInboundDebouncer"];
+
+        setBlueBubblesRuntime(core);
+
+        unregister = registerBlueBubblesWebhookTarget({
+          account,
+          config,
+          runtime: { log: vi.fn(), error: vi.fn() },
+          core,
+          path: "/bluebubbles-webhook",
+        });
+
+        const chatGuid = "iMessage;+;group-missing-sender";
+
+        await handleBlueBubblesWebhookRequest(
+          createMockRequest("POST", "/bluebubbles-webhook", {
+            type: "new-message",
+            data: {
+              text: "first message",
+              handle: null,
+              isGroup: true,
+              isFromMe: false,
+              guid: null,
+              chatGuid,
+              date: 1_700_000_000,
+            },
+          }),
+          createMockResponse(),
+        );
+
+        await handleBlueBubblesWebhookRequest(
+          createMockRequest("POST", "/bluebubbles-webhook", {
+            type: "new-message",
+            data: {
+              text: "second message",
+              handle: null,
+              isGroup: true,
+              isFromMe: false,
+              guid: null,
+              chatGuid,
+              date: 1_700_000_005,
+            },
+          }),
+          createMockResponse(),
+        );
+
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(2);
+        const callBodies = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls.map(
+          (call) => call[0].ctx.Body,
+        );
+        expect(callBodies).toContain("first message");
+        expect(callBodies).toContain("second message");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not coalesce distinct group messages when sender identity and timestamp fall in the same second", async () => {
+      vi.useFakeTimers();
+      try {
+        const account = createMockAccount({ dmPolicy: "open", groupPolicy: "open" });
+        const config: OpenClawConfig = {};
+        const core = createMockRuntime();
+
+        // Use a timing-aware debouncer test double that respects debounceMs/buildKey/shouldDebounce.
+        // oxlint-disable-next-line typescript/no-explicit-any
+        core.channel.debounce.createInboundDebouncer = vi.fn((params: any) => {
+          // oxlint-disable-next-line typescript/no-explicit-any
+          type Item = any;
+          const buckets = new Map<
+            string,
+            { items: Item[]; timer: ReturnType<typeof setTimeout> | null }
+          >();
+
+          const flush = async (key: string) => {
+            const bucket = buckets.get(key);
+            if (!bucket) {
+              return;
+            }
+            if (bucket.timer) {
+              clearTimeout(bucket.timer);
+              bucket.timer = null;
+            }
+            const items = bucket.items;
+            bucket.items = [];
+            if (items.length > 0) {
+              try {
+                await params.onFlush(items);
+              } catch (err) {
+                params.onError?.(err);
+                throw err;
+              }
+            }
+          };
+
+          return {
+            enqueue: async (item: Item) => {
+              if (params.shouldDebounce && !params.shouldDebounce(item)) {
+                await params.onFlush([item]);
+                return;
+              }
+
+              const key = params.buildKey(item);
+              const existing = buckets.get(key);
+              const bucket = existing ?? { items: [], timer: null };
+              bucket.items.push(item);
+              if (bucket.timer) {
+                clearTimeout(bucket.timer);
+              }
+              bucket.timer = setTimeout(async () => {
+                await flush(key);
+              }, params.debounceMs);
+              buckets.set(key, bucket);
+            },
+            flushKey: vi.fn(async (key: string) => {
+              await flush(key);
+            }),
+          };
+        }) as unknown as PluginRuntime["channel"]["debounce"]["createInboundDebouncer"];
+
+        setBlueBubblesRuntime(core);
+
+        unregister = registerBlueBubblesWebhookTarget({
+          account,
+          config,
+          runtime: { log: vi.fn(), error: vi.fn() },
+          core,
+          path: "/bluebubbles-webhook",
+        });
+
+        const chatGuid = "iMessage;+;group-missing-sender-same-second";
+
+        await handleBlueBubblesWebhookRequest(
+          createMockRequest("POST", "/bluebubbles-webhook", {
+            type: "new-message",
+            data: {
+              text: "first same second",
+              handle: null,
+              isGroup: true,
+              isFromMe: false,
+              guid: null,
+              chatGuid,
+              date: 1_700_000_000,
+            },
+          }),
+          createMockResponse(),
+        );
+
+        await handleBlueBubblesWebhookRequest(
+          createMockRequest("POST", "/bluebubbles-webhook", {
+            type: "new-message",
+            data: {
+              text: "second same second",
+              handle: null,
+              isGroup: true,
+              isFromMe: false,
+              guid: null,
+              chatGuid,
+              date: 1_700_000_000,
+            },
+          }),
+          createMockResponse(),
+        );
+
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(2);
+        const callBodies = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls.map(
+          (call) => call[0].ctx.Body,
+        );
+        expect(callBodies).toContain("first same second");
+        expect(callBodies).toContain("second same second");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not coalesce distinct group messages when sender identity, messageId, and timestamp are all missing", async () => {
+      vi.useFakeTimers();
+      try {
+        const account = createMockAccount({ dmPolicy: "open", groupPolicy: "open" });
+        const config: OpenClawConfig = {};
+        const core = createMockRuntime();
+
+        // Use a timing-aware debouncer test double that respects debounceMs/buildKey/shouldDebounce.
+        // oxlint-disable-next-line typescript/no-explicit-any
+        core.channel.debounce.createInboundDebouncer = vi.fn((params: any) => {
+          // oxlint-disable-next-line typescript/no-explicit-any
+          type Item = any;
+          const buckets = new Map<
+            string,
+            { items: Item[]; timer: ReturnType<typeof setTimeout> | null }
+          >();
+
+          const flush = async (key: string) => {
+            const bucket = buckets.get(key);
+            if (!bucket) {
+              return;
+            }
+            if (bucket.timer) {
+              clearTimeout(bucket.timer);
+              bucket.timer = null;
+            }
+            const items = bucket.items;
+            bucket.items = [];
+            if (items.length > 0) {
+              try {
+                await params.onFlush(items);
+              } catch (err) {
+                params.onError?.(err);
+                throw err;
+              }
+            }
+          };
+
+          return {
+            enqueue: async (item: Item) => {
+              if (params.shouldDebounce && !params.shouldDebounce(item)) {
+                await params.onFlush([item]);
+                return;
+              }
+
+              const key = params.buildKey(item);
+              const existing = buckets.get(key);
+              const bucket = existing ?? { items: [], timer: null };
+              bucket.items.push(item);
+              if (bucket.timer) {
+                clearTimeout(bucket.timer);
+              }
+              bucket.timer = setTimeout(async () => {
+                await flush(key);
+              }, params.debounceMs);
+              buckets.set(key, bucket);
+            },
+            flushKey: vi.fn(async (key: string) => {
+              await flush(key);
+            }),
+          };
+        }) as unknown as PluginRuntime["channel"]["debounce"]["createInboundDebouncer"];
+
+        setBlueBubblesRuntime(core);
+
+        unregister = registerBlueBubblesWebhookTarget({
+          account,
+          config,
+          runtime: { log: vi.fn(), error: vi.fn() },
+          core,
+          path: "/bluebubbles-webhook",
+        });
+
+        const chatGuid = "iMessage;+;group-missing-sender-no-timestamp";
+
+        await handleBlueBubblesWebhookRequest(
+          createMockRequest("POST", "/bluebubbles-webhook", {
+            type: "new-message",
+            data: {
+              text: "first no timestamp",
+              handle: null,
+              isGroup: true,
+              isFromMe: false,
+              guid: null,
+              chatGuid,
+            },
+          }),
+          createMockResponse(),
+        );
+
+        await handleBlueBubblesWebhookRequest(
+          createMockRequest("POST", "/bluebubbles-webhook", {
+            type: "new-message",
+            data: {
+              text: "second no timestamp",
+              handle: null,
+              isGroup: true,
+              isFromMe: false,
+              guid: null,
+              chatGuid,
+            },
+          }),
+          createMockResponse(),
+        );
+
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(2);
+        const callBodies = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls.map(
+          (call) => call[0].ctx.Body,
+        );
+        expect(callBodies).toContain("first no timestamp");
+        expect(callBodies).toContain("second no timestamp");
       } finally {
         vi.useRealTimers();
       }

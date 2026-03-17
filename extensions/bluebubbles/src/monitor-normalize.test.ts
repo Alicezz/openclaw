@@ -45,7 +45,7 @@ describe("normalizeWebhookMessage", () => {
     expect(result?.senderIdExplicit).toBe(true);
   });
 
-  it("does not infer sender from group chatGuid when sender handle is missing", () => {
+  it("preserves group messages when sender handle is missing", () => {
     const result = normalizeWebhookMessage({
       type: "new-message",
       data: {
@@ -58,7 +58,79 @@ describe("normalizeWebhookMessage", () => {
       },
     });
 
+    expect(result).not.toBeNull();
+    expect(result?.senderId).toBe("");
+    expect(result?.senderIdExplicit).toBe(false);
+    expect(result?.isGroup).toBe(true);
+  });
+
+  it("drops blank chatGuid and falls back to chatIdentifier for degraded groups", () => {
+    const result = normalizeWebhookMessage({
+      type: "new-message",
+      data: {
+        guid: "msg-blank-chat-guid",
+        text: "hello group",
+        isGroup: true,
+        isFromMe: false,
+        handle: null,
+        chatGuid: "   ",
+        chatIdentifier: "group-fallback-id",
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.chatGuid).toBeUndefined();
+    expect(result?.chatIdentifier).toBe("group-fallback-id");
+    expect(result?.senderId).toBe("");
+  });
+
+  it("drops group messages with missing sender and no chat identity", () => {
+    const result = normalizeWebhookMessage({
+      type: "new-message",
+      data: {
+        guid: "msg-no-chat-1",
+        text: "hello group",
+        isGroup: true,
+        isFromMe: false,
+        handle: null,
+      },
+    });
+
     expect(result).toBeNull();
+  });
+
+  it("drops degraded group messages when chatId is 0", () => {
+    const result = normalizeWebhookMessage({
+      type: "new-message",
+      data: {
+        guid: "msg-chatid-zero",
+        text: "hello group",
+        isGroup: true,
+        isFromMe: false,
+        handle: null,
+        chatId: 0,
+      },
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("falls back to me for fromMe messages when sender handle is missing", () => {
+    const result = normalizeWebhookMessage({
+      type: "new-message",
+      data: {
+        guid: "msg-fromme-1",
+        text: "hello group",
+        isGroup: true,
+        isFromMe: true,
+        handle: null,
+        chatGuid: "iMessage;+;chat123456",
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.senderId).toBe("me");
+    expect(result?.senderIdExplicit).toBe(false);
   });
 
   it("accepts array-wrapped payload data", () => {
@@ -96,5 +168,58 @@ describe("normalizeWebhookReaction", () => {
     expect(result?.senderIdExplicit).toBe(false);
     expect(result?.messageId).toBe("p:0/msg-1");
     expect(result?.action).toBe("added");
+  });
+
+  it("preserves group reactions when sender handle is missing", () => {
+    const result = normalizeWebhookReaction({
+      type: "updated-message",
+      data: {
+        guid: "msg-2",
+        associatedMessageGuid: "p:0/msg-1",
+        associatedMessageType: 2000,
+        isGroup: true,
+        isFromMe: false,
+        handle: null,
+        chatGuid: "iMessage;+;chat123456",
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.senderId).toBe("");
+    expect(result?.senderIdExplicit).toBe(false);
+    expect(result?.messageId).toBe("p:0/msg-1");
+  });
+
+  it("drops group reactions with missing sender and no chat identity", () => {
+    const result = normalizeWebhookReaction({
+      type: "updated-message",
+      data: {
+        guid: "msg-no-chat-2",
+        associatedMessageGuid: "p:0/msg-1",
+        associatedMessageType: 2000,
+        isGroup: true,
+        isFromMe: false,
+        handle: null,
+      },
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("drops degraded group reactions when chatId is 0", () => {
+    const result = normalizeWebhookReaction({
+      type: "updated-message",
+      data: {
+        guid: "msg-reaction-chatid-zero",
+        associatedMessageGuid: "p:0/msg-1",
+        associatedMessageType: 2000,
+        isGroup: true,
+        isFromMe: false,
+        handle: null,
+        chatId: 0,
+      },
+    });
+
+    expect(result).toBeNull();
   });
 });

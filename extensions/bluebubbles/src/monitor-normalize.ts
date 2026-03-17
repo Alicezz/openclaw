@@ -39,6 +39,11 @@ function readNumberLike(record: Record<string, unknown> | null, key: string): nu
   return parseFiniteNumber(record[key]);
 }
 
+function trimOrUndefined(value?: string | null): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function extractAttachments(message: Record<string, unknown>): BlueBubblesAttachment[] {
   const raw = message["attachments"];
   if (!Array.isArray(raw)) {
@@ -230,23 +235,23 @@ function extractChatContext(message: Record<string, unknown>): {
   const chat = asRecord(message.chat) ?? asRecord(message.conversation) ?? null;
   const chatFromList = readFirstChatRecord(message);
   const chatGuid =
-    readString(message, "chatGuid") ??
-    readString(message, "chat_guid") ??
-    readString(chat, "chatGuid") ??
-    readString(chat, "chat_guid") ??
-    readString(chat, "guid") ??
-    readString(chatFromList, "chatGuid") ??
-    readString(chatFromList, "chat_guid") ??
-    readString(chatFromList, "guid");
+    trimOrUndefined(readString(message, "chatGuid")) ??
+    trimOrUndefined(readString(message, "chat_guid")) ??
+    trimOrUndefined(readString(chat, "chatGuid")) ??
+    trimOrUndefined(readString(chat, "chat_guid")) ??
+    trimOrUndefined(readString(chat, "guid")) ??
+    trimOrUndefined(readString(chatFromList, "chatGuid")) ??
+    trimOrUndefined(readString(chatFromList, "chat_guid")) ??
+    trimOrUndefined(readString(chatFromList, "guid"));
   const chatIdentifier =
-    readString(message, "chatIdentifier") ??
-    readString(message, "chat_identifier") ??
-    readString(chat, "chatIdentifier") ??
-    readString(chat, "chat_identifier") ??
-    readString(chat, "identifier") ??
-    readString(chatFromList, "chatIdentifier") ??
-    readString(chatFromList, "chat_identifier") ??
-    readString(chatFromList, "identifier") ??
+    trimOrUndefined(readString(message, "chatIdentifier")) ??
+    trimOrUndefined(readString(message, "chat_identifier")) ??
+    trimOrUndefined(readString(chat, "chatIdentifier")) ??
+    trimOrUndefined(readString(chat, "chat_identifier")) ??
+    trimOrUndefined(readString(chat, "identifier")) ??
+    trimOrUndefined(readString(chatFromList, "chatIdentifier")) ??
+    trimOrUndefined(readString(chatFromList, "chat_identifier")) ??
+    trimOrUndefined(readString(chatFromList, "identifier")) ??
     extractChatIdentifierFromChatGuid(chatGuid);
   const chatId =
     readNumberLike(message, "chatId") ??
@@ -673,6 +678,38 @@ function extractMessagePayload(payload: Record<string, unknown>): Record<string,
   return null;
 }
 
+function resolveNormalizedWebhookSender(params: {
+  senderId: string;
+  senderIdExplicit: boolean;
+  isGroup: boolean;
+  chatGuid?: string;
+  chatIdentifier?: string;
+  chatId?: number;
+  fromMe?: boolean;
+}): string | null {
+  const senderFallbackFromChatGuid =
+    !params.senderIdExplicit && !params.isGroup && params.chatGuid
+      ? extractHandleFromChatGuid(params.chatGuid)
+      : null;
+  const normalizedSender = normalizeBlueBubblesHandle(
+    params.senderId || senderFallbackFromChatGuid || "",
+  );
+  if (normalizedSender) {
+    return normalizedSender;
+  }
+  if (params.fromMe) {
+    return "me";
+  }
+  const hasStableGroupChatIdentity =
+    Boolean(params.chatGuid?.trim()) ||
+    Boolean(params.chatIdentifier?.trim()) ||
+    (typeof params.chatId === "number" && params.chatId > 0);
+  // Preserve group events with missing sender identity so processing can degrade
+  // gracefully instead of dropping the entire message or reaction. Still require
+  // a stable chat identity so unrelated degraded group events do not merge.
+  return params.isGroup && hasStableGroupChatIdentity ? "" : null;
+}
+
 export function normalizeWebhookMessage(
   payload: Record<string, unknown>,
 ): NormalizedWebhookMessage | null {
@@ -730,11 +767,16 @@ export function normalizeWebhookMessage(
         : timestampRaw * 1000
       : undefined;
 
-  // BlueBubbles may omit `handle` in webhook payloads; for DM chat GUIDs we can still infer sender.
-  const senderFallbackFromChatGuid =
-    !senderIdExplicit && !isGroup && chatGuid ? extractHandleFromChatGuid(chatGuid) : null;
-  const normalizedSender = normalizeBlueBubblesHandle(senderId || senderFallbackFromChatGuid || "");
-  if (!normalizedSender) {
+  const normalizedSender = resolveNormalizedWebhookSender({
+    senderId,
+    senderIdExplicit,
+    isGroup,
+    chatGuid,
+    chatIdentifier,
+    chatId,
+    fromMe,
+  });
+  if (normalizedSender === null) {
     return null;
   }
   const replyMetadata = extractReplyMetadata(message);
@@ -808,10 +850,16 @@ export function normalizeWebhookReaction(
         : timestampRaw * 1000
       : undefined;
 
-  const senderFallbackFromChatGuid =
-    !senderIdExplicit && !isGroup && chatGuid ? extractHandleFromChatGuid(chatGuid) : null;
-  const normalizedSender = normalizeBlueBubblesHandle(senderId || senderFallbackFromChatGuid || "");
-  if (!normalizedSender) {
+  const normalizedSender = resolveNormalizedWebhookSender({
+    senderId,
+    senderIdExplicit,
+    isGroup,
+    chatGuid,
+    chatIdentifier,
+    chatId,
+    fromMe,
+  });
+  if (normalizedSender === null) {
     return null;
   }
 

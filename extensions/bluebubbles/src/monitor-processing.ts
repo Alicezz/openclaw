@@ -79,6 +79,7 @@ type PendingOutboundMessageId = {
 
 const pendingOutboundMessageIds: PendingOutboundMessageId[] = [];
 let pendingOutboundMessageIdCounter = 0;
+let reactionFallbackSequence = 0;
 
 function trimOrUndefined(value?: string | null): string | undefined {
   const trimmed = value?.trim();
@@ -87,6 +88,25 @@ function trimOrUndefined(value?: string | null): string | undefined {
 
 function normalizeSnippet(value: string): string {
   return stripMarkdown(value).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function resolveKnownBlueBubblesSenderId(senderId?: string | null): string | undefined {
+  return trimOrUndefined(senderId);
+}
+
+function resolveBlueBubblesSenderLabel(params: {
+  fromMe?: boolean;
+  senderName?: string;
+  senderId?: string | null;
+}): string {
+  if (params.fromMe) {
+    return "me";
+  }
+  return (
+    trimOrUndefined(params.senderName) ??
+    resolveKnownBlueBubblesSenderId(params.senderId) ??
+    "unknown sender"
+  );
 }
 
 function isBlueBubblesSelfChatMessage(
@@ -476,15 +496,18 @@ export async function processMessage(
       : `reacted with ${tapbackParsed.emoji}`
     : text || placeholder;
   const isSelfChatMessage = isBlueBubblesSelfChatMessage(message, isGroup);
-  const selfChatLookup = {
-    accountId: account.accountId,
-    chatGuid: message.chatGuid,
-    chatIdentifier: message.chatIdentifier,
-    chatId: message.chatId,
-    senderId: message.senderId,
-    body: rawBody,
-    timestamp: message.timestamp,
-  };
+  const knownSenderId = resolveKnownBlueBubblesSenderId(message.senderId);
+  const selfChatLookup = knownSenderId
+    ? {
+        accountId: account.accountId,
+        chatGuid: message.chatGuid,
+        chatIdentifier: message.chatIdentifier,
+        chatId: message.chatId,
+        senderId: knownSenderId,
+        body: rawBody,
+        timestamp: message.timestamp,
+      }
+    : null;
 
   const cacheMessageId = message.messageId?.trim();
   const confirmedOutboundCacheEntry = cacheMessageId
@@ -507,7 +530,11 @@ export async function processMessage(
       chatGuid: message.chatGuid,
       chatIdentifier: message.chatIdentifier,
       chatId: message.chatId,
-      senderLabel: message.fromMe ? "me" : message.senderId,
+      senderLabel: resolveBlueBubblesSenderLabel({
+        fromMe: message.fromMe,
+        senderName: message.senderName,
+        senderId: message.senderId,
+      }),
       body: rawBody,
       timestamp: message.timestamp ?? Date.now(),
     });
@@ -520,7 +547,7 @@ export async function processMessage(
     const confirmedAssistantOutbound =
       confirmedOutboundCacheEntry?.senderLabel === "me" &&
       normalizeSnippet(confirmedOutboundCacheEntry.body ?? "") === normalizeSnippet(rawBody);
-    if (isSelfChatMessage && confirmedAssistantOutbound) {
+    if (isSelfChatMessage && confirmedAssistantOutbound && selfChatLookup) {
       rememberBlueBubblesSelfChatCopy(selfChatLookup);
     }
     if (cacheMessageId) {
@@ -546,19 +573,23 @@ export async function processMessage(
     return;
   }
 
-  if (isSelfChatMessage && hasBlueBubblesSelfChatCopy(selfChatLookup)) {
-    logVerbose(core, runtime, `drop: reflected self-chat duplicate sender=${message.senderId}`);
+  if (isSelfChatMessage && selfChatLookup && hasBlueBubblesSelfChatCopy(selfChatLookup)) {
+    logVerbose(
+      core,
+      runtime,
+      `drop: reflected self-chat duplicate sender=${knownSenderId ?? "unknown"}`,
+    );
     return;
   }
 
   if (!rawBody) {
-    logVerbose(core, runtime, `drop: empty text sender=${message.senderId}`);
+    logVerbose(core, runtime, `drop: empty text sender=${knownSenderId ?? "unknown"}`);
     return;
   }
   logVerbose(
     core,
     runtime,
-    `msg sender=${message.senderId} group=${isGroup} textLen=${text.length} attachments=${attachments.length} chatGuid=${message.chatGuid ?? ""} chatId=${message.chatId ?? ""}`,
+    `msg sender=${knownSenderId ?? "unknown"} group=${isGroup} textLen=${text.length} attachments=${attachments.length} chatGuid=${message.chatGuid ?? ""} chatId=${message.chatId ?? ""}`,
   );
 
   const dmPolicy = account.config.dmPolicy ?? "pairing";
@@ -623,12 +654,12 @@ export async function processMessage(
         logVerbose(
           core,
           runtime,
-          `Blocked BlueBubbles sender ${message.senderId} (not in groupAllowFrom)`,
+          `Blocked BlueBubbles sender ${knownSenderId ?? "unknown"} (not in groupAllowFrom)`,
         );
         logVerbose(
           core,
           runtime,
-          `drop: group sender not allowed sender=${message.senderId} allowFrom=${effectiveGroupAllowFrom.join(",")}`,
+          `drop: group sender not allowed sender=${knownSenderId ?? "unknown"} allowFrom=${effectiveGroupAllowFrom.join(",")}`,
         );
         logGroupAllowlistHint({
           runtime,
@@ -643,8 +674,8 @@ export async function processMessage(
     }
 
     if (accessDecision.reasonCode === DM_GROUP_ACCESS_REASON.DM_POLICY_DISABLED) {
-      logVerbose(core, runtime, `Blocked BlueBubbles DM from ${message.senderId}`);
-      logVerbose(core, runtime, `drop: dmPolicy disabled sender=${message.senderId}`);
+      logVerbose(core, runtime, `Blocked BlueBubbles DM from ${knownSenderId ?? "unknown"}`);
+      logVerbose(core, runtime, `drop: dmPolicy disabled sender=${knownSenderId ?? "unknown"}`);
       return;
     }
 
@@ -683,12 +714,12 @@ export async function processMessage(
     logVerbose(
       core,
       runtime,
-      `Blocked unauthorized BlueBubbles sender ${message.senderId} (dmPolicy=${dmPolicy})`,
+      `Blocked unauthorized BlueBubbles sender ${knownSenderId ?? "unknown"} (dmPolicy=${dmPolicy})`,
     );
     logVerbose(
       core,
       runtime,
-      `drop: dm sender not allowed sender=${message.senderId} allowFrom=${effectiveAllowFrom.join(",")}`,
+      `drop: dm sender not allowed sender=${knownSenderId ?? "unknown"} allowFrom=${effectiveAllowFrom.join(",")}`,
     );
     return;
   }
@@ -765,7 +796,7 @@ export async function processMessage(
       log: (msg) => logVerbose(core, runtime, msg),
       channel: "bluebubbles",
       reason: "control command (unauthorized)",
-      target: message.senderId,
+      target: knownSenderId ?? peerId,
     });
     return;
   }
@@ -891,17 +922,20 @@ export async function processMessage(
   // Build fromLabel the same way as iMessage/Signal (formatInboundFromLabel):
   // group label + id for groups, sender for DMs.
   // The sender identity is included in the envelope body via formatInboundEnvelope.
-  const senderLabel = message.senderName || `user:${message.senderId}`;
+  const senderLabel = resolveBlueBubblesSenderLabel({
+    senderName: message.senderName,
+    senderId: message.senderId,
+  });
   const fromLabel = isGroup
     ? `${message.chatName?.trim() || "Group"} id:${peerId}`
-    : senderLabel !== message.senderId
-      ? `${senderLabel} id:${message.senderId}`
+    : knownSenderId && senderLabel !== knownSenderId
+      ? `${senderLabel} id:${knownSenderId}`
       : senderLabel;
   const groupSubject = isGroup ? message.chatName?.trim() || undefined : undefined;
   const groupMembers = isGroup
     ? formatGroupMembers({
         participants: message.participants,
-        fallback: message.senderId ? { id: message.senderId, name: message.senderName } : undefined,
+        fallback: knownSenderId ? { id: knownSenderId, name: message.senderName } : undefined,
       })
     : undefined;
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
@@ -920,7 +954,7 @@ export async function processMessage(
     envelope: envelopeOptions,
     body: baseBody,
     chatType: isGroup ? "group" : "direct",
-    sender: { name: message.senderName || undefined, id: message.senderId },
+    sender: { name: message.senderName || undefined, id: knownSenderId },
   });
   let chatGuidForActions = chatGuid;
   if (!chatGuidForActions && baseUrl && password) {
@@ -1054,7 +1088,7 @@ export async function processMessage(
     chatGuid ||
     chatIdentifier ||
     (chatId ? String(chatId) : null) ||
-    (isGroup ? null : message.senderId) ||
+    (isGroup ? null : knownSenderId) ||
     "";
   const historyKey = historyIdentifier
     ? buildAccountScopedHistoryKey(account.accountId, historyIdentifier)
@@ -1063,7 +1097,11 @@ export async function processMessage(
   // Record the current message into rolling history
   if (historyKey && historyLimit > 0) {
     const nowMs = Date.now();
-    const senderLabel = message.fromMe ? "me" : message.senderName || message.senderId;
+    const senderLabel = resolveBlueBubblesSenderLabel({
+      fromMe: message.fromMe,
+      senderName: message.senderName,
+      senderId: message.senderId,
+    });
     const normalizedHistoryBody = truncateHistoryBody(text, MAX_STORED_HISTORY_ENTRY_CHARS);
     const currentEntries = recordPendingHistoryEntryIfEnabled({
       historyMap: chatHistories,
@@ -1181,7 +1219,7 @@ export async function processMessage(
     GroupSubject: groupSubject,
     GroupMembers: groupMembers,
     SenderName: message.senderName || undefined,
-    SenderId: message.senderId,
+    SenderId: knownSenderId,
     Provider: "bluebubbles",
     Surface: "bluebubbles",
     // Use short ID for token savings (agent can use this to reference the message)
@@ -1479,6 +1517,7 @@ export async function processReaction(
     return;
   }
 
+  const knownSenderId = resolveKnownBlueBubblesSenderId(reaction.senderId);
   const chatId = reaction.chatId ?? undefined;
   const chatGuid = reaction.chatGuid ?? undefined;
   const chatIdentifier = reaction.chatIdentifier ?? undefined;
@@ -1496,7 +1535,10 @@ export async function processReaction(
     },
   });
 
-  const senderLabel = reaction.senderName || reaction.senderId;
+  const senderLabel = resolveBlueBubblesSenderLabel({
+    senderName: reaction.senderName,
+    senderId: reaction.senderId,
+  });
   const chatLabel = reaction.isGroup ? ` in group:${peerId}` : "";
   // Use short ID for token savings
   const messageDisplayId = getShortIdForUuid(reaction.messageId) || reaction.messageId;
@@ -1507,7 +1549,7 @@ export async function processReaction(
       : `${senderLabel} reacted with ${reaction.emoji} [[reply_to:${messageDisplayId}]]${chatLabel}`;
   core.system.enqueueSystemEvent(text, {
     sessionKey: route.sessionKey,
-    contextKey: `bluebubbles:reaction:${reaction.action}:${peerId}:${reaction.messageId}:${reaction.senderId}:${reaction.emoji}`,
+    contextKey: `bluebubbles:reaction:${reaction.action}:${peerId}:${reaction.messageId}:${knownSenderId ?? `unknown:${reactionFallbackSequence++}`}:${reaction.emoji}`,
   });
   logVerbose(core, runtime, `reaction event enqueued: ${text}`);
 }

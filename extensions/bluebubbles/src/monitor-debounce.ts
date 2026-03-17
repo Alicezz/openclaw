@@ -120,6 +120,7 @@ export function createBlueBubblesDebounceRegistry(params: {
       }
 
       const { account, config, runtime, core } = target;
+      let fallbackSequence = 0;
       const debouncer = core.channel.debounce.createInboundDebouncer<BlueBubblesDebounceEntry>({
         debounceMs: resolveBlueBubblesDebounceMs(config, core),
         buildKey: (entry) => {
@@ -145,7 +146,18 @@ export function createBlueBubblesDebounceRegistry(params: {
             msg.chatGuid?.trim() ??
             msg.chatIdentifier?.trim() ??
             (msg.chatId ? String(msg.chatId) : "dm");
-          return `bluebubbles:${account.accountId}:${chatKey}:${msg.senderId}`;
+          const senderKey = msg.senderId.trim();
+          if (senderKey) {
+            return `bluebubbles:${account.accountId}:${chatKey}:${senderKey}`;
+          }
+          // In the fully degraded unknown-sender path, favor keeping events distinct over
+          // coalescing by a weak timestamp heuristic. BlueBubbles payloads can fall back to
+          // second-resolution timestamps, which would otherwise merge unrelated messages.
+          const timestampKey =
+            typeof msg.timestamp === "number"
+              ? `ts:${msg.timestamp}:${fallbackSequence++}`
+              : `unknown-sender:${fallbackSequence++}`;
+          return `bluebubbles:${account.accountId}:${chatKey}:${timestampKey}`;
         },
         shouldDebounce: (entry) => {
           const msg = entry.message;
