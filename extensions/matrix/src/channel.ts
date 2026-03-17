@@ -71,7 +71,7 @@ function normalizeMatrixMessagingTarget(raw: string): string | undefined {
 const matrixConfigAccessors = createScopedAccountConfigAccessors({
   resolveAccount: ({ cfg, accountId }) =>
     resolveMatrixAccountConfig({ cfg: cfg as CoreConfig, accountId }),
-  resolveAllowFrom: (account) => account.dm?.allowFrom,
+  resolveAllowFrom: (account) => account.config.allowFrom ?? account.config.dm?.allowFrom,
   formatAllowFrom: (allowFrom) => normalizeMatrixAllowList(allowFrom),
 });
 
@@ -94,7 +94,7 @@ const matrixConfigBase = createScopedChannelConfigBase<ResolvedMatrixAccount, Co
 const resolveMatrixDmPolicy = createScopedDmSecurityResolver<ResolvedMatrixAccount>({
   channelKey: "matrix",
   resolvePolicy: (account) => account.config.dm?.policy,
-  resolveAllowFrom: (account) => account.config.dm?.allowFrom,
+  resolveAllowFrom: (account) => account.config.allowFrom ?? account.config.dm?.allowFrom,
   allowFromPathSuffix: "dm.",
   normalizeEntry: (raw) => normalizeMatrixUserId(raw),
 });
@@ -193,7 +193,7 @@ export const matrixPlugin: ChannelPlugin<ResolvedMatrixAccount> = {
       const q = query?.trim().toLowerCase() || "";
       const ids = new Set<string>();
 
-      for (const entry of account.config.dm?.allowFrom ?? []) {
+      for (const entry of account.config.allowFrom ?? account.config.dm?.allowFrom ?? []) {
         const raw = String(entry).trim();
         if (!raw || raw === "*") {
           continue;
