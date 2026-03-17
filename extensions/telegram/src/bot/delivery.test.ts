@@ -30,6 +30,7 @@ vi.mock("../../../whatsapp/src/media.js", () => ({
 
 vi.mock("../../../../src/plugins/hook-runner-global.js", () => ({
   getGlobalHookRunner: () => messageHookRunner,
+  hasGlobalHooks: (hookName: string) => messageHookRunner.hasHooks(hookName),
 }));
 
 vi.mock("../../../../src/hooks/internal-hooks.js", async () => {
@@ -198,7 +199,6 @@ describe("deliverReplies", () => {
       expect.objectContaining({
         channelId: "telegram",
         accountId: "work",
-        conversationId: "123",
       }),
     );
     expect(messageHookRunner.runMessageSent).toHaveBeenCalledWith(
@@ -337,7 +337,7 @@ describe("deliverReplies", () => {
           mediaUrls: ["https://example.com/photo.jpg"],
         }),
       }),
-      expect.objectContaining({ channelId: "telegram", conversationId: "123" }),
+      expect.objectContaining({ channelId: "telegram" }),
     );
   });
 

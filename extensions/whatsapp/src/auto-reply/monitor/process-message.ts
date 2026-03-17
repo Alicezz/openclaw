@@ -411,6 +411,7 @@ export async function processMessage(params: {
         await deliverWebReply({
           replyResult: payload,
           msg: params.msg,
+          accountId: params.msg.accountId,
           mediaLocalRoots,
           maxMediaBytes: params.maxMediaBytes,
           textLimit,

@@ -49,6 +49,7 @@ export async function deliverReplies(params: {
       content: rawText,
       channel: "slack",
       accountId: params.accountId,
+      metadata: { threadTs },
     });
     if (hookResult === null) continue;
     const text = hookResult.content;

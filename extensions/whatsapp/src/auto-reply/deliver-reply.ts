@@ -29,6 +29,7 @@ function shouldSuppressReasoningReply(payload: ReplyPayload): boolean {
 export async function deliverWebReply(params: {
   replyResult: ReplyPayload;
   msg: WebInboundMsg;
+  accountId?: string;
   mediaLocalRoots?: readonly string[];
   maxMediaBytes: number;
   textLimit: number;
@@ -53,6 +54,7 @@ export async function deliverWebReply(params: {
     to: msg.from,
     content: replyResult.text || "",
     channel: "whatsapp",
+    accountId: params.accountId,
   });
   if (hookResult === null) return;
   const convertedText = markdownToWhatsApp(convertMarkdownTables(hookResult.content, tableMode));

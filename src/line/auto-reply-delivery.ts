@@ -114,12 +114,18 @@ export async function deliverLineAutoReply(params: {
     richMessages.push(deps.createLocationMessage(lineData.location));
   }
 
-  const hookResult = await runOutboundMessageHook({
-    to,
-    content: payload.text ?? "",
-    channel: "line",
-    accountId,
-  });
+  // Skip the hook when text is empty but rich messages are already built;
+  // a plugin cancel on empty text would silently drop flex/template/location content.
+  const rawText = payload.text ?? "";
+  const hookResult =
+    !rawText.trim() && richMessages.length > 0
+      ? { content: rawText }
+      : await runOutboundMessageHook({
+          to,
+          content: rawText,
+          channel: "line",
+          accountId,
+        });
   if (hookResult === null) {
     return { replyTokenUsed };
   }

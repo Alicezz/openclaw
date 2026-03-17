@@ -13,6 +13,8 @@ export async function runOutboundMessageHook(params: {
   content: string;
   channel: string;
   accountId?: string;
+  /** Extra fields merged into the hook metadata (e.g. threadTs, mediaUrls). */
+  metadata?: Record<string, unknown>;
 }): Promise<{ content: string } | null> {
   if (!hasGlobalHooks("message_sending")) {
     return { content: params.content };
@@ -29,6 +31,7 @@ export async function runOutboundMessageHook(params: {
         metadata: {
           channel: params.channel,
           accountId: params.accountId,
+          ...params.metadata,
         },
       },
       {

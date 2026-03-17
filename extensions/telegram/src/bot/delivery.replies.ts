@@ -19,6 +19,7 @@ import { formatErrorMessage } from "../../../../src/infra/errors.js";
 import { buildOutboundMediaLoadOptions } from "../../../../src/media/load-options.js";
 import { isGifMedia, kindFromMime } from "../../../../src/media/mime.js";
 import { getGlobalHookRunner } from "../../../../src/plugins/hook-runner-global.js";
+import { runOutboundMessageHook } from "../../../../src/plugins/outbound-hook.js";
 import type { RuntimeEnv } from "../../../../src/runtime.js";
 import { loadWebMedia } from "../../../whatsapp/src/media.js";
 import type { TelegramInlineButtons } from "../button-types.js";
@@ -579,7 +580,6 @@ export async function deliverReplies(params: {
     deliveredCount: 0,
   };
   const hookRunner = getGlobalHookRunner();
-  const hasMessageSendingHooks = hookRunner?.hasHooks("message_sending") ?? false;
   const hasMessageSentHooks = hookRunner?.hasHooks("message_sent") ?? false;
   const chunkText = buildChunkTextResolver({
     textLimit: params.textLimit,
@@ -604,29 +604,21 @@ export async function deliverReplies(params: {
     }
 
     const rawContent = reply.text || "";
-    if (hasMessageSendingHooks) {
-      const hookResult = await hookRunner?.runMessageSending(
-        {
-          to: params.chatId,
-          content: rawContent,
-          metadata: {
-            channel: "telegram",
-            mediaUrls: mediaList,
-            threadId: params.thread?.id,
-          },
-        },
-        {
-          channelId: "telegram",
-          accountId: params.accountId,
-          conversationId: params.chatId,
-        },
-      );
-      if (hookResult?.cancel) {
-        continue;
-      }
-      if (typeof hookResult?.content === "string" && hookResult.content !== rawContent) {
-        reply = { ...reply, text: hookResult.content };
-      }
+    const hookResult = await runOutboundMessageHook({
+      to: params.chatId,
+      content: rawContent,
+      channel: "telegram",
+      accountId: params.accountId,
+      metadata: {
+        mediaUrls: mediaList,
+        threadId: params.thread?.id,
+      },
+    });
+    if (hookResult === null) {
+      continue;
+    }
+    if (hookResult.content !== rawContent) {
+      reply = { ...reply, text: hookResult.content };
     }
 
     const contentForSentHook = reply.text || "";
