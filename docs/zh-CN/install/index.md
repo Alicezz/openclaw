@@ -132,8 +132,8 @@ x-i18n:
         git clone https://github.com/openclaw/openclaw.git
         cd openclaw
         pnpm install
-        pnpm ui:build
         pnpm build
+        pnpm ui:build # 首次运行时自动安装 UI 依赖
         ```
       </Step>
       <Step title="链接 CLI">
