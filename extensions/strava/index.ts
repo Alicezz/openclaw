@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as path from "node:path";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { TokenStore, exchangeCode, buildAuthUrl } from "./src/oauth.js";
+import { TokenStore, exchangeCode, buildAuthUrl, generateOAuthState } from "./src/oauth.js";
 import { createStravaTools } from "./src/tools.js";
 import type { StravaConfig } from "./src/types.js";
 
@@ -49,7 +49,22 @@ const stravaPlugin = {
         try {
           const url = new URL(req.url!, `http://${req.headers.host}`);
           const code = url.searchParams.get("code");
+          const state = url.searchParams.get("state");
           const error = url.searchParams.get("error");
+
+          // Validate OAuth state nonce to prevent CSRF.
+          const expectedState = tokenStore.consumeState();
+          if (!expectedState || state !== expectedState) {
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "text/html");
+            res.end(
+              htmlPage(
+                "Invalid State",
+                "OAuth state mismatch — this request may not have originated from your gateway. Please try connecting again.",
+              ),
+            );
+            return;
+          }
 
           if (error) {
             res.statusCode = 400;
@@ -101,7 +116,9 @@ const stravaPlugin = {
     api.registerHttpRoute({
       path: OAUTH_START_PATH,
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
-        const authUrl = buildAuthUrl(clientId, getRedirectUri());
+        const state = generateOAuthState();
+        tokenStore.saveState(state);
+        const authUrl = buildAuthUrl(clientId, getRedirectUri(), state);
         res.statusCode = 302;
         res.setHeader("Location", authUrl);
         res.end();

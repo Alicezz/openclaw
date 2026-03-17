@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { StravaConfig, StravaTokens } from "./types.js";
@@ -5,10 +6,11 @@ import type { StravaConfig, StravaTokens } from "./types.js";
 const STRAVA_AUTH_URL = "https://www.strava.com/oauth/authorize";
 const STRAVA_TOKEN_URL = "https://www.strava.com/api/v3/oauth/token";
 
-/** Build the Strava OAuth authorization URL. */
+/** Build the Strava OAuth authorization URL with a CSRF state nonce. */
 export function buildAuthUrl(
   clientId: string,
   redirectUri: string,
+  state: string,
   scope = "activity:read_all",
 ): string {
   const params = new URLSearchParams({
@@ -17,8 +19,14 @@ export function buildAuthUrl(
     response_type: "code",
     scope,
     approval_prompt: "auto",
+    state,
   });
   return `${STRAVA_AUTH_URL}?${params.toString()}`;
+}
+
+/** Generate a random state nonce for OAuth CSRF protection. */
+export function generateOAuthState(): string {
+  return crypto.randomBytes(24).toString("hex");
 }
 
 /** Exchange an authorization code for tokens. */
@@ -54,6 +62,11 @@ export async function exchangeCode(config: StravaConfig, code: string): Promise<
   };
 }
 
+/** Error from a token refresh attempt, with HTTP status for triage. */
+export class StravaRefreshError extends Error {
+  status = 0;
+}
+
 /** Refresh an expired access token. Returns new token pair (refresh token rotates). */
 export async function refreshTokens(
   config: StravaConfig,
@@ -72,7 +85,9 @@ export async function refreshTokens(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Strava token refresh failed (${res.status}): ${text}`);
+    const err = new StravaRefreshError(`Strava token refresh failed (${res.status}): ${text}`);
+    err.status = res.status;
+    throw err;
   }
 
   const data = (await res.json()) as {
@@ -91,6 +106,7 @@ export async function refreshTokens(
 }
 
 const TOKEN_FILE = "strava-tokens.json";
+const STATE_FILE = "oauth-state.json";
 
 /** Persistent token store backed by a JSON file. */
 export class TokenStore {
@@ -102,6 +118,10 @@ export class TokenStore {
 
   private filePath(): string {
     return path.join(this.dir, TOKEN_FILE);
+  }
+
+  private statePath(): string {
+    return path.join(this.dir, STATE_FILE);
   }
 
   save(tokens: StravaTokens): void {
@@ -123,6 +143,23 @@ export class TokenStore {
       fs.unlinkSync(this.filePath());
     } catch {
       // already gone
+    }
+  }
+
+  /** Store an OAuth state nonce for CSRF validation. */
+  saveState(state: string): void {
+    fs.mkdirSync(this.dir, { recursive: true });
+    fs.writeFileSync(this.statePath(), JSON.stringify({ state }), { mode: 0o600 });
+  }
+
+  /** Load and consume the stored OAuth state nonce. Returns null if none exists. */
+  consumeState(): string | null {
+    try {
+      const raw = fs.readFileSync(this.statePath(), "utf-8");
+      fs.unlinkSync(this.statePath());
+      return (JSON.parse(raw) as { state: string }).state;
+    } catch {
+      return null;
     }
   }
 }

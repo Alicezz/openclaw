@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { TokenStore } from "./oauth.js";
-import { buildAuthUrl, ensureFreshToken } from "./oauth.js";
+import { buildAuthUrl, ensureFreshToken, generateOAuthState, StravaRefreshError } from "./oauth.js";
 import * as client from "./strava-client.js";
 import type { StravaConfig } from "./types.js";
 
@@ -11,7 +11,9 @@ interface ToolDeps {
 }
 
 function notConnectedResult(deps: ToolDeps) {
-  const authUrl = buildAuthUrl(deps.config.clientId, deps.getRedirectUri());
+  const state = generateOAuthState();
+  deps.tokenStore.saveState(state);
+  const authUrl = buildAuthUrl(deps.config.clientId, deps.getRedirectUri(), state);
   return {
     content: [
       {
@@ -29,10 +31,14 @@ function notConnectedResult(deps: ToolDeps) {
 async function getTokenOrNull(deps: ToolDeps): Promise<string | null> {
   try {
     return await ensureFreshToken(deps.tokenStore, deps.config);
-  } catch {
-    // Refresh failed — token likely revoked.
-    deps.tokenStore.clear();
-    return null;
+  } catch (err) {
+    // Only clear tokens on definitive auth failures (401, 400).
+    // Transient errors (network, 5xx) should not wipe valid credentials.
+    if (err instanceof StravaRefreshError && (err.status === 401 || err.status === 400)) {
+      deps.tokenStore.clear();
+      return null;
+    }
+    throw err;
   }
 }
 
