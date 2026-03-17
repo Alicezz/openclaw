@@ -893,12 +893,17 @@ export const registerTelegramNativeCommands = ({
       }
 
       // Register bot.command handlers for customCommands with menus (multi-level menu support).
-      // Cross-reference against the validated customCommands set so entries rejected as
-      // duplicates or native-command conflicts do not install active handlers.
+      // Use the validated command names to filter, and track seen names to avoid registering
+      // duplicate handlers when the raw config has multiple entries with the same command name.
       const validCommandNames = new Set(customCommands.map((c) => c.command));
-      const menuCommands = (telegramCfg.customCommands ?? []).filter(
-        (c) => c.menus && c.menus.main && validCommandNames.has(c.command),
-      );
+      const seenMenuCommands = new Set<string>();
+      const menuCommands = (telegramCfg.customCommands ?? []).filter((c) => {
+        if (!c.menus || !c.menus.main || !validCommandNames.has(c.command)) return false;
+        const normalized = c.command.toLowerCase();
+        if (seenMenuCommands.has(normalized)) return false;
+        seenMenuCommands.add(normalized);
+        return true;
+      });
       for (const mc of menuCommands) {
         bot.command(mc.command, async (ctx: TelegramNativeCommandContext) => {
           const msg = ctx.message;

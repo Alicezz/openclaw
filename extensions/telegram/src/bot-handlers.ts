@@ -18,6 +18,7 @@ import type {
   TelegramTopicConfig,
 } from "openclaw/plugin-sdk/config-runtime";
 import { applyModelOverrideToSessionEntry } from "openclaw/plugin-sdk/config-runtime";
+import { resolveTelegramCustomCommands } from "openclaw/plugin-sdk/config-runtime";
 import { readChannelAllowFromStore } from "openclaw/plugin-sdk/conversation-runtime";
 import {
   buildPluginBindingResolvedText,
@@ -1531,9 +1532,21 @@ export const registerTelegramHandlers = ({
       // that every button on the originating message belongs to that command.
       // This prevents unrelated inline keyboards (or other customCommands) with
       // colliding callback_data values from being intercepted.
-      const menuCustomCommands = (telegramCfg.customCommands ?? []).filter(
-        (c) => c.menus && c.routes,
+      // Only consider validated commands (dedup + conflict-free) to avoid rejected
+      // entries from intercepting callbacks.
+      const validatedCommandNames = new Set(
+        resolveTelegramCustomCommands({ commands: telegramCfg.customCommands }).commands.map(
+          (c) => c.command,
+        ),
       );
+      const seenMenuCommandNames = new Set<string>();
+      const menuCustomCommands = (telegramCfg.customCommands ?? []).filter((c) => {
+        if (!c.menus || !c.routes || !validatedCommandNames.has(c.command)) return false;
+        const normalized = c.command.toLowerCase();
+        if (seenMenuCommandNames.has(normalized)) return false;
+        seenMenuCommandNames.add(normalized);
+        return true;
+      });
       const cbMessageButtons: string[] = [];
       const inlineKb = (
         callbackMessage as {
