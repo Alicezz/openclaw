@@ -1,25 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createProviderUsageFetch, makeResponse } from "../../test-utils/provider-usage-fetch.js";
 import type { ProviderRuntimeModel } from "../types.js";
 import { requireProviderContractProvider } from "./registry.js";
-
-const getOAuthApiKeyMock = vi.hoisted(() => vi.fn());
-const refreshQwenPortalCredentialsMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@mariozechner/pi-ai/oauth", async () => {
-  const actual = await vi.importActual<object>("@mariozechner/pi-ai/oauth");
-  return {
-    ...actual,
-    getOAuthApiKey: getOAuthApiKeyMock,
-  };
-});
-
-vi.mock("../../providers/qwen-portal-oauth.js", () => ({
-  refreshQwenPortalCredentials: refreshQwenPortalCredentialsMock,
-}));
 
 function createModel(overrides: Partial<ProviderRuntimeModel> & Pick<ProviderRuntimeModel, "id">) {
   return {
@@ -353,7 +338,7 @@ describe("provider runtime contract", () => {
   });
 
   describe("openai-codex", () => {
-    it("owns refresh fallback for accountId extraction failures", async () => {
+    it("owns OAuth refresh error surface", async () => {
       const provider = requireProviderContractProvider("openai-codex");
       const credential = {
         type: "oauth" as const,
@@ -363,10 +348,9 @@ describe("provider runtime contract", () => {
         expires: Date.now() - 60_000,
       };
 
-      getOAuthApiKeyMock.mockReset();
-      getOAuthApiKeyMock.mockRejectedValueOnce(new Error("Failed to extract accountId from token"));
-
-      await expect(provider.refreshOAuth?.(credential)).resolves.toEqual(credential);
+      await expect(provider.refreshOAuth?.(credential)).rejects.toThrow(
+        /Failed to refresh OAuth token for openai-codex/,
+      );
     });
 
     it("owns forward-compat codex models", () => {
@@ -448,7 +432,7 @@ describe("provider runtime contract", () => {
   });
 
   describe("qwen-portal", () => {
-    it("owns OAuth refresh", async () => {
+    it("owns OAuth refresh error messaging", async () => {
       const provider = requireProviderContractProvider("qwen-portal");
       const credential = {
         type: "oauth" as const,
@@ -457,16 +441,10 @@ describe("provider runtime contract", () => {
         refresh: "refresh-token",
         expires: Date.now() - 60_000,
       };
-      const refreshed = {
-        ...credential,
-        access: "fresh-access-token",
-        expires: Date.now() + 60_000,
-      };
 
-      refreshQwenPortalCredentialsMock.mockReset();
-      refreshQwenPortalCredentialsMock.mockResolvedValueOnce(refreshed);
-
-      await expect(provider.refreshOAuth?.(credential)).resolves.toEqual(refreshed);
+      await expect(provider.refreshOAuth?.(credential)).rejects.toThrow(
+        /Re-authenticate with `openclaw models auth login --provider qwen-portal`/,
+      );
     });
   });
 

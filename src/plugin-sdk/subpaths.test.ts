@@ -203,8 +203,8 @@ describe("plugin-sdk subpath exports", () => {
   it("exports LINE helpers", () => {
     expect(typeof lineSdk.processLineMessage).toBe("function");
     expect(typeof lineSdk.createInfoCard).toBe("function");
-    expect(typeof lineSdk.lineSetupWizard).toBe("object");
-    expect(typeof lineSdk.lineSetupAdapter).toBe("object");
+    expect("lineSetupWizard" in asExports(lineSdk)).toBe(false);
+    expect("lineSetupAdapter" in asExports(lineSdk)).toBe(false);
   });
 
   it("exports Microsoft Teams helpers", () => {
@@ -215,8 +215,8 @@ describe("plugin-sdk subpath exports", () => {
   });
 
   it("exports Nostr helpers", () => {
-    expect(typeof nostrSdk.nostrSetupWizard).toBe("object");
-    expect(typeof nostrSdk.nostrSetupAdapter).toBe("object");
+    expect("nostrSetupWizard" in asExports(nostrSdk)).toBe(false);
+    expect("nostrSetupAdapter" in asExports(nostrSdk)).toBe(false);
   });
 
   it("exports Google Chat helpers", async () => {
@@ -230,8 +230,8 @@ describe("plugin-sdk subpath exports", () => {
   });
 
   it("exports Synology Chat helpers", async () => {
-    expect(typeof synologyChatSdk.synologyChatSetupWizard).toBe("object");
-    expect(typeof synologyChatSdk.synologyChatSetupAdapter).toBe("object");
+    expect("synologyChatSetupWizard" in asExports(synologyChatSdk)).toBe(false);
+    expect("synologyChatSetupAdapter" in asExports(synologyChatSdk)).toBe(false);
   });
 
   it("exports Zalouser helpers", async () => {
