@@ -8,10 +8,12 @@ import { compactEmbeddedPiSessionDirect } from "../agents/pi-embedded-runner/com
 import { LegacyContextEngine, registerLegacyContextEngine } from "./legacy.js";
 import {
   registerContextEngine,
+  registerContextEngineForOwner,
   getContextEngineFactory,
   listContextEngineIds,
   resolveContextEngine,
 } from "./registry.js";
+import type { ContextEngineFactory, ContextEngineRegistrationResult } from "./registry.js";
 import type {
   ContextEngine,
   ContextEngineInfo,
@@ -104,6 +106,113 @@ class MockContextEngine implements ContextEngine {
 
   async dispose(): Promise<void> {
     // no-op
+  }
+}
+
+class LegacySessionKeyStrictEngine implements ContextEngine {
+  readonly info: ContextEngineInfo = {
+    id: "legacy-sessionkey-strict",
+    name: "Legacy SessionKey Strict Engine",
+  };
+  readonly ingestCalls: Array<Record<string, unknown>> = [];
+  readonly assembleCalls: Array<Record<string, unknown>> = [];
+  readonly compactCalls: Array<Record<string, unknown>> = [];
+  readonly ingestedMessages: AgentMessage[] = [];
+
+  private rejectSessionKey(params: { sessionKey?: string }): void {
+    if (Object.prototype.hasOwnProperty.call(params, "sessionKey")) {
+      throw new Error("Unrecognized key(s) in object: 'sessionKey'");
+    }
+  }
+
+  async ingest(params: {
+    sessionId: string;
+    sessionKey?: string;
+    message: AgentMessage;
+    isHeartbeat?: boolean;
+  }): Promise<IngestResult> {
+    this.ingestCalls.push({ ...params });
+    this.rejectSessionKey(params);
+    this.ingestedMessages.push(params.message);
+    return { ingested: true };
+  }
+
+  async assemble(params: {
+    sessionId: string;
+    sessionKey?: string;
+    messages: AgentMessage[];
+    tokenBudget?: number;
+  }): Promise<AssembleResult> {
+    this.assembleCalls.push({ ...params });
+    this.rejectSessionKey(params);
+    return {
+      messages: params.messages,
+      estimatedTokens: 7,
+    };
+  }
+
+  async compact(params: {
+    sessionId: string;
+    sessionKey?: string;
+    sessionFile: string;
+    tokenBudget?: number;
+    compactionTarget?: "budget" | "threshold";
+    customInstructions?: string;
+    runtimeContext?: Record<string, unknown>;
+  }): Promise<CompactResult> {
+    this.compactCalls.push({ ...params });
+    this.rejectSessionKey(params);
+    return {
+      ok: true,
+      compacted: true,
+      result: {
+        tokensBefore: 50,
+        tokensAfter: 25,
+      },
+    };
+  }
+}
+
+class SessionKeyRuntimeErrorEngine implements ContextEngine {
+  readonly info: ContextEngineInfo = {
+    id: "sessionkey-runtime-error",
+    name: "SessionKey Runtime Error Engine",
+  };
+  assembleCalls = 0;
+  constructor(private readonly errorMessage = "sessionKey lookup failed") {}
+
+  async ingest(_params: {
+    sessionId: string;
+    sessionKey?: string;
+    message: AgentMessage;
+    isHeartbeat?: boolean;
+  }): Promise<IngestResult> {
+    return { ingested: true };
+  }
+
+  async assemble(_params: {
+    sessionId: string;
+    sessionKey?: string;
+    messages: AgentMessage[];
+    tokenBudget?: number;
+  }): Promise<AssembleResult> {
+    this.assembleCalls += 1;
+    throw new Error(this.errorMessage);
+  }
+
+  async compact(_params: {
+    sessionId: string;
+    sessionKey?: string;
+    sessionFile: string;
+    tokenBudget?: number;
+    compactionTarget?: "budget" | "threshold";
+    customInstructions?: string;
+    runtimeContext?: Record<string, unknown>;
+  }): Promise<CompactResult> {
+    return {
+      ok: true,
+      compacted: false,
+    };
   }
 }
 
@@ -231,16 +340,78 @@ describe("Registry tests", () => {
     expect(Array.isArray(ids)).toBe(true);
   });
 
-  it("registering the same id overwrites the previous factory", () => {
+  it("registering the same id with the same owner refreshes the factory", () => {
     const factory1 = () => new MockContextEngine();
     const factory2 = () => new MockContextEngine();
 
-    registerContextEngine("reg-overwrite", factory1);
+    expect(
+      registerContextEngineForOwner("reg-overwrite", factory1, "owner-a", {
+        allowSameOwnerRefresh: true,
+      }),
+    ).toEqual({ ok: true });
     expect(getContextEngineFactory("reg-overwrite")).toBe(factory1);
 
-    registerContextEngine("reg-overwrite", factory2);
+    expect(
+      registerContextEngineForOwner("reg-overwrite", factory2, "owner-a", {
+        allowSameOwnerRefresh: true,
+      }),
+    ).toEqual({ ok: true });
     expect(getContextEngineFactory("reg-overwrite")).toBe(factory2);
     expect(getContextEngineFactory("reg-overwrite")).not.toBe(factory1);
+  });
+
+  it("rejects context engine registrations from a different owner", () => {
+    const factory1 = () => new MockContextEngine();
+    const factory2 = () => new MockContextEngine();
+
+    expect(
+      registerContextEngineForOwner("reg-owner-guard", factory1, "owner-a", {
+        allowSameOwnerRefresh: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(registerContextEngineForOwner("reg-owner-guard", factory2, "owner-b")).toEqual({
+      ok: false,
+      existingOwner: "owner-a",
+    });
+    expect(getContextEngineFactory("reg-owner-guard")).toBe(factory1);
+  });
+
+  it("public registerContextEngine cannot spoof owner or refresh existing ids", () => {
+    const ownedFactory = () => new MockContextEngine();
+    expect(
+      registerContextEngineForOwner("public-owner-guard", ownedFactory, "owner-a", {
+        allowSameOwnerRefresh: true,
+      }),
+    ).toEqual({ ok: true });
+
+    const spoofAttempt = (
+      registerContextEngine as unknown as (
+        id: string,
+        factory: ContextEngineFactory,
+        opts?: { owner?: string },
+      ) => ContextEngineRegistrationResult
+    )("public-owner-guard", () => new MockContextEngine(), { owner: "owner-a" });
+
+    expect(spoofAttempt).toEqual({
+      ok: false,
+      existingOwner: "owner-a",
+    });
+    expect(getContextEngineFactory("public-owner-guard")).toBe(ownedFactory);
+  });
+
+  it("public registerContextEngine reserves the default legacy id", () => {
+    const legacyAttempt = (
+      registerContextEngine as unknown as (
+        id: string,
+        factory: ContextEngineFactory,
+        opts?: { owner?: string },
+      ) => ContextEngineRegistrationResult
+    )("legacy", () => new MockContextEngine(), { owner: "core" });
+
+    expect(legacyAttempt).toEqual({
+      ok: false,
+      existingOwner: "core",
+    });
   });
 
   it("shares registered engines across duplicate module copies", async () => {
@@ -260,6 +431,97 @@ describe("Registry tests", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. Default engine selection
 // ═══════════════════════════════════════════════════════════════════════════
+
+describe("Legacy sessionKey compatibility", () => {
+  it("memoizes legacy mode after the first strict compatibility retry", async () => {
+    const engineId = `legacy-sessionkey-${Date.now().toString(36)}`;
+    const strictEngine = new LegacySessionKeyStrictEngine();
+    registerContextEngine(engineId, () => strictEngine);
+
+    const engine = await resolveContextEngine(configWithSlot(engineId));
+    const firstAssembled = await engine.assemble({
+      sessionId: "s1",
+      sessionKey: "agent:main:test",
+      messages: [makeMockMessage()],
+    });
+    const compacted = await engine.compact({
+      sessionId: "s1",
+      sessionKey: "agent:main:test",
+      sessionFile: "/tmp/session.json",
+    });
+
+    expect(firstAssembled.estimatedTokens).toBe(7);
+    expect(compacted.compacted).toBe(true);
+    expect(strictEngine.assembleCalls).toHaveLength(2);
+    expect(strictEngine.assembleCalls[0]).toHaveProperty("sessionKey", "agent:main:test");
+    expect(strictEngine.assembleCalls[1]).not.toHaveProperty("sessionKey");
+    expect(strictEngine.compactCalls).toHaveLength(1);
+    expect(strictEngine.compactCalls[0]).not.toHaveProperty("sessionKey");
+  });
+
+  it("retries strict ingest once and ingests each message only once", async () => {
+    const engineId = `legacy-sessionkey-ingest-${Date.now().toString(36)}`;
+    const strictEngine = new LegacySessionKeyStrictEngine();
+    registerContextEngine(engineId, () => strictEngine);
+
+    const engine = await resolveContextEngine(configWithSlot(engineId));
+    const firstMessage = makeMockMessage("user", "first");
+    const secondMessage = makeMockMessage("assistant", "second");
+
+    await engine.ingest({
+      sessionId: "s1",
+      sessionKey: "agent:main:test",
+      message: firstMessage,
+    });
+    await engine.ingest({
+      sessionId: "s1",
+      sessionKey: "agent:main:test",
+      message: secondMessage,
+    });
+
+    expect(strictEngine.ingestCalls).toHaveLength(3);
+    expect(strictEngine.ingestCalls[0]).toHaveProperty("sessionKey", "agent:main:test");
+    expect(strictEngine.ingestCalls[1]).not.toHaveProperty("sessionKey");
+    expect(strictEngine.ingestCalls[2]).not.toHaveProperty("sessionKey");
+    expect(strictEngine.ingestedMessages).toEqual([firstMessage, secondMessage]);
+  });
+
+  it("does not retry non-compat runtime errors", async () => {
+    const engineId = `sessionkey-runtime-${Date.now().toString(36)}`;
+    const runtimeErrorEngine = new SessionKeyRuntimeErrorEngine();
+    registerContextEngine(engineId, () => runtimeErrorEngine);
+
+    const engine = await resolveContextEngine(configWithSlot(engineId));
+
+    await expect(
+      engine.assemble({
+        sessionId: "s1",
+        sessionKey: "agent:main:test",
+        messages: [makeMockMessage()],
+      }),
+    ).rejects.toThrow("sessionKey lookup failed");
+    expect(runtimeErrorEngine.assembleCalls).toBe(1);
+  });
+
+  it("does not treat 'Unknown sessionKey' runtime failures as schema-compat errors", async () => {
+    const engineId = `sessionkey-unknown-runtime-${Date.now().toString(36)}`;
+    const runtimeErrorEngine = new SessionKeyRuntimeErrorEngine(
+      'Unknown sessionKey "agent:main:missing"',
+    );
+    registerContextEngine(engineId, () => runtimeErrorEngine);
+
+    const engine = await resolveContextEngine(configWithSlot(engineId));
+
+    await expect(
+      engine.assemble({
+        sessionId: "s1",
+        sessionKey: "agent:main:missing",
+        messages: [makeMockMessage()],
+      }),
+    ).rejects.toThrow('Unknown sessionKey "agent:main:missing"');
+    expect(runtimeErrorEngine.assembleCalls).toBe(1);
+  });
+});
 
 describe("Default engine selection", () => {
   // Ensure both legacy and a custom test engine are registered before these tests.
@@ -472,6 +734,33 @@ describe("Bundle chunk isolation (#40096)", () => {
     const sdkEngineId = `sdk-registered-${ts}`;
     sdk.registerContextEngine(sdkEngineId, () => new MockContextEngine());
     expect(getContextEngineFactory(sdkEngineId)).toBeDefined();
+  });
+
+  it("plugin-sdk registerContextEngine cannot spoof privileged ownership", async () => {
+    const ts = Date.now().toString(36);
+    const engineId = `sdk-spoof-guard-${ts}`;
+    const ownedFactory = () => new MockContextEngine();
+    expect(
+      registerContextEngineForOwner(engineId, ownedFactory, "plugin:owner-a", {
+        allowSameOwnerRefresh: true,
+      }),
+    ).toEqual({ ok: true });
+
+    const sdkUrl = new URL("../plugin-sdk/index.ts", import.meta.url).href;
+    const sdk = await import(/* @vite-ignore */ `${sdkUrl}?sdk-spoof-${ts}`);
+    const spoofAttempt = (
+      sdk.registerContextEngine as unknown as (
+        id: string,
+        factory: ContextEngineFactory,
+        opts?: { owner?: string },
+      ) => ContextEngineRegistrationResult
+    )(engineId, () => new MockContextEngine(), { owner: "plugin:owner-a" });
+
+    expect(spoofAttempt).toEqual({
+      ok: false,
+      existingOwner: "plugin:owner-a",
+    });
+    expect(getContextEngineFactory(engineId)).toBe(ownedFactory);
   });
 
   it("concurrent registration from multiple chunks does not lose entries", async () => {
