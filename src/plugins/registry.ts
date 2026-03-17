@@ -491,6 +491,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.diagnostics.push(diag);
   };
 
+  type CommandModule = typeof import("./commands.js");
+
   type PendingCommandRegistration = {
     record: PluginRecord;
     command: OpenClawPluginCommandDefinition;
@@ -498,12 +500,42 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
   const pendingCommandRegistrations: PendingCommandRegistration[] = [];
   let pendingCommandFlushScheduled = false;
-  const runSoon =
-    typeof queueMicrotask === "function"
-      ? queueMicrotask
-      : (cb: () => void) => {
-          void Promise.resolve().then(cb);
-        };
+
+  type CommandModuleState = {
+    module?: CommandModule;
+    promise?: Promise<CommandModule> | null;
+  };
+  const commandModuleStateKey = Symbol.for("openclaw.pluginCommandModuleState");
+  const commandModuleState = (() => {
+    const globalStore = globalThis as typeof globalThis & {
+      [commandModuleStateKey]?: CommandModuleState;
+    };
+    const existing = globalStore[commandModuleStateKey];
+    if (existing) {
+      return existing;
+    }
+    const nextState: CommandModuleState = {
+      module: undefined,
+      promise: null,
+    };
+    globalStore[commandModuleStateKey] = nextState;
+    return nextState;
+  })();
+
+  const ensureCommandModuleLoad = () => {
+    if (commandModuleState.module || commandModuleState.promise) {
+      return commandModuleState.promise;
+    }
+    commandModuleState.promise = import("./commands.js")
+      .then((module) => {
+        commandModuleState.module = module;
+        return module;
+      })
+      .finally(() => {
+        commandModuleState.promise = null;
+      });
+    return commandModuleState.promise;
+  };
 
   const finalizeCommandRegistration = (
     record: PluginRecord,
@@ -520,25 +552,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     });
   };
 
-  const flushPendingCommandRegistrations = async () => {
+  const flushPendingCommandRegistrations = (commandModule: CommandModule) => {
     if (pendingCommandRegistrations.length === 0) {
-      return;
-    }
-
-    let commandModule: typeof import("./commands.js") | undefined;
-    try {
-      commandModule = await import("./commands.js");
-    } catch (error) {
-      const message = error instanceof Error ? error.message || "Unknown error" : String(error);
-      const pending = pendingCommandRegistrations.splice(0);
-      for (const entry of pending) {
-        pushDiagnostic({
-          level: "error",
-          pluginId: entry.record.id,
-          source: entry.record.source,
-          message: `command registration failed: ${message}`,
-        });
-      }
       return;
     }
 
@@ -561,16 +576,56 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     }
   };
 
+  const handleCommandModuleLoadFailure = (error: unknown) => {
+    const message = error instanceof Error ? error.message || "Unknown error" : String(error);
+    const pending = pendingCommandRegistrations.splice(0);
+    for (const entry of pending) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: entry.record.id,
+        source: entry.record.source,
+        message: `command registration failed: ${message}`,
+      });
+    }
+  };
+
   const schedulePendingCommandFlush = () => {
     if (pendingCommandFlushScheduled || pendingCommandRegistrations.length === 0) {
       return;
     }
+
+    const module = commandModuleState.module;
+    if (module) {
+      pendingCommandFlushScheduled = true;
+      try {
+        flushPendingCommandRegistrations(module);
+      } finally {
+        pendingCommandFlushScheduled = false;
+      }
+      return;
+    }
+
+    const modulePromise = ensureCommandModuleLoad();
+    if (!modulePromise) {
+      return;
+    }
+
     pendingCommandFlushScheduled = true;
-    runSoon(() => {
-      pendingCommandFlushScheduled = false;
-      void flushPendingCommandRegistrations();
-    });
+    modulePromise
+      .then((loadedModule) => {
+        flushPendingCommandRegistrations(loadedModule);
+      })
+      .catch((error) => {
+        handleCommandModuleLoadFailure(error);
+      })
+      .finally(() => {
+        pendingCommandFlushScheduled = false;
+      });
   };
+
+  if (!registryParams.suppressGlobalCommands) {
+    void ensureCommandModuleLoad();
+  }
 
   const normalizeResetSessionError = (error: unknown): string => {
     if (error instanceof Error) {
