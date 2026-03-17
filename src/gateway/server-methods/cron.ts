@@ -83,9 +83,9 @@ export const cronHandlers: GatewayRequestHandlers = {
       enabled?: "all" | "enabled" | "disabled";
       sortBy?: "nextRunAtMs" | "updatedAtMs" | "name";
       sortDir?: "asc" | "desc";
-      sessionKey?: string;
+      callerSessionKey?: string;
     };
-    const callerOpts = resolveCronCallerOptions(client, p.sessionKey);
+    const callerOpts = resolveCronCallerOptions(client, p.callerSessionKey);
     const page = await context.cron.listPage({
       includeDisabled: p.includeDisabled,
       limit: p.limit,
@@ -169,7 +169,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       id?: string;
       jobId?: string;
       patch: Record<string, unknown>;
-      sessionKey?: string;
+      callerSessionKey?: string;
     };
     const jobId = p.id ?? p.jobId;
     if (!jobId) {
@@ -192,7 +192,7 @@ export const cronHandlers: GatewayRequestHandlers = {
         return;
       }
     }
-    const callerOpts = resolveCronCallerOptions(client, p.sessionKey);
+    const callerOpts = resolveCronCallerOptions(client, p.callerSessionKey);
     try {
       const job = await context.cron.update(jobId, patch, callerOpts);
       context.logGateway.info("cron: job updated", { jobId });
@@ -217,7 +217,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const p = params as { id?: string; jobId?: string; sessionKey?: string };
+    const p = params as { id?: string; jobId?: string; callerSessionKey?: string };
     const jobId = p.id ?? p.jobId;
     if (!jobId) {
       respond(
@@ -227,7 +227,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const callerOpts = resolveCronCallerOptions(client, p.sessionKey);
+    const callerOpts = resolveCronCallerOptions(client, p.callerSessionKey);
     try {
       const result = await context.cron.remove(jobId, callerOpts);
       if (result.removed) {
@@ -258,7 +258,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       id?: string;
       jobId?: string;
       mode?: "due" | "force";
-      sessionKey?: string;
+      callerSessionKey?: string;
     };
     const jobId = p.id ?? p.jobId;
     if (!jobId) {
@@ -269,7 +269,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const callerOpts = resolveCronCallerOptions(client, p.sessionKey);
+    const callerOpts = resolveCronCallerOptions(client, p.callerSessionKey);
     try {
       const result = await context.cron.enqueueRun(jobId, p.mode ?? "force", callerOpts);
       respond(true, result, undefined);
