@@ -3,6 +3,7 @@ import {
   resolveConfiguredAcpRoute,
 } from "openclaw/plugin-sdk/conversation-runtime";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-runtime";
+import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-runtime";
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk/feishu";
 import {
   buildAgentMediaPayload,
@@ -1664,6 +1665,7 @@ export async function handleFeishuMessage(params: {
         if (agentId === activeAgentId) {
           // Active agent: real Feishu dispatcher (responds on Feishu)
           const identity = resolveAgentOutboundIdentity(cfg, agentId);
+          const mediaLocalRoots = getAgentScopedMediaLocalRoots(cfg, agentId);
           const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
             cfg,
             agentId,
@@ -1677,6 +1679,7 @@ export async function handleFeishuMessage(params: {
             mentionTargets: ctx.mentionTargets,
             accountId: account.accountId,
             identity,
+            mediaLocalRoots,
             messageCreateTimeMs,
           });
 
@@ -1765,6 +1768,7 @@ export async function handleFeishuMessage(params: {
       );
 
       const identity = resolveAgentOutboundIdentity(cfg, route.agentId);
+      const mediaLocalRoots = getAgentScopedMediaLocalRoots(cfg, route.agentId);
       const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
         cfg,
         agentId: route.agentId,
@@ -1778,6 +1782,7 @@ export async function handleFeishuMessage(params: {
         mentionTargets: ctx.mentionTargets,
         accountId: account.accountId,
         identity,
+        mediaLocalRoots,
         messageCreateTimeMs,
       });
 
