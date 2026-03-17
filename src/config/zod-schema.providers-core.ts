@@ -1158,6 +1158,8 @@ export const IrcAccountSchemaBase = z
     heartbeat: ChannelHeartbeatVisibilitySchema,
     healthMonitor: ChannelHealthMonitorSchema,
     responsePrefix: z.string().optional(),
+    tlsInsecure: z.boolean().optional(),
+    tlsFingerprints: z.array(z.string()).optional(),
   })
   .strict();
 
