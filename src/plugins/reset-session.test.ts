@@ -104,27 +104,23 @@ async function createApiHarness(options?: RegistryImportOptions) {
   vi.resetModules();
   mockPluginSideEffects();
 
-  if (options?.sessionResetImportError) {
-    vi.doMock("../gateway/session-reset-service.js", () => ({
-      performGatewaySessionReset: () => {
-        throw options.sessionResetImportError;
-      },
-    }));
-  } else {
-    vi.doUnmock("../gateway/session-reset-service.js");
-  }
-
-  const sessionResetService = options?.sessionResetImportError
-    ? null
-    : await import("../gateway/session-reset-service.js");
-
   const deps: SessionResetDeps = {
     loadConfig: vi.fn(() => ({}) as OpenClawConfig),
-    performGatewaySessionReset:
-      sessionResetService === null
-        ? vi.fn()
-        : vi.spyOn(sessionResetService, "performGatewaySessionReset"),
+    performGatewaySessionReset: vi.fn(async (payload) => ({
+      ok: true,
+      key: payload.key,
+      entry: { sessionId: "session-default" },
+    })),
   };
+
+  const loadSessionResetModule =
+    typeof options?.sessionResetImportError === "undefined"
+      ? async () => ({
+          performGatewaySessionReset: deps.performGatewaySessionReset,
+        })
+      : async () => {
+          throw options.sessionResetImportError;
+        };
 
   const { createPluginRegistry } = await import("./registry.js");
   const { createApi } = createPluginRegistry({
@@ -139,6 +135,7 @@ async function createApiHarness(options?: RegistryImportOptions) {
       available: options?.runtimeAvailable !== false,
       loadConfig: deps.loadConfig,
     }),
+    loadSessionResetModule,
   });
 
   const api = createApi(createRecord(), {
