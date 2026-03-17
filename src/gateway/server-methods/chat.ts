@@ -1337,6 +1337,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       let agentRunStarted = false;
+      let startedRunId: string | undefined;
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -1347,6 +1348,11 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            startedRunId = runId;
+            context.addChatRun(runId, {
+              sessionKey: rawSessionKey,
+              clientRunId,
+            });
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
               client?.connect?.caps,
@@ -1477,6 +1483,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         })
         .finally(() => {
           context.chatAbortControllers.delete(clientRunId);
+          if (startedRunId) {
+            context.removeChatRun(startedRunId, clientRunId, rawSessionKey);
+          }
         });
     } catch (err) {
       const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
