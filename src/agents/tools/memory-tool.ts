@@ -37,7 +37,17 @@ const VALID_PLATFORMS = new Set([
   "tlon",
   "twitch",
   "imessage",
+  "zalouser",
 ]);
+
+/**
+ * Convert a user ID to a filesystem-safe format.
+ * Replaces problematic characters with safe alternatives.
+ */
+function toFilesystemSafeId(id: string): string {
+  // Replace : with _ and remove/escape other problematic characters
+  return id.replace(/:/g, "_").replace(/[<>:"/\\|?*]/g, "_");
+}
 
 /**
  * Extract platform name from session key.
@@ -76,23 +86,25 @@ function addPlatformPrefixToSenderId(params: {
     return undefined;
   }
   // Check if already prefixed
-  const prefixMatch = senderId.match(/^([a-z0-9-]+):(.+)$/i);
+  const prefixMatch = senderId.match(/^([a-z0-9-]+)[_:](.+)$/i);
   if (prefixMatch) {
     const [, prefix, id] = prefixMatch;
     const baseName = prefix.replace(/-dev$/, "");
     if (VALID_PLATFORMS.has(baseName.toLowerCase())) {
-      // Already has valid platform prefix
-      return senderId;
+      // Already has valid platform prefix - return filesystem-safe version
+      return `${baseName}_${toFilesystemSafeId(id)}`;
     }
     // Prefix exists but not a valid platform - continue to add prefix
-    return id ? `${prefix.toLowerCase()}:${id}` : senderId;
+    return id ? toFilesystemSafeId(id) : senderId;
   }
   // Extract platform from session key
   const platform = extractPlatformFromSessionKey(sessionKey);
   if (platform) {
-    return `${platform}:${senderId}`;
+    // Use underscore separator for filesystem-safe path
+    const baseName = platform.replace(/-dev$/, "");
+    return `${baseName}_${toFilesystemSafeId(senderId)}`;
   }
-  return senderId;
+  return toFilesystemSafeId(senderId);
 }
 
 const MemorySearchSchema = Type.Object({
