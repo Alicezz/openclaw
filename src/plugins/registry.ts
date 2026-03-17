@@ -172,7 +172,7 @@ export type PluginRecord = {
   providerIds: string[];
   speechProviderIds: string[];
   mediaUnderstandingProviderIds: string[];
-  imageGenerationProviderIds: string[];
+  imageGenerationProviderIds?: string[];
   webSearchProviderIds: string[];
   gatewayMethods: string[];
   cliCommands: string[];
@@ -195,7 +195,7 @@ export type PluginRegistry = {
   providers: PluginProviderRegistration[];
   speechProviders: PluginSpeechProviderRegistration[];
   mediaUnderstandingProviders: PluginMediaUnderstandingProviderRegistration[];
-  imageGenerationProviders: PluginImageGenerationProviderRegistration[];
+  imageGenerationProviders?: PluginImageGenerationProviderRegistration[];
   webSearchProviders: PluginWebSearchProviderRegistration[];
   gatewayHandlers: GatewayRequestHandlers;
   httpRoutes: PluginHttpRouteRegistration[];
@@ -424,21 +424,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.diagnostics.push(diag);
   };
 
-  const finalizeCommandRegistration = (
-    record: PluginRecord,
-    command: OpenClawPluginCommandDefinition,
-    name: string,
-  ) => {
-    record.commands.push(name);
-    registry.commands.push({
-      pluginId: record.id,
-      pluginName: record.name,
-      command,
-      source: record.source,
-      rootDir: record.rootDir,
-    });
-  };
-
   const normalizeResetSessionError = (error: unknown): string => {
     if (error instanceof Error) {
       return error.message || "Session reset failed.";
@@ -518,7 +503,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
             reason: normalizedReason,
             commandSource: `plugin:${params.pluginId}`,
           });
-
           if (result.ok) {
             return {
               ok: true,
@@ -526,7 +510,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
               sessionId: result.entry.sessionId,
             };
           }
-
           return createResetSessionFailure(canonicalKey, result.error);
         } finally {
           resetSessionsInFlight.delete(canonicalKey);
@@ -916,6 +899,19 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     });
   };
 
+  const ensureImageGenerationRegistrations = () => {
+    if (!registry.imageGenerationProviders) {
+      registry.imageGenerationProviders = [];
+    }
+    return registry.imageGenerationProviders;
+  };
+
+  const ensureImageGenerationOwnedIds = (record: PluginRecord) => {
+    if (!record.imageGenerationProviderIds) {
+      record.imageGenerationProviderIds = [];
+    }
+    return record.imageGenerationProviderIds;
+  };
   const registerImageGenerationProvider = (
     record: PluginRecord,
     provider: ImageGenerationProviderPlugin,
@@ -924,8 +920,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       record,
       provider,
       kindLabel: "image-generation provider",
-      registrations: registry.imageGenerationProviders,
-      ownedIds: record.imageGenerationProviderIds,
+      registrations: ensureImageGenerationRegistrations(),
+      ownedIds: ensureImageGenerationOwnedIds(record),
     });
   };
 
@@ -1015,41 +1011,47 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       return;
     }
 
-    const definitionError = validatePluginCommandDefinition(command);
-    if (definitionError) {
-      pushDiagnostic({
-        level: "error",
-        pluginId: record.id,
-        source: record.source,
-        message: `command registration failed: ${definitionError}`,
-      });
-      return;
-    }
-
     // For snapshot (non-activating) loads, record the command locally without touching the
     // global plugin command registry so running gateway commands stay intact.
+    // We still validate the command definition so diagnostics match the real activation path.
     // NOTE: cross-plugin duplicate command detection is intentionally skipped here because
     // snapshot registries are isolated and never write to the global command table. Conflicts
     // will surface when the plugin is loaded via the normal activation path at gateway startup.
     if (registryParams.suppressGlobalCommands) {
-      finalizeCommandRegistration(record, command, name);
-      return;
+      const validationError = validatePluginCommandDefinition(command);
+      if (validationError) {
+        pushDiagnostic({
+          level: "error",
+          pluginId: record.id,
+          source: record.source,
+          message: `command registration failed: ${validationError}`,
+        });
+        return;
+      }
+    } else {
+      const result = registerPluginCommand(record.id, command, {
+        pluginName: record.name,
+        pluginRoot: record.rootDir,
+      });
+      if (!result.ok) {
+        pushDiagnostic({
+          level: "error",
+          pluginId: record.id,
+          source: record.source,
+          message: `command registration failed: ${result.error}`,
+        });
+        return;
+      }
     }
 
-    const result = registerPluginCommand(record.id, command, {
+    record.commands.push(name);
+    registry.commands.push({
+      pluginId: record.id,
       pluginName: record.name,
-      pluginRoot: record.rootDir,
+      command,
+      source: record.source,
+      rootDir: record.rootDir,
     });
-    if (!result.ok) {
-      pushDiagnostic({
-        level: "error",
-        pluginId: record.id,
-        source: record.source,
-        message: `command registration failed: ${result.error ?? "Unknown error"}`,
-      });
-      return;
-    }
-    finalizeCommandRegistration(record, command, name);
   };
 
   const registerTypedHook = <K extends PluginHookName>(

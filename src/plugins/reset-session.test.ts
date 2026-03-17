@@ -70,27 +70,23 @@ const mockPluginSideEffects = () => {
     getOAuthProviders: vi.fn(() => []),
   };
   for (const id of AUTH_PROFILES_OAUTH_MODULE_IDS) {
-    vi.doMock(id, () => mockAuthProfilesOauth, { virtual: true });
+    vi.doMock(id, () => mockAuthProfilesOauth);
   }
 
   vi.doMock("openclaw/plugin-sdk/text-runtime", async () => {
     return await import("../plugin-sdk/text-runtime.js");
   });
 
-  vi.doMock(
-    "../channels/registry.js",
-    () => ({
-      CHAT_CHANNEL_ORDER: [],
-      CHANNEL_IDS: [],
-      listChatChannels: () => [],
-      listChatChannelAliases: () => [],
-      getChatChannelMeta: () => ({ id: "demo-channel" }),
-      normalizeChatChannelId: () => null,
-      normalizeChannelId: () => null,
-      normalizeAnyChannelId: () => null,
-    }),
-    { virtual: true },
-  );
+  vi.doMock("../channels/registry.js", () => ({
+    CHAT_CHANNEL_ORDER: [],
+    CHANNEL_IDS: [],
+    listChatChannels: () => [],
+    listChatChannelAliases: () => [],
+    getChatChannelMeta: () => ({ id: "demo-channel" }),
+    normalizeChatChannelId: () => null,
+    normalizeChannelId: () => null,
+    normalizeAnyChannelId: () => null,
+  }));
 
   vi.doMock("@modelcontextprotocol/sdk/client/index.js", () => ({
     Client: class {
@@ -106,13 +102,9 @@ const mockPluginSideEffects = () => {
     },
   }));
 
-  vi.doMock(
-    "../auto-reply/reply/get-reply-directives.js",
-    () => ({
-      resolveReplyDirectives: vi.fn(async () => ({ kind: "reply", reply: undefined })),
-    }),
-    { virtual: true },
-  );
+  vi.doMock("../auto-reply/reply/get-reply-directives.js", () => ({
+    resolveReplyDirectives: vi.fn(async () => ({ kind: "reply", reply: undefined })),
+  }));
 };
 
 type SessionResetModule = typeof import("../gateway/session-reset-service.js");
@@ -143,6 +135,8 @@ function createRecord(): PluginRecord {
     providerIds: [],
     speechProviderIds: [],
     mediaUnderstandingProviderIds: [],
+    imageGenerationProviderIds: [],
+    webSearchProviderIds: [],
     gatewayMethods: [],
     cliCommands: [],
     services: [],
@@ -150,7 +144,6 @@ function createRecord(): PluginRecord {
     httpRoutes: 0,
     hookCount: 0,
     configSchema: false,
-    webSearchProviderIds: [],
   };
 }
 

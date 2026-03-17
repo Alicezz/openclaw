@@ -17,6 +17,8 @@ import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.js";
+import type { createVpsAwareOAuthHandlers } from "../commands/oauth-flow.js";
+import type { SecretInputMode } from "../commands/onboard-types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelProviderConfig } from "../config/types.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
@@ -38,8 +40,6 @@ import type {
   SpeechVoiceOption,
 } from "../tts/provider-types.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
-import type { SecretInputMode } from "./provider-auth-types.js";
-import type { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
 export type { PluginRuntime } from "./runtime/types.js";
@@ -891,7 +891,18 @@ export type PluginSpeechProviderEntry = SpeechProviderPlugin & {
 };
 
 export type MediaUnderstandingProviderPlugin = MediaUnderstandingProvider;
-export type ImageGenerationProviderPlugin = ImageGenerationProvider;
+export type ImageGenerationProviderPlugin = {
+  id: string;
+  label?: string;
+  description?: string;
+  aliases?: string[];
+  envVars?: string[];
+  models?: readonly string[];
+  docsUrl?: string;
+  signupUrl?: string;
+  isConfigured?: (ctx: { config: OpenClawConfig }) => boolean;
+  generateImage?: (params: Record<string, unknown>) => Promise<unknown>;
+};
 
 export type OpenClawPluginGatewayMethod = {
   method: string;
@@ -1256,7 +1267,7 @@ export type OpenClawPluginApi = {
   registerProvider: (provider: ProviderPlugin) => void;
   registerSpeechProvider: (provider: SpeechProviderPlugin) => void;
   registerMediaUnderstandingProvider: (provider: MediaUnderstandingProviderPlugin) => void;
-  registerImageGenerationProvider: (provider: ImageGenerationProviderPlugin) => void;
+  registerImageGenerationProvider?: (provider: ImageGenerationProviderPlugin) => void;
   registerWebSearchProvider: (provider: WebSearchProviderPlugin) => void;
   registerInteractiveHandler: (registration: PluginInteractiveHandlerRegistration) => void;
   /**
