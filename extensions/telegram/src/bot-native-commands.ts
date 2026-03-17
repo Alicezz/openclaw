@@ -117,6 +117,8 @@ export type RegisterTelegramHandlerParams = {
     replyMedia?: TelegramMediaRef[],
   ) => Promise<void>;
   logger: ReturnType<typeof getChildLogger>;
+  /** Validated custom command names from registerTelegramNativeCommands (dedup + conflict-free). */
+  validatedCustomCommandNames?: Set<string>;
 };
 
 export type RegisterTelegramNativeCommandsParams = {
@@ -943,4 +945,8 @@ export const registerTelegramNativeCommands = ({
       fn: () => bot.api.setMyCommands([]),
     }).catch(() => {});
   }
+
+  // Expose the validated custom command names so callers (e.g. bot-handlers callback routing)
+  // can filter against the same set without re-deriving reservedCommands.
+  return { validatedCustomCommandNames: new Set(customCommands.map((c) => c.command)) };
 };

@@ -18,7 +18,6 @@ import type {
   TelegramTopicConfig,
 } from "openclaw/plugin-sdk/config-runtime";
 import { applyModelOverrideToSessionEntry } from "openclaw/plugin-sdk/config-runtime";
-import { resolveTelegramCustomCommands } from "openclaw/plugin-sdk/config-runtime";
 import { readChannelAllowFromStore } from "openclaw/plugin-sdk/conversation-runtime";
 import {
   buildPluginBindingResolvedText,
@@ -144,6 +143,7 @@ export const registerTelegramHandlers = ({
   shouldSkipUpdate,
   processMessage,
   logger,
+  validatedCustomCommandNames,
 }: RegisterTelegramHandlerParams) => {
   const DEFAULT_TEXT_FRAGMENT_MAX_GAP_MS = 1500;
   const TELEGRAM_TEXT_FRAGMENT_START_THRESHOLD_CHARS = 4000;
@@ -1532,16 +1532,14 @@ export const registerTelegramHandlers = ({
       // that every button on the originating message belongs to that command.
       // This prevents unrelated inline keyboards (or other customCommands) with
       // colliding callback_data values from being intercepted.
-      // Only consider validated commands (dedup + conflict-free) to avoid rejected
-      // entries from intercepting callbacks.
-      const validatedCommandNames = new Set(
-        resolveTelegramCustomCommands({ commands: telegramCfg.customCommands }).commands.map(
-          (c) => c.command,
-        ),
-      );
+      // Only consider validated commands (dedup + native-conflict-free) to avoid rejected
+      // entries from intercepting callbacks. validatedCustomCommandNames is passed from
+      // registerTelegramNativeCommands which resolves against reservedCommands.
       const seenMenuCommandNames = new Set<string>();
       const menuCustomCommands = (telegramCfg.customCommands ?? []).filter((c) => {
-        if (!c.menus || !c.routes || !validatedCommandNames.has(c.command)) return false;
+        if (!c.menus || !c.routes) return false;
+        if (validatedCustomCommandNames && !validatedCustomCommandNames.has(c.command))
+          return false;
         const normalized = c.command.toLowerCase();
         if (seenMenuCommandNames.has(normalized)) return false;
         seenMenuCommandNames.add(normalized);
@@ -1573,7 +1571,10 @@ export const registerTelegramHandlers = ({
             }
           }
         }
-        // Only handle if every button on the originating message belongs to this command
+        // Only handle if every button on the originating message belongs to this command.
+        // Note: if two different customCommands define identical button sets (same callback_data
+        // values), the first match wins. This is a degenerate config; users should namespace
+        // their callback_data values per command (e.g. "work:back" vs "admin:back").
         if (
           cbMessageButtons.length > 0 &&
           cbMessageButtons.every((cb) => ownedCallbackData.has(cb))
