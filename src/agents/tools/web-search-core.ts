@@ -1638,11 +1638,15 @@ async function runParallelSearch(params: {
         throw new Error(`Parallel Search API error (${res.status}): ${detail || res.statusText}`);
       }
       const data = (await res.json()) as ParallelSearchResponse;
-      const results = (data.results ?? []).map((r) => ({
-        title: wrapWebContent(r.title ?? "", "web_search"),
-        url: r.url ?? "",
-        text: wrapWebContent(r.text || (r.excerpts ?? []).join("\n\n") || "", "web_search"),
-      }));
+      const results = (data.results ?? []).map((r) => {
+        const title = r.title ?? "";
+        const text = r.text || (r.excerpts ?? []).join("\n\n") || "";
+        return {
+          title: title ? wrapWebContent(title, "web_search") : "",
+          url: r.url ?? "",
+          text: text ? wrapWebContent(text, "web_search") : "",
+        };
+      });
       const sliced = params.count ? results.slice(0, params.count) : results;
       return sliced;
     },
