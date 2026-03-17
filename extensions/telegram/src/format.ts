@@ -600,7 +600,7 @@ function findMarkdownIRPreservedSplitIndex(text: string, start: number, limit: n
       parenDepth -= 1;
       continue;
     }
-    if (!/\s/.test(char)) {
+    if (!/\s/u.test(char)) {
       sawNonWhitespace = true;
       continue;
     }
@@ -615,7 +615,7 @@ function findMarkdownIRPreservedSplitIndex(text: string, start: number, limit: n
       continue;
     }
     const whitespaceRunStart =
-      index === start || !/\s/.test(text[index - 1] ?? "") ? index : lastAnyWhitespaceRunStart;
+      index === start || !/\s/u.test(text[index - 1] ?? "") ? index : lastAnyWhitespaceRunStart;
     lastAnyWhitespaceBreak = index + 1;
     lastAnyWhitespaceRunStart = whitespaceRunStart;
     if (parenDepth === 0) {
@@ -631,7 +631,7 @@ function findMarkdownIRPreservedSplitIndex(text: string, start: number, limit: n
     if (runStart <= start) {
       return breakIndex;
     }
-    return /\s/.test(text[breakIndex] ?? "") ? runStart : breakIndex;
+    return /\s/u.test(text[breakIndex] ?? "") ? runStart : breakIndex;
   };
 
   if (lastOutsideParenNewlineBreak > start) {
@@ -660,10 +660,18 @@ function splitMarkdownIRPreserveWhitespace(ir: MarkdownIR, limit: number): Markd
   if (normalizedLimit <= 0 || ir.text.length <= normalizedLimit) {
     return [ir];
   }
+
   const chunks: MarkdownIR[] = [];
   let cursor = 0;
+
   while (cursor < ir.text.length) {
-    const end = findMarkdownIRPreservedSplitIndex(ir.text, cursor, normalizedLimit);
+    let end = findMarkdownIRPreservedSplitIndex(ir.text, cursor, normalizedLimit);
+
+    // Safety: ensure forward progress.
+    if (end <= cursor) {
+      end = Math.min(ir.text.length, cursor + 1);
+    }
+
     chunks.push({
       text: ir.text.slice(cursor, end),
       styles: sliceStyleSpans(ir.styles, cursor, end),
@@ -671,6 +679,7 @@ function splitMarkdownIRPreserveWhitespace(ir: MarkdownIR, limit: number): Markd
     });
     cursor = end;
   }
+
   return chunks;
 }
 
@@ -742,7 +751,11 @@ function renderTelegramChunksWithinHtmlLimit(
   limit: number,
 ): TelegramFormattedChunk[] {
   const normalizedLimit = Math.max(1, Math.floor(limit));
-  const pending = chunkMarkdownIR(ir, normalizedLimit);
+
+  // NOTE: chunkMarkdownIR may drop boundary whitespace, which breaks Telegram chunk joins
+  // (e.g. "line\nnext" becoming "linenext"). For Telegram we must preserve all
+  // original whitespace exactly.
+  const pending = splitMarkdownIRPreserveWhitespace(ir, normalizedLimit);
   const finalized: MarkdownIR[] = [];
   while (pending.length > 0) {
     const chunk = pending.shift();
