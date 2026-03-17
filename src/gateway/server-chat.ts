@@ -387,7 +387,6 @@ export function createAgentEventHandler({
       },
     };
     broadcast("chat", payload, { dropIfSlow: true });
-    nodeSendToSession(sessionKey, "chat", payload);
   };
 
   const resolveBufferedChatTextState = (clientRunId: string, sourceRunId: string) => {
@@ -444,7 +443,6 @@ export function createAgentEventHandler({
       },
     };
     broadcast("chat", flushPayload, { dropIfSlow: true });
-    nodeSendToSession(sessionKey, "chat", flushPayload);
     chatRunState.deltaLastBroadcastLen.set(clientRunId, text.length);
     chatRunState.deltaSentAt.set(clientRunId, now);
   };
@@ -484,7 +482,6 @@ export function createAgentEventHandler({
             : undefined,
       };
       broadcast("chat", payload);
-      nodeSendToSession(sessionKey, "chat", payload);
       return;
     }
     const payload = {
@@ -495,7 +492,6 @@ export function createAgentEventHandler({
       errorMessage: error ? formatForLog(error) : undefined,
     };
     broadcast("chat", payload);
-    nodeSendToSession(sessionKey, "chat", payload);
   };
 
   const resolveToolVerboseLevel = (runId: string, sessionKey?: string) => {
