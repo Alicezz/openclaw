@@ -1,22 +1,23 @@
-import type { ChannelOnboardingDmPolicy } from "../../../src/channels/plugins/onboarding-types.js";
+import type { DiscordGuildEntry } from "../../../src/config/types.discord.js";
 import {
+  applyAccountNameToChannelSection,
+  DEFAULT_ACCOUNT_ID,
+  formatDocsLink,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
   noteChannelLookupFailure,
   noteChannelLookupSummary,
   parseMentionOrPrefixedId,
   patchChannelConfigForAccount,
   setLegacyChannelDmPolicyWithAllowFrom,
-  setOnboardingChannelEnabled,
-} from "../../../src/channels/plugins/onboarding/helpers.js";
+  setSetupChannelEnabled,
+  type OpenClawConfig,
+} from "../../../src/plugin-sdk-internal/setup.js";
 import {
-  applyAccountNameToChannelSection,
-  migrateBaseNameToDefaultAccount,
-} from "../../../src/channels/plugins/setup-helpers.js";
-import type { ChannelSetupWizard } from "../../../src/channels/plugins/setup-wizard.js";
-import type { ChannelSetupAdapter } from "../../../src/channels/plugins/types.adapters.js";
-import type { OpenClawConfig } from "../../../src/config/config.js";
-import type { DiscordGuildEntry } from "../../../src/config/types.discord.js";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../../../src/routing/session-key.js";
-import { formatDocsLink } from "../../../src/terminal/links.js";
+  type ChannelSetupAdapter,
+  type ChannelSetupDmPolicy,
+  type ChannelSetupWizard,
+} from "../../../src/plugin-sdk-internal/setup.js";
 import { inspectDiscordAccount } from "./account-inspect.js";
 import { listDiscordAccountIds, resolveDiscordAccount } from "./accounts.js";
 
@@ -140,7 +141,7 @@ export const discordSetupAdapter: ChannelSetupAdapter = {
 export function createDiscordSetupWizardProxy(
   loadWizard: () => Promise<{ discordSetupWizard: ChannelSetupWizard }>,
 ) {
-  const discordDmPolicy: ChannelOnboardingDmPolicy = {
+  const discordDmPolicy: ChannelSetupDmPolicy = {
     label: "Discord",
     channel,
     policyKey: "channels.discord.dmPolicy",
@@ -251,7 +252,7 @@ export function createDiscordSetupWizardProxy(
         prompter: { note: (message: string, title?: string) => Promise<void> };
       }) => {
         const wizard = (await loadWizard()).discordSetupWizard;
-        if (!wizard.groupAccess) {
+        if (!wizard.groupAccess?.resolveAllowlist) {
           return entries.map((input) => ({ input, resolved: false }));
         }
         try {
@@ -343,6 +344,6 @@ export function createDiscordSetupWizardProxy(
         }),
     },
     dmPolicy: discordDmPolicy,
-    disable: (cfg: OpenClawConfig) => setOnboardingChannelEnabled(cfg, channel, false),
+    disable: (cfg: OpenClawConfig) => setSetupChannelEnabled(cfg, channel, false),
   } satisfies ChannelSetupWizard;
 }

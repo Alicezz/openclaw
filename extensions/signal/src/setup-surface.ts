@@ -1,18 +1,20 @@
-import type { ChannelOnboardingDmPolicy } from "../../../src/channels/plugins/onboarding-types.js";
 import {
-  parseOnboardingEntriesAllowingWildcard,
+  DEFAULT_ACCOUNT_ID,
+  detectBinary,
+  formatCliCommand,
+  formatDocsLink,
+  installSignalCli,
+  type OpenClawConfig,
+  parseSetupEntriesAllowingWildcard,
   promptParsedAllowFromForScopedChannel,
   setChannelDmPolicyWithAllowFrom,
-  setOnboardingChannelEnabled,
-} from "../../../src/channels/plugins/onboarding/helpers.js";
-import { type ChannelSetupWizard } from "../../../src/channels/plugins/setup-wizard.js";
-import { formatCliCommand } from "../../../src/cli/command-format.js";
-import { detectBinary } from "../../../src/commands/onboard-helpers.js";
-import { installSignalCli } from "../../../src/commands/signal-install.js";
-import type { OpenClawConfig } from "../../../src/config/config.js";
-import { DEFAULT_ACCOUNT_ID } from "../../../src/routing/session-key.js";
-import { formatDocsLink } from "../../../src/terminal/links.js";
-import type { WizardPrompter } from "../../../src/wizard/prompts.js";
+  setSetupChannelEnabled,
+  type WizardPrompter,
+} from "../../../src/plugin-sdk-internal/setup.js";
+import type {
+  ChannelSetupDmPolicy,
+  ChannelSetupWizard,
+} from "../../../src/plugin-sdk-internal/setup.js";
 import {
   listSignalAccountIds,
   resolveDefaultSignalAccountId,
@@ -56,7 +58,7 @@ async function promptSignalAllowFrom(params: {
   });
 }
 
-const signalDmPolicy: ChannelOnboardingDmPolicy = {
+const signalDmPolicy: ChannelSetupDmPolicy = {
   label: "Signal",
   channel,
   policyKey: "channels.signal.dmPolicy",
@@ -179,7 +181,7 @@ export const signalSetupWizard: ChannelSetupWizard = {
     ],
   },
   dmPolicy: signalDmPolicy,
-  disable: (cfg) => setOnboardingChannelEnabled(cfg, channel, false),
+  disable: (cfg) => setSetupChannelEnabled(cfg, channel, false),
 };
 
 export { normalizeSignalAccountInput, parseSignalAllowFromEntries, signalSetupAdapter };
