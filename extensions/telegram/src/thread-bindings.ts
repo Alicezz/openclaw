@@ -517,13 +517,10 @@ export function createTelegramThreadBindingManager(
     channel: "telegram",
     accountId,
     capabilities: {
-      placements: ["current"],
+      placements: ["current", "child"],
     },
     bind: async (input) => {
       if (input.conversation.channel !== "telegram") {
-        return null;
-      }
-      if (input.placement === "child") {
         return null;
       }
       const conversationId = normalizeConversationId(input.conversation.conversationId);
