@@ -130,3 +130,40 @@ export function resolveThreadParentSessionKey(
   const parent = raw.slice(0, idx).trim();
   return parent ? parent : null;
 }
+
+/**
+ * Extract user ID from session key for direct message sessions.
+ * Returns null if the session is not a direct message or if user ID cannot be determined.
+ *
+ * For direct message sessions like "agent:<agentId>:direct:<userId>:...",
+ * this extracts and returns the <userId> portion.
+ * Handles user IDs that may contain colons (e.g., international phone numbers).
+ */
+export function extractUserIdFromSessionKey(sessionKey: string | undefined | null): string | null {
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (!parsed?.rest) {
+    return null;
+  }
+  const rest = parsed.rest;
+  // Find the "direct:" marker and extract everything after it
+  const directMarker = "direct:";
+  const directIdx = rest.toLowerCase().indexOf(directMarker);
+  if (directIdx === -1) {
+    return null;
+  }
+  // Extract the user ID portion (everything after "direct:")
+  const userIdPart = rest.slice(directIdx + directMarker.length);
+  if (!userIdPart) {
+    return null;
+  }
+  // Check if the first segment is a reserved word (would indicate malformed key)
+  const firstSegment = userIdPart.split(":")[0];
+  if (
+    ["group", "channel", "dm", "cron", "subagent", "acp"].includes(
+      firstSegment?.toLowerCase() ?? "",
+    )
+  ) {
+    return null;
+  }
+  return userIdPart;
+}

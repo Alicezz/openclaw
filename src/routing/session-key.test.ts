@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveSessionChatType,
+  extractUserIdFromSessionKey,
   getSubagentDepth,
   isCronSessionKey,
 } from "../sessions/session-key-utils.js";
@@ -128,5 +129,61 @@ describe("isValidAgentId", () => {
     expect(isValidAgentId("Agent not found: xyz")).toBe(false);
     expect(isValidAgentId("../../../etc/passwd")).toBe(false);
     expect(isValidAgentId("a".repeat(65))).toBe(false);
+  });
+});
+
+describe("extractUserIdFromSessionKey", () => {
+  it("extracts userId from direct session keys", () => {
+    expect(extractUserIdFromSessionKey("agent:main:direct:user123")).toBe("user123");
+    expect(extractUserIdFromSessionKey("agent:main:telegram:direct:user123")).toBe("user123");
+    expect(extractUserIdFromSessionKey("agent:main:discord:direct:456789")).toBe("456789");
+  });
+
+  it("extracts userId from session keys with channel prefix", () => {
+    expect(extractUserIdFromSessionKey("agent:main:whatsapp:account1:direct:+15551234567")).toBe(
+      "+15551234567",
+    );
+    expect(extractUserIdFromSessionKey("agent:main:telegram:account1:direct:987654")).toBe(
+      "987654",
+    );
+  });
+
+  it("extracts full userId when userId contains colons", () => {
+    // International phone numbers with colons, composite IDs, etc.
+    expect(extractUserIdFromSessionKey("agent:main:whatsapp:direct:+1:555:123:4567")).toBe(
+      "+1:555:123:4567",
+    );
+    expect(extractUserIdFromSessionKey("agent:main:custom:direct:user:with:colons")).toBe(
+      "user:with:colons",
+    );
+    expect(extractUserIdFromSessionKey("agent:main:signal:account1:direct:+44:20:7946:0958")).toBe(
+      "+44:20:7946:0958",
+    );
+  });
+
+  it("returns null for non-direct session keys", () => {
+    expect(extractUserIdFromSessionKey("agent:main:main")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:telegram:group:g1")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:discord:channel:c1")).toBeNull();
+  });
+
+  it("returns null for session keys without user after direct", () => {
+    expect(extractUserIdFromSessionKey("agent:main:direct")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:telegram:direct")).toBeNull();
+  });
+
+  it("returns null for invalid or empty session keys", () => {
+    expect(extractUserIdFromSessionKey(undefined)).toBeNull();
+    expect(extractUserIdFromSessionKey("")).toBeNull();
+    expect(extractUserIdFromSessionKey("   ")).toBeNull();
+  });
+
+  it("does not extract reserved words as userId", () => {
+    expect(extractUserIdFromSessionKey("agent:main:direct:group")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:direct:channel")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:direct:dm")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:direct:cron")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:direct:subagent")).toBeNull();
+    expect(extractUserIdFromSessionKey("agent:main:direct:acp")).toBeNull();
   });
 });

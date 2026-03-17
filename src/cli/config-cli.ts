@@ -1,6 +1,12 @@
 import type { Command } from "commander";
 import JSON5 from "json5";
 import { OLLAMA_DEFAULT_BASE_URL } from "../agents/ollama-defaults.js";
+import {
+  listConfigBackups,
+  createConfigBackup,
+  restoreConfigBackup,
+  getBackupStats,
+} from "../config/config-backup-restore.js";
 import { readConfigFileSnapshot, writeConfigFile } from "../config/config.js";
 import { formatConfigIssueLines, normalizeConfigIssues } from "../config/issue-format.js";
 import { CONFIG_PATH } from "../config/paths.js";
@@ -21,6 +27,7 @@ type ConfigSetParseOpts = {
 
 const OLLAMA_API_KEY_PATH: PathSegment[] = ["models", "providers", "ollama", "apiKey"];
 const OLLAMA_PROVIDER_PATH: PathSegment[] = ["models", "providers", "ollama"];
+const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
 
 function isIndexSegment(raw: string): boolean {
   return /^[0-9]+$/.test(raw);
@@ -396,7 +403,7 @@ export function registerConfigCli(program: Command) {
   const cmd = program
     .command("config")
     .description(
-      "Non-interactive config helpers (get/set/unset/file/validate). Run without subcommand for guided setup.",
+      "Non-interactive config helpers (get/set/unset/file/validate). Run without subcommand for the setup wizard.",
     )
     .addHelpText(
       "after",
@@ -405,7 +412,7 @@ export function registerConfigCli(program: Command) {
     )
     .option(
       "--section <section>",
-      "Configuration sections for guided setup (repeatable). Use with no subcommand.",
+      "Configure wizard sections (repeatable). Use with no subcommand.",
       (value: string, previous: string[]) => [...previous, value],
       [] as string[],
     )
@@ -473,4 +480,172 @@ export function registerConfigCli(program: Command) {
     .action(async (opts) => {
       await runConfigValidate({ json: Boolean(opts.json) });
     });
+
+  cmd
+    .command("backup")
+    .description("Create a manual backup of the current config")
+    .option("--label <label>", "Optional label for the backup")
+    .action(async (opts) => {
+      await runConfigBackup({ label: opts.label });
+    });
+
+  cmd
+    .command("restore")
+    .description("Restore config from a backup")
+    .option("--last", "Restore from the most recent backup", false)
+    .option("--backup-path <path>", "Path to specific backup file")
+    .option("--dry-run", "Show what would be restored without making changes", false)
+    .action(async (opts) => {
+      await runConfigRestore({
+        last: Boolean(opts.last),
+        backupPath: opts.backupPath,
+        dryRun: Boolean(opts.dryRun),
+      });
+    });
+
+  cmd
+    .command("list-backups")
+    .description("List available config backups with statistics")
+    .option("--json", "Output as JSON", false)
+    .action(async (opts) => {
+      await runConfigListBackups({ json: Boolean(opts.json) });
+    });
+}
+
+async function runConfigBackup(opts: { label?: string }) {
+  const runtime = defaultRuntime;
+  try {
+    const snapshot = await readConfigFileSnapshot();
+    if (!snapshot.exists) {
+      runtime.error(danger(`Config file not found: ${shortenHomePath(snapshot.path)}`));
+      runtime.exit(1);
+      return;
+    }
+
+    const backup = await createConfigBackup(snapshot.path, {
+      timestamp: true,
+      label: opts.label,
+    });
+
+    runtime.log(success(`Created backup: ${shortenHomePath(backup.path)}`));
+    runtime.log(theme.muted(`  Size: ${backup.size} bytes`));
+    runtime.log(theme.muted(`  Timestamp: ${backup.timestamp.toISOString()}`));
+  } catch (err) {
+    runtime.error(danger(String(err)));
+    runtime.exit(1);
+  }
+}
+
+async function runConfigRestore(opts: { last?: boolean; backupPath?: string; dryRun?: boolean }) {
+  const runtime = defaultRuntime;
+  try {
+    const snapshot = await readConfigFileSnapshot();
+
+    if (opts.backupPath) {
+      const result = await restoreConfigBackup(snapshot.path, {
+        backupPath: opts.backupPath,
+        dryRun: opts.dryRun,
+      });
+
+      if (result.success) {
+        if (opts.dryRun) {
+          runtime.log(info(`Would restore from: ${shortenHomePath(result.backupPath)}`));
+        } else {
+          runtime.log(success(`Restored config from: ${shortenHomePath(result.backupPath)}`));
+          runtime.log(theme.muted("Restart the gateway to apply the restored config."));
+        }
+      } else {
+        runtime.error(danger(`Failed to restore: ${result.error}`));
+        runtime.exit(1);
+      }
+      return;
+    }
+
+    // Default to --last if no backup path specified
+    const backups = await listConfigBackups(snapshot.path);
+    if (backups.length === 0) {
+      runtime.error(danger("No backups found."));
+      runtime.exit(1);
+      return;
+    }
+
+    // Use the most recent backup (first in sorted list)
+    const latestBackup = backups[0];
+    const result = await restoreConfigBackup(snapshot.path, {
+      backupPath: latestBackup.path,
+      dryRun: opts.dryRun,
+    });
+
+    if (result.success) {
+      if (opts.dryRun) {
+        runtime.log(info(`Would restore from: ${shortenHomePath(result.backupPath)}`));
+      } else {
+        runtime.log(success(`Restored config from: ${shortenHomePath(result.backupPath)}`));
+        runtime.log(theme.muted("Restart the gateway to apply the restored config."));
+      }
+    } else {
+      runtime.error(danger(`Failed to restore: ${result.error}`));
+      runtime.exit(1);
+    }
+  } catch (err) {
+    runtime.error(danger(String(err)));
+    runtime.exit(1);
+  }
+}
+
+async function runConfigListBackups(opts: { json?: boolean }) {
+  const runtime = defaultRuntime;
+  try {
+    const snapshot = await readConfigFileSnapshot();
+    const backups = await listConfigBackups(snapshot.path);
+    const stats = await getBackupStats(snapshot.path);
+
+    if (opts.json) {
+      runtime.log(
+        JSON.stringify(
+          {
+            configPath: snapshot.path,
+            backups: backups.map((b) => ({
+              path: b.path,
+              timestamp: b.timestamp.toISOString(),
+              size: b.size,
+              label: b.label,
+            })),
+            stats: {
+              totalBackups: stats.totalBackups,
+              totalSize: stats.totalSize,
+              oldestBackup: stats.oldestBackup?.toISOString(),
+              newestBackup: stats.newestBackup?.toISOString(),
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    if (backups.length === 0) {
+      runtime.log(info("No backups found."));
+      return;
+    }
+
+    runtime.log(theme.bold(`Config backups for ${shortenHomePath(snapshot.path)}:`));
+    runtime.log("");
+    for (const backup of backups) {
+      const label = backup.label ? ` (${backup.label})` : "";
+      const size = backup.size < 1024 ? `${backup.size}B` : `${(backup.size / 1024).toFixed(1)}KB`;
+      runtime.log(`  ${shortenHomePath(backup.path)}${label}`);
+      runtime.log(theme.muted(`    ${backup.timestamp.toISOString()} · ${size}`));
+    }
+    runtime.log("");
+    runtime.log(
+      theme.muted(
+        `Total: ${stats.totalBackups} backup(s), ${stats.totalSize < 1024 ? `${stats.totalSize}B` : `${(stats.totalSize / 1024).toFixed(1)}KB`}`,
+      ),
+    );
+  } catch (err) {
+    runtime.error(danger(String(err)));
+    runtime.exit(1);
+  }
 }
