@@ -11,6 +11,16 @@ type AllowlistConfigPaths = {
   cleanupPaths?: string[][];
 };
 
+const LEGACY_DM_ALLOWLIST_CONFIG_PATHS: AllowlistConfigPaths = {
+  readPaths: [["allowFrom"], ["dm", "allowFrom"]],
+  writePath: ["allowFrom"],
+  cleanupPaths: [["dm", "allowFrom"]],
+};
+
+export function resolveLegacyDmAllowlistConfigPaths(scope: "dm" | "group") {
+  return scope === "dm" ? LEGACY_DM_ALLOWLIST_CONFIG_PATHS : null;
+}
+
 function resolveAccountScopedWriteTarget(
   parsed: Record<string, unknown>,
   channelId: ChannelId,
@@ -183,6 +193,7 @@ function applyAccountScopedAllowlistConfigEdit(params: {
   };
 }
 
+/** Build the default account-scoped allowlist editor used by channel plugins with config-backed lists. */
 export function buildAccountScopedAllowlistConfigEditor(params: {
   channelId: ChannelId;
   normalize: (params: {

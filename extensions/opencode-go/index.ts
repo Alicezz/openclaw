@@ -1,7 +1,7 @@
 import { emptyPluginConfigSchema, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { applyOpencodeGoConfig } from "../../src/commands/onboard-auth.config-opencode-go.js";
-import { OPENCODE_GO_DEFAULT_MODEL_REF } from "../../src/commands/opencode-go-model-default.js";
-import { createProviderApiKeyAuthMethod } from "../../src/plugins/provider-api-key-auth.js";
+import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth";
+import { OPENCODE_GO_DEFAULT_MODEL_REF } from "openclaw/plugin-sdk/provider-models";
+import { applyOpencodeGoConfig } from "./onboard.js";
 
 const PROVIDER_ID = "opencode-go";
 
@@ -26,6 +26,7 @@ const opencodeGoPlugin = {
           flagName: "--opencode-go-api-key",
           envVar: "OPENCODE_API_KEY",
           promptMessage: "Enter OpenCode API key",
+          profileIds: ["opencode:default", "opencode-go:default"],
           defaultModel: OPENCODE_GO_DEFAULT_MODEL_REF,
           expectedProviders: ["opencode", "opencode-go"],
           applyConfig: (cfg) => applyOpencodeGoConfig(cfg),
