@@ -102,6 +102,10 @@ export const providerContractRegistry: ProviderContractEntry[] = buildCapability
 const loadedBundledProviderRegistry: ProviderContractEntry[] = resolvePluginProviders({
   bundledProviderAllowlistCompat: true,
   bundledProviderVitestCompat: true,
+  env: {
+    ...process.env,
+    VITEST: "1",
+  },
   cache: false,
   activate: false,
 })
