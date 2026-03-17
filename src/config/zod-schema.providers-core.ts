@@ -117,6 +117,17 @@ const TelegramCustomCommandSchema = z
   .object({
     command: z.string().overwrite(normalizeTelegramCommandName),
     description: z.string().overwrite(normalizeTelegramCommandDescription),
+    // Multi-level menu support
+    menus: z
+      .record(
+        z.string(),
+        z.object({
+          text: z.string(),
+          buttons: z.array(z.array(z.any())),
+        }),
+      )
+      .optional(),
+    routes: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 

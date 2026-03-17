@@ -891,6 +891,28 @@ export const registerTelegramNativeCommands = ({
           }
         });
       }
+
+      // Register bot.command handlers for customCommands with menus (multi-level menu support)
+      const menuCommands = (telegramCfg.customCommands ?? []).filter(
+        (c: any) => c.menus && c.menus.main,
+      );
+      for (const mc of menuCommands) {
+        bot.command(mc.command, async (ctx: TelegramNativeCommandContext) => {
+          const msg = ctx.message;
+          if (!msg) return;
+          if (shouldSkipUpdate(ctx)) return;
+          const menu = mc.menus!.main;
+          try {
+            await bot.api.sendMessage(msg.chat.id, menu.text, {
+              parse_mode: "Markdown",
+              reply_markup: { inline_keyboard: menu.buttons },
+              ...(msg.message_thread_id ? { message_thread_id: msg.message_thread_id } : {}),
+            });
+          } catch (err) {
+            runtime.error?.(`[customCommand-menus] ${String(err)}`);
+          }
+        });
+      }
     }
   } else if (nativeDisabledExplicit) {
     withTelegramApiErrorLogging({

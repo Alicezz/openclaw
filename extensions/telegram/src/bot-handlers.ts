@@ -1525,6 +1525,38 @@ export const registerTelegramHandlers = ({
         return;
       }
 
+      // Config-driven menu navigation for customCommands with menus
+      const menuCustomCommands = (telegramCfg.customCommands ?? []).filter(
+        (c: any) => c.menus && c.routes,
+      );
+      let menuHandled = false;
+      for (const mc of menuCustomCommands) {
+        const targetMenuName = mc.routes![data];
+        if (targetMenuName && mc.menus![targetMenuName]) {
+          const menu = mc.menus![targetMenuName];
+          try {
+            await editCallbackMessage(menu.text, {
+              parse_mode: "Markdown",
+              reply_markup: { inline_keyboard: menu.buttons },
+            });
+          } catch (editErr) {
+            const errStr = String(editErr);
+            if (!errStr.includes("message is not modified")) {
+              await replyToCallbackChat(menu.text, {
+                parse_mode: "Markdown",
+                reply_markup: { inline_keyboard: menu.buttons },
+                ...(callbackMessage.message_thread_id
+                  ? { message_thread_id: callbackMessage.message_thread_id }
+                  : {}),
+              });
+            }
+          }
+          menuHandled = true;
+          break;
+        }
+      }
+      if (menuHandled) return;
+
       const syntheticMessage = buildSyntheticTextMessage({
         base: callbackMessage,
         from: callback.from,
