@@ -8,25 +8,27 @@ import type {
   PluginResetSessionResult,
 } from "./types.js";
 
-vi.mock("@mariozechner/pi-ai/oauth", () => ({
-  getOAuthApiKey: () => "",
-  getOAuthProviders: () => [],
-  loginOpenAICodex: vi.fn(),
-}));
+const mockPluginSideEffects = () => {
+  vi.doMock("@mariozechner/pi-ai/oauth", () => ({
+    getOAuthApiKey: () => "",
+    getOAuthProviders: () => [],
+    loginOpenAICodex: vi.fn(),
+  }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
-  Client: class {
-    connect = vi.fn(async () => {});
-    listTools = vi.fn(async () => ({ tools: [] }));
-    close = vi.fn(async () => {});
-  },
-}));
+  vi.doMock("@modelcontextprotocol/sdk/client/index.js", () => ({
+    Client: class {
+      connect = vi.fn(async () => {});
+      listTools = vi.fn(async () => ({ tools: [] }));
+      close = vi.fn(async () => {});
+    },
+  }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  StdioClientTransport: class {
-    pid = null;
-  },
-}));
+  vi.doMock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+    StdioClientTransport: class {
+      pid = null;
+    },
+  }));
+};
 
 type SessionResetDeps = {
   loadConfig: ReturnType<typeof vi.fn>;
@@ -65,6 +67,7 @@ function createRecord(): PluginRecord {
 
 async function createApiHarness(options?: RegistryImportOptions) {
   vi.resetModules();
+  mockPluginSideEffects();
 
   if (options?.sessionResetImportError) {
     vi.doMock("../gateway/session-reset-service.js", () => ({
@@ -157,6 +160,9 @@ async function createApiWithDefaultMocks() {
 afterEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  vi.doUnmock("@mariozechner/pi-ai/oauth");
+  vi.doUnmock("@modelcontextprotocol/sdk/client/index.js");
+  vi.doUnmock("@modelcontextprotocol/sdk/client/stdio.js");
   vi.doUnmock("../gateway/session-reset-service.js");
 });
 
