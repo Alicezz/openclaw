@@ -41,6 +41,11 @@ vi.mock("../plugins/web-search-providers.js", () => {
         envVars: ["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
         getCredentialValue: getScoped("perplexity"),
       },
+      {
+        id: "tavily",
+        envVars: ["TAVILY_API_KEY"],
+        getCredentialValue: getScoped("tavily"),
+      },
     ],
   };
 });
