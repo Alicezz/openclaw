@@ -18,6 +18,7 @@ import {
   isEntryEligibleForRecoveryRetry,
   isPermanentDeliveryError,
   loadPendingDeliveries,
+  MAX_RECOVERY_ENTRY_AGE_MS,
   MAX_RETRIES,
   moveToFailed,
   recoverPendingDeliveries,
@@ -61,6 +62,10 @@ describe("delivery-queue", () => {
   beforeEach(() => {
     tmpDir = path.join(fixtureRoot, `case-${fixtureCount++}`);
     fs.mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   afterAll(() => {
@@ -411,6 +416,36 @@ describe("delivery-queue", () => {
       expect(fs.existsSync(path.join(failedDir, `${id}.json`))).toBe(true);
     });
 
+    it("moves stale queued entries to failed without retrying them", async () => {
+      vi.useFakeTimers();
+      const start = new Date("2026-03-14T07:00:00.000Z");
+      vi.setSystemTime(start);
+
+      const id = await enqueueDelivery(
+        { channel: "whatsapp", to: "+1", payloads: [{ text: "a" }] },
+        tmpDir,
+      );
+      setEntryState(id, {
+        retryCount: 1,
+        enqueuedAt: start.getTime() - MAX_RECOVERY_ENTRY_AGE_MS - 1,
+        lastAttemptAt: start.getTime(),
+      });
+
+      const deliver = vi.fn();
+      const log = createLog();
+      const { result } = await runRecovery({ deliver, log });
+
+      expect(deliver).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        recovered: 0,
+        failed: 1,
+        skippedMaxRetries: 0,
+        deferredBackoff: 0,
+      });
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("is stale"));
+      expect(fs.existsSync(path.join(tmpDir, "delivery-queue", "failed", `${id}.json`))).toBe(true);
+    });
+
     it("increments retryCount on failed recovery attempt", async () => {
       await enqueueDelivery({ channel: "slack", to: "#ch", payloads: [{ text: "x" }] }, tmpDir);
 
@@ -584,7 +619,7 @@ describe("delivery-queue", () => {
         { channel: "whatsapp", to: "+1", payloads: [{ text: "later" }] },
         tmpDir,
       );
-      setEntryState(id, { retryCount: 3, lastAttemptAt: start.getTime() });
+      setEntryState(id, { retryCount: 1, lastAttemptAt: start.getTime() });
 
       const firstDeliver = vi.fn().mockResolvedValue([]);
       const firstRun = await runRecovery({ deliver: firstDeliver, maxRecoveryMs: 60_000 });
@@ -596,7 +631,7 @@ describe("delivery-queue", () => {
       });
       expect(firstDeliver).not.toHaveBeenCalled();
 
-      vi.setSystemTime(new Date(start.getTime() + 600_000 + 1));
+      vi.setSystemTime(new Date(start.getTime() + 25_000 + 1));
       const secondDeliver = vi.fn().mockResolvedValue([]);
       const secondRun = await runRecovery({ deliver: secondDeliver, maxRecoveryMs: 60_000 });
       expect(secondRun.result).toEqual({
