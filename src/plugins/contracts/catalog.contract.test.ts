@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, vi } from "vitest";
 import {
+  requireProviderContractProvider,
   expectAugmentedCodexCatalog,
   expectCodexBuiltInSuppression,
   expectCodexMissingAuthHint,
@@ -71,7 +72,8 @@ describe("provider catalog contract", () => {
   });
 
   it("keeps codex-only missing-auth hints wired through the provider runtime", () => {
-    expectCodexMissingAuthHint(buildProviderMissingAuthMessageWithPlugin);
+    const openaiProvider = requireProviderContractProvider("openai");
+    expectCodexMissingAuthHint(({ context }) => openaiProvider.buildMissingAuthMessage?.(context));
   });
 
   it("keeps built-in model suppression wired through the provider runtime", () => {
