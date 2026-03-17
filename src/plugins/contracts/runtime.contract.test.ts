@@ -21,7 +21,6 @@ vi.mock("../../providers/qwen-portal-oauth.js", () => ({
 }));
 
 let requireProviderContractProvider: typeof import("./registry.js").requireProviderContractProvider;
-
 function createModel(overrides: Partial<ProviderRuntimeModel> & Pick<ProviderRuntimeModel, "id">) {
   return {
     id: overrides.id,
