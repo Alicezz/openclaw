@@ -123,7 +123,14 @@ const TelegramCustomCommandSchema = z
         z.string(),
         z.object({
           text: z.string(),
-          buttons: z.array(z.array(z.any())),
+          buttons: z.array(
+            z.array(
+              z.object({
+                text: z.string(),
+                callback_data: z.string(),
+              }),
+            ),
+          ),
         }),
       )
       .optional(),

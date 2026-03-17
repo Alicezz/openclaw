@@ -1525,9 +1525,10 @@ export const registerTelegramHandlers = ({
         return;
       }
 
-      // Config-driven menu navigation for customCommands with menus
+      // Config-driven menu navigation for customCommands with menus.
+      // First matching route wins (ordered by customCommands array position).
       const menuCustomCommands = (telegramCfg.customCommands ?? []).filter(
-        (c: any) => c.menus && c.routes,
+        (c) => c.menus && c.routes,
       );
       let menuHandled = false;
       for (const mc of menuCustomCommands) {
@@ -1536,14 +1537,14 @@ export const registerTelegramHandlers = ({
           const menu = mc.menus![targetMenuName];
           try {
             await editCallbackMessage(menu.text, {
-              parse_mode: "Markdown",
+              // parse_mode omitted: menu text is sent as plain text to avoid Markdown escaping issues
               reply_markup: { inline_keyboard: menu.buttons },
             });
           } catch (editErr) {
             const errStr = String(editErr);
             if (!errStr.includes("message is not modified")) {
               await replyToCallbackChat(menu.text, {
-                parse_mode: "Markdown",
+                // parse_mode omitted: menu text is sent as plain text to avoid Markdown escaping issues
                 reply_markup: { inline_keyboard: menu.buttons },
                 ...(callbackMessage.message_thread_id
                   ? { message_thread_id: callbackMessage.message_thread_id }
