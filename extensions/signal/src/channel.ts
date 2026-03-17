@@ -71,7 +71,6 @@ function resolveSignalSendContext(params: {
   return { send, maxBytes };
 }
 
-
 async function sendSignalOutbound(params: {
   cfg: Parameters<typeof resolveSignalAccount>[0]["cfg"];
   to: string;
@@ -83,7 +82,6 @@ async function sendSignalOutbound(params: {
   deps?: { [channelId: string]: unknown };
 }) {
   const { send, maxBytes } = resolveSignalSendContext(params);
-  const accountInfo = resolveSignalAccount({ cfg: params.cfg, accountId: params.accountId });
   const quoteParams = resolveSignalQuoteParams({
     to: params.to,
     replyToId: params.replyToId ?? undefined,
