@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { ChannelType, type RequestClient } from "@buape/carbon";
 import { resolveAckReaction, resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import { EmbeddedBlockChunker } from "openclaw/plugin-sdk/agent-runtime";
@@ -35,6 +36,13 @@ import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtim
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-runtime";
 import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-runtime";
+import { stripEnvelopeFromMessage } from "../../../../src/gateway/chat-sanitize.js";
+import { getFallbackGatewayContext } from "../../../../src/gateway/server-plugins.js";
+import { loadSessionEntry, readSessionMessages } from "../../../../src/gateway/session-utils.js";
+import {
+  stripInlineDirectiveTagsForDisplay,
+  stripInlineDirectiveTagsFromMessageForDisplay,
+} from "../../../../src/utils/directive-tags.js";
 import { resolveDiscordMaxLinesPerMessage } from "../accounts.js";
 import { chunkDiscordTextWithMode } from "../chunk.js";
 import { resolveDiscordDraftStreamingChunking } from "../draft-chunking.js";
@@ -66,6 +74,48 @@ const DISCORD_TYPING_MAX_DURATION_MS = 20 * 60_000;
 
 function isProcessAborted(abortSignal?: AbortSignal): boolean {
   return Boolean(abortSignal?.aborted);
+}
+
+function normalizeComparableText(text: string | undefined): string | undefined {
+  if (typeof text !== "string") {
+    return undefined;
+  }
+  const normalized = stripInlineDirectiveTagsForDisplay(text).text.trim();
+  return normalized || undefined;
+}
+
+function extractComparableAssistantText(
+  message: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!message) {
+    return undefined;
+  }
+  const directText = normalizeComparableText(
+    typeof message.text === "string" ? message.text : undefined,
+  );
+  if (directText) {
+    return directText;
+  }
+  const content = message.content;
+  if (typeof content === "string") {
+    return normalizeComparableText(content);
+  }
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+  const parts = content
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return undefined;
+      }
+      const block = entry as { type?: unknown; text?: unknown };
+      if (block.type !== "text" && block.type !== "output_text" && block.type !== "input_text") {
+        return undefined;
+      }
+      return normalizeComparableText(typeof block.text === "string" ? block.text : undefined);
+    })
+    .filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 export async function processDiscordMessage(ctx: DiscordMessagePreflightContext) {
@@ -593,6 +643,7 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
 
   // When draft streaming is active, suppress block streaming to avoid double-streaming.
   const disableBlockStreamingForDraft = draftStream ? true : undefined;
+  const deliveredFinalTexts = new Set<string>();
 
   const { dispatcher, replyOptions, markDispatchIdle, markRunComplete } =
     createReplyDispatcherWithTyping({
@@ -604,6 +655,12 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
           return;
         }
         const isFinal = info.kind === "final";
+        if (isFinal) {
+          const normalizedFinalText = normalizeComparableText(payload.text);
+          if (normalizedFinalText) {
+            deliveredFinalTexts.add(normalizedFinalText);
+          }
+        }
         if (payload.isReasoning) {
           // Reasoning/thinking payloads should not be delivered to Discord.
           return;
@@ -721,6 +778,24 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
   let dispatchResult: Awaited<ReturnType<typeof dispatchInboundMessage>> | null = null;
   let dispatchError = false;
   let dispatchAborted = false;
+  let preDispatchAssistantCount = 0;
+  if (ctxPayload.SessionKey) {
+    try {
+      const { storePath, entry } = loadSessionEntry(ctxPayload.SessionKey);
+      const sessionId = entry?.sessionId;
+      if (sessionId) {
+        const messages = readSessionMessages(sessionId, storePath, entry?.sessionFile);
+        preDispatchAssistantCount = messages.filter(
+          (m: unknown) =>
+            typeof m === "object" &&
+            m !== null &&
+            (m as Record<string, unknown>)?.role === "assistant",
+        ).length;
+      }
+    } catch {
+      preDispatchAssistantCount = 0;
+    }
+  }
   try {
     if (isProcessAborted(abortSignal)) {
       dispatchAborted = true;
@@ -850,6 +925,60 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     }
     return;
   }
+
+  const gatewayCtx = getFallbackGatewayContext();
+  if (gatewayCtx && ctxPayload.SessionKey) {
+    try {
+      const runId = randomUUID();
+      const sessionKey = ctxPayload.SessionKey;
+      const seq = (gatewayCtx.agentRunSeq.get(runId) ?? 0) + 1;
+      gatewayCtx.agentRunSeq.set(runId, seq);
+
+      const { storePath, entry } = loadSessionEntry(sessionKey);
+      const sessionId = entry?.sessionId;
+      let message: Record<string, unknown> | undefined;
+      if (sessionId) {
+        const messages = readSessionMessages(sessionId, storePath, entry?.sessionFile);
+        const assistantMessages = messages.filter(
+          (m: unknown) =>
+            typeof m === "object" &&
+            m !== null &&
+            (m as Record<string, unknown>)?.role === "assistant",
+        );
+        const newAssistantMessages = assistantMessages.slice(preDispatchAssistantCount);
+        message = [...newAssistantMessages].reverse().find((entry) => {
+          const candidate = stripEnvelopeFromMessage(entry) as Record<string, unknown> | undefined;
+          const candidateText = extractComparableAssistantText(candidate);
+          return candidateText ? deliveredFinalTexts.has(candidateText) : false;
+        }) as Record<string, unknown> | undefined;
+      }
+
+      if (!message) {
+        gatewayCtx.agentRunSeq.delete(runId);
+        return;
+      }
+
+      const sanitizedMessage = message
+        ? stripInlineDirectiveTagsFromMessageForDisplay(
+            stripEnvelopeFromMessage(message) as Record<string, unknown>,
+          )
+        : undefined;
+
+      const payload = {
+        runId,
+        sessionKey,
+        seq,
+        state: "final" as const,
+        message: sanitizedMessage,
+      };
+      gatewayCtx.broadcast("chat", payload);
+      gatewayCtx.nodeSendToSession(sessionKey, "chat", payload);
+      gatewayCtx.agentRunSeq.delete(runId);
+    } catch (err) {
+      logVerbose(`discord broadcast failed: ${String(err)}`);
+    }
+  }
+
   if (shouldLogVerbose()) {
     const finalCount = dispatchResult.counts.final;
     logVerbose(

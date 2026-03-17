@@ -50,6 +50,10 @@ export function setFallbackGatewayContext(ctx: GatewayRequestContext): void {
   fallbackGatewayContextState.context = ctx;
 }
 
+export function getFallbackGatewayContext(): GatewayRequestContext | undefined {
+  return fallbackGatewayContextState.context;
+}
+
 type PluginSubagentOverridePolicy = {
   allowModelOverride: boolean;
   allowAnyModel: boolean;
@@ -205,7 +209,6 @@ function resolveRequestedFallbackModelRef(params: {
   }
   return `${parsed.provider}/${parsed.model}`;
 }
-
 // ── Internal gateway dispatch for plugin runtime ────────────────────
 
 function createSyntheticOperatorClient(params?: {

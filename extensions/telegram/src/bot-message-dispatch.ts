@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Bot } from "grammy";
 import { resolveAgentDir } from "openclaw/plugin-sdk/agent-runtime";
 import {
@@ -28,6 +29,13 @@ import { dispatchReplyWithBufferedBlockDispatcher } from "openclaw/plugin-sdk/re
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { danger, logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
+import { stripEnvelopeFromMessage } from "../../../src/gateway/chat-sanitize.js";
+import { getFallbackGatewayContext } from "../../../src/gateway/server-plugins.js";
+import { loadSessionEntry, readSessionMessages } from "../../../src/gateway/session-utils.js";
+import {
+  stripInlineDirectiveTagsForDisplay,
+  stripInlineDirectiveTagsFromMessageForDisplay,
+} from "../../../src/utils/directive-tags.js";
 import type { TelegramMessageContext } from "./bot-message-context.js";
 import type { TelegramBotOptions } from "./bot.js";
 import { deliverReplies } from "./bot/delivery.js";
@@ -55,6 +63,48 @@ const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
 
 /** Minimum chars before sending first streaming message (improves push notification UX) */
 const DRAFT_MIN_INITIAL_CHARS = 30;
+
+function normalizeComparableText(text: string | undefined): string | undefined {
+  if (typeof text !== "string") {
+    return undefined;
+  }
+  const normalized = stripInlineDirectiveTagsForDisplay(text).text.trim();
+  return normalized || undefined;
+}
+
+function extractComparableAssistantText(
+  message: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!message) {
+    return undefined;
+  }
+  const directText = normalizeComparableText(
+    typeof message.text === "string" ? message.text : undefined,
+  );
+  if (directText) {
+    return directText;
+  }
+  const content = message.content;
+  if (typeof content === "string") {
+    return normalizeComparableText(content);
+  }
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+  const parts = content
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return undefined;
+      }
+      const block = entry as { type?: unknown; text?: unknown };
+      if (block.type !== "text" && block.type !== "output_text" && block.type !== "input_text") {
+        return undefined;
+      }
+      return normalizeComparableText(typeof block.text === "string" ? block.text : undefined);
+    })
+    .filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
 
 async function resolveStickerVisionSupport(cfg: OpenClawConfig, agentId: string) {
   try {
@@ -534,6 +584,25 @@ export const dispatchTelegramMessage = async ({
   });
 
   let dispatchError: unknown;
+  const deliveredFinalTexts = new Set<string>();
+  let preDispatchAssistantCount = 0;
+  if (ctxPayload.SessionKey) {
+    try {
+      const { storePath, entry } = loadSessionEntry(ctxPayload.SessionKey);
+      const sessionId = entry?.sessionId;
+      if (sessionId) {
+        const messages = readSessionMessages(sessionId, storePath, entry?.sessionFile);
+        preDispatchAssistantCount = messages.filter(
+          (m: unknown) =>
+            typeof m === "object" &&
+            m !== null &&
+            (m as Record<string, unknown>)?.role === "assistant",
+        ).length;
+      }
+    } catch {
+      preDispatchAssistantCount = 0;
+    }
+  }
   try {
     ({ queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
       ctx: ctxPayload,
@@ -546,6 +615,10 @@ export const dispatchTelegramMessage = async ({
             hadErrorReplyFailureOrSkip = true;
           }
           if (info.kind === "final") {
+            const normalizedFinalText = normalizeComparableText(payload.text);
+            if (normalizedFinalText) {
+              deliveredFinalTexts.add(normalizedFinalText);
+            }
             // Assistant callbacks are fire-and-forget; ensure queued boundary
             // rotations/partials are applied before final delivery mapping.
             await enqueueDraftLaneEvent(async () => {});
@@ -834,6 +907,63 @@ export const dispatchTelegramMessage = async ({
   if (!hasFinalResponse) {
     clearGroupHistory();
     return;
+  }
+
+  if (queuedFinal) {
+    const ctx = getFallbackGatewayContext();
+    if (ctx && ctxPayload.SessionKey) {
+      try {
+        const runId = randomUUID();
+        const sessionKey = ctxPayload.SessionKey;
+        const seq = (ctx.agentRunSeq.get(runId) ?? 0) + 1;
+        ctx.agentRunSeq.set(runId, seq);
+
+        const { storePath, entry } = loadSessionEntry(sessionKey);
+        const sessionId = entry?.sessionId;
+        let message: Record<string, unknown> | undefined;
+        if (sessionId) {
+          const messages = readSessionMessages(sessionId, storePath, entry?.sessionFile);
+          const assistantMessages = messages.filter(
+            (m: unknown) =>
+              typeof m === "object" &&
+              m !== null &&
+              (m as Record<string, unknown>)?.role === "assistant",
+          );
+          const newAssistantMessages = assistantMessages.slice(preDispatchAssistantCount);
+          message = [...newAssistantMessages].reverse().find((entry) => {
+            const candidate = stripEnvelopeFromMessage(entry) as
+              | Record<string, unknown>
+              | undefined;
+            const candidateText = extractComparableAssistantText(candidate);
+            return candidateText ? deliveredFinalTexts.has(candidateText) : false;
+          }) as Record<string, unknown> | undefined;
+        }
+
+        if (!message) {
+          ctx.agentRunSeq.delete(runId);
+          return;
+        }
+
+        const sanitizedMessage = message
+          ? stripInlineDirectiveTagsFromMessageForDisplay(
+              stripEnvelopeFromMessage(message) as Record<string, unknown>,
+            )
+          : undefined;
+
+        const payload = {
+          runId,
+          sessionKey,
+          seq,
+          state: "final" as const,
+          message: sanitizedMessage,
+        };
+        ctx.broadcast("chat", payload);
+        ctx.nodeSendToSession(sessionKey, "chat", payload);
+        ctx.agentRunSeq.delete(runId);
+      } catch (err) {
+        runtime.error?.(`telegram broadcast failed: ${String(err)}`);
+      }
+    }
   }
 
   if (statusReactionController) {
