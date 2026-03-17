@@ -42,35 +42,64 @@ const ensureUndiciMockCleanup = (() => {
 })();
 
 const mockPluginSideEffects = () => {
-  vi.doMock("../agents/sandbox/constants.js", () => ({
-    DEFAULT_SANDBOX_WORKSPACE_ROOT: "/tmp/sandboxes",
-    DEFAULT_SANDBOX_IMAGE: "sandbox:test",
-    DEFAULT_SANDBOX_CONTAINER_PREFIX: "sandbox-",
-    DEFAULT_SANDBOX_WORKDIR: "/workspace",
-    DEFAULT_SANDBOX_IDLE_HOURS: 1,
-    DEFAULT_SANDBOX_MAX_AGE_DAYS: 1,
-    DEFAULT_TOOL_ALLOW: [] as const,
-    DEFAULT_TOOL_DENY: [] as const,
-    DEFAULT_SANDBOX_BROWSER_IMAGE: "sandbox-browser:test",
-    DEFAULT_SANDBOX_COMMON_IMAGE: "sandbox-common:test",
-    SANDBOX_BROWSER_SECURITY_HASH_EPOCH: "test",
-    DEFAULT_SANDBOX_BROWSER_PREFIX: "sandbox-browser-",
-    DEFAULT_SANDBOX_BROWSER_NETWORK: "sandbox-net",
-    DEFAULT_SANDBOX_BROWSER_CDP_PORT: 0,
-    DEFAULT_SANDBOX_BROWSER_VNC_PORT: 0,
-    DEFAULT_SANDBOX_BROWSER_NOVNC_PORT: 0,
-    DEFAULT_SANDBOX_BROWSER_AUTOSTART_TIMEOUT_MS: 0,
-    SANDBOX_AGENT_WORKSPACE_MOUNT: "/agent",
-    SANDBOX_STATE_DIR: "/tmp/sandbox",
-    SANDBOX_REGISTRY_PATH: "/tmp/sandbox/containers.json",
-    SANDBOX_BROWSER_REGISTRY_PATH: "/tmp/sandbox/browsers.json",
-  }));
+  vi.doMock("../agents/sandbox/constants.js", () => {
+    return {
+      DEFAULT_SANDBOX_WORKSPACE_ROOT: "/tmp/sandboxes",
+      DEFAULT_SANDBOX_IMAGE: "sandbox:test",
+      DEFAULT_SANDBOX_CONTAINER_PREFIX: "sandbox-",
+      DEFAULT_SANDBOX_WORKDIR: "/workspace",
+      DEFAULT_SANDBOX_IDLE_HOURS: 1,
+      DEFAULT_SANDBOX_MAX_AGE_DAYS: 1,
+      DEFAULT_TOOL_ALLOW: [] as const,
+      DEFAULT_TOOL_DENY: [] as const,
+      DEFAULT_SANDBOX_BROWSER_IMAGE: "sandbox-browser:test",
+      DEFAULT_SANDBOX_COMMON_IMAGE: "sandbox-common:test",
+      SANDBOX_BROWSER_SECURITY_HASH_EPOCH: "test",
+      DEFAULT_SANDBOX_BROWSER_PREFIX: "sandbox-browser-",
+      DEFAULT_SANDBOX_BROWSER_NETWORK: "sandbox-net",
+      DEFAULT_SANDBOX_BROWSER_CDP_PORT: 0,
+      DEFAULT_SANDBOX_BROWSER_VNC_PORT: 0,
+      DEFAULT_SANDBOX_BROWSER_NOVNC_PORT: 0,
+      DEFAULT_SANDBOX_BROWSER_AUTOSTART_TIMEOUT_MS: 0,
+      SANDBOX_AGENT_WORKSPACE_MOUNT: "/agent",
+      SANDBOX_STATE_DIR: "/tmp/sandbox",
+      SANDBOX_REGISTRY_PATH: "/tmp/sandbox/containers.json",
+      SANDBOX_BROWSER_REGISTRY_PATH: "/tmp/sandbox/browsers.json",
+    };
+  });
 
   vi.doMock("@mariozechner/pi-ai/oauth", () => ({
     getOAuthApiKey: () => "",
     getOAuthProviders: () => [],
     loginOpenAICodex: vi.fn(),
   }));
+
+  vi.doMock(
+    "../agents/auth-profiles/oauth.js",
+    () => ({
+      resolveApiKeyForProfile: vi.fn(async () => ({
+        apiKey: "",
+        provider: "mock",
+      })),
+      getOAuthProviders: vi.fn(() => []),
+    }),
+    { virtual: true },
+  );
+
+  vi.doMock(
+    "../channels/registry.js",
+    () => ({
+      CHAT_CHANNEL_ORDER: [],
+      CHANNEL_IDS: [],
+      listChatChannels: () => [],
+      listChatChannelAliases: () => [],
+      getChatChannelMeta: () => ({ id: "demo-channel" }),
+      normalizeChatChannelId: () => null,
+      normalizeChannelId: () => null,
+      normalizeAnyChannelId: () => null,
+    }),
+    { virtual: true },
+  );
 
   vi.doMock("@modelcontextprotocol/sdk/client/index.js", () => ({
     Client: class {
@@ -85,6 +114,14 @@ const mockPluginSideEffects = () => {
       pid = null;
     },
   }));
+
+  vi.doMock(
+    "../auto-reply/reply/get-reply-directives.js",
+    () => ({
+      resolveReplyDirectives: vi.fn(async () => ({ kind: "reply", reply: undefined })),
+    }),
+    { virtual: true },
+  );
 };
 
 type SessionResetModule = typeof import("../gateway/session-reset-service.js");
@@ -227,8 +264,11 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.doUnmock("../agents/sandbox/constants.js");
   vi.doUnmock("@mariozechner/pi-ai/oauth");
+  vi.doUnmock("../agents/auth-profiles/oauth.js");
+  vi.doUnmock("../channels/registry.js");
   vi.doUnmock("@modelcontextprotocol/sdk/client/index.js");
   vi.doUnmock("@modelcontextprotocol/sdk/client/stdio.js");
+  vi.doUnmock("../auto-reply/reply/get-reply-directives.js");
   vi.doUnmock("../gateway/session-reset-service.js");
 });
 
