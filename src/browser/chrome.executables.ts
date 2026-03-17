@@ -186,35 +186,28 @@ function detectDefaultChromiumExecutable(platform: NodeJS.Platform): BrowserExec
  * CFBundleIdentifier, as is the case with Microsoft Edge which registers as
  * "com.microsoft.edgemac" in LaunchServices but ships as "com.microsoft.Edge").
  */
-const KNOWN_BUNDLE_ID_PATHS: Record<string, string> = {
-  "com.microsoft.edgemac":
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+const KNOWN_BUNDLE_ID_PATHS: Partial<Record<string, string>> = {
+  "com.microsoft.edgemac": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   "com.microsoft.edgemac.beta":
     "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
   "com.microsoft.edgemac.dev":
     "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
   "com.microsoft.edgemac.canary":
     "/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary",
-  "com.microsoft.Edge":
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  "com.microsoft.Edge": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   "com.microsoft.EdgeBeta":
     "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
-  "com.microsoft.EdgeDev":
-    "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+  "com.microsoft.EdgeDev": "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
   "com.microsoft.EdgeCanary":
     "/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary",
-  "com.brave.Browser":
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "com.brave.Browser": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
   "com.brave.Browser.beta":
     "/Applications/Brave Browser Beta.app/Contents/MacOS/Brave Browser Beta",
   "com.brave.Browser.nightly":
     "/Applications/Brave Browser Nightly.app/Contents/MacOS/Brave Browser Nightly",
-  "org.chromium.Chromium":
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-  "com.vivaldi.Vivaldi":
-    "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
-  "company.thebrowser.Browser":
-    "/Applications/Arc.app/Contents/MacOS/Arc",
+  "org.chromium.Chromium": "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  "com.vivaldi.Vivaldi": "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+  "company.thebrowser.Browser": "/Applications/Arc.app/Contents/MacOS/Arc",
 };
 
 function detectDefaultChromiumExecutableMac(): BrowserExecutable | null {
@@ -255,8 +248,8 @@ function detectDefaultChromiumExecutableMac(): BrowserExecutable | null {
   }
 
   // Also check user-scoped ~/Applications for the same known paths
-  const userKnownPath = knownPath
-    ? path.join(os.homedir(), "Applications", path.relative("/Applications", knownPath))
+  const userKnownPath = knownPath?.startsWith("/Applications/")
+    ? path.join(os.homedir(), "Applications", knownPath.slice("/Applications/".length))
     : null;
   if (userKnownPath && exists(userKnownPath)) {
     return { kind, path: userKnownPath };
