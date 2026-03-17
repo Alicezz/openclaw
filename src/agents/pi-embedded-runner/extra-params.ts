@@ -367,13 +367,20 @@ export function applyExtraParamsToAgent(
     // when using Application Inference Profile ARNs.
     // Check provider model name first (most reliable), then fall back to alias.
     let modelName: string | undefined;
-    const providerConfig = cfg?.models?.providers?.[provider];
-    if (providerConfig?.models) {
-      const modelDef = providerConfig.models.find((m) => m.id === modelId);
-      if (modelDef?.name) {
-        modelName = modelDef.name;
+
+    // Look up model name from provider config, trying normalized provider key variants
+    const providerKeyVariants = [provider, "amazon-bedrock", "bedrock", "aws-bedrock"];
+    for (const key of providerKeyVariants) {
+      const providerConfig = cfg?.models?.providers?.[key];
+      if (providerConfig?.models) {
+        const modelDef = providerConfig.models.find((m: { id?: string }) => m.id === modelId);
+        if (modelDef?.name) {
+          modelName = modelDef.name;
+          break;
+        }
       }
     }
+
     if (!modelName) {
       const modelKey = `${provider}/${modelId}`;
       const modelConfig = cfg?.agents?.defaults?.models?.[modelKey];
