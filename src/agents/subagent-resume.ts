@@ -455,7 +455,15 @@ function scanSessionsDirForTranscriptCandidate(
       const fullPath = path.join(sessionsDir, file);
       try {
         const stat = fs.statSync(fullPath);
-        const hasBirthtime = stat.birthtimeMs !== stat.mtimeMs;
+        // Detect whether the platform reports real birthtime.  Linux kernels
+        // without birthtime support return 0 (epoch) or very large/Infinity
+        // values.  The previous `birthtimeMs !== mtimeMs` heuristic incorrectly
+        // triggered the fallback path for untouched files where birth == mtime
+        // is perfectly normal on macOS/Windows.
+        const hasBirthtime =
+          stat.birthtimeMs !== 0 &&
+          Number.isFinite(stat.birthtimeMs) &&
+          stat.birthtimeMs > 1_000_000_000_000; // after ~2001-09 in ms — rejects epoch sentinels
         if (hasBirthtime) {
           // Platform supports real birth-time — use strict tolerance.
           const timeDiffMs = Math.abs(stat.birthtimeMs - targetCreatedAtMs);

@@ -693,6 +693,14 @@ function resumeSubagentRun(runId: string) {
     },
     onResumeCleanup: (failedRunId) => {
       resumedRuns.delete(failedRunId);
+      // Schedule a retry so transient wait failures (e.g. RPC disconnect after
+      // successful redispatch) don't leave the run permanently stuck.  The
+      // delay avoids tight retry loops; resumeSubagentRun will re-classify the
+      // run and route it to the appropriate recovery path.
+      const retryDelayMs = MIN_ANNOUNCE_RETRY_DELAY_MS * 2; // 2 s
+      setTimeout(() => {
+        resumeSubagentRun(failedRunId);
+      }, retryDelayMs).unref?.();
     },
   });
   if (handled) {
