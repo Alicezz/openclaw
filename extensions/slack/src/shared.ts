@@ -198,7 +198,7 @@ export function createSlackPluginBase(params: {
               "- Slack selects: use `[[slack_select: Placeholder | Label:value, Other:other]]` to add a static select menu that routes the chosen value back as a Slack interaction system event.",
             ]
           : [
-              '- Slack interactive replies are disabled. If needed, ask to add `"interactiveReplies"` to `channels.slack.capabilities` (or `channels.slack.accounts.<account>.capabilities`).',
+              "- Slack interactive replies are disabled. If needed, ask to set `channels.slack.capabilities.interactiveReplies=true` (or the same under `channels.slack.accounts.<account>.capabilities`).",
             ],
     },
     streaming: {
