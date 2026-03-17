@@ -62,6 +62,62 @@ vi.mock("../../../src/acp/persistent-bindings.js", async (importOriginal) => {
     ensureConfiguredAcpBindingSession: persistentBindingMocks.ensureConfiguredAcpBindingSession,
   };
 });
+vi.mock("openclaw/plugin-sdk/conversation-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/conversation-runtime")>();
+  return {
+    ...actual,
+    resolveConfiguredAcpRoute: (params: Parameters<typeof actual.resolveConfiguredAcpRoute>[0]) => {
+      const configuredBinding = persistentBindingMocks.resolveConfiguredAcpBindingRecord({
+        cfg: params.cfg,
+        channel: params.channel,
+        accountId: params.accountId,
+        conversationId: params.conversationId,
+        parentConversationId: params.parentConversationId,
+      });
+      if (!configuredBinding) {
+        return { configuredBinding: null, route: params.route };
+      }
+      const boundSessionKey =
+        (
+          configuredBinding as { record?: { targetSessionKey?: string } }
+        )?.record?.targetSessionKey?.trim() ?? "";
+      if (!boundSessionKey) {
+        return { configuredBinding, route: params.route };
+      }
+      return {
+        configuredBinding,
+        boundSessionKey,
+        route: {
+          ...params.route,
+          sessionKey: boundSessionKey,
+          agentId: boundSessionKey.split(":")[1] ?? params.route.agentId,
+          matchedBy: "binding.channel" as const,
+        },
+      };
+    },
+    ensureConfiguredAcpRouteReady: async (
+      params: Parameters<typeof actual.ensureConfiguredAcpRouteReady>[0],
+    ) => {
+      if (!params.configuredBinding) return { ok: true as const };
+      const result = await persistentBindingMocks.ensureConfiguredAcpBindingSession({
+        cfg: params.cfg,
+        spec: (params.configuredBinding as { spec: unknown }).spec as Parameters<
+          typeof persistentBindingMocks.ensureConfiguredAcpBindingSession
+        >[0]["spec"],
+      });
+      if (result.ok) return { ok: true as const };
+      return { ok: false as const, error: (result as { error?: string }).error ?? "unknown" };
+    },
+    getSessionBindingService: () => ({
+      bind: vi.fn(),
+      getCapabilities: vi.fn(),
+      listBySession: vi.fn(),
+      resolveByConversation: (ref: unknown) => sessionBindingMocks.resolveByConversation(ref),
+      touch: (bindingId: string, at?: number) => sessionBindingMocks.touch(bindingId, at),
+      unbind: vi.fn(),
+    }),
+  };
+});
 vi.mock("../../../src/config/sessions.js", () => ({
   recordSessionMetaFromInbound: sessionMocks.recordSessionMetaFromInbound,
   resolveStorePath: sessionMocks.resolveStorePath,
@@ -69,15 +125,31 @@ vi.mock("../../../src/config/sessions.js", () => ({
 vi.mock("../../../src/pairing/pairing-store.js", () => ({
   readChannelAllowFromStore: vi.fn(async () => []),
 }));
-vi.mock("../../../src/auto-reply/reply/inbound-context.js", () => ({
-  finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
-}));
-vi.mock("../../../src/auto-reply/reply/provider-dispatcher.js", () => ({
-  dispatchReplyWithBufferedBlockDispatcher: replyMocks.dispatchReplyWithBufferedBlockDispatcher,
-}));
-vi.mock("../../../src/channels/reply-prefix.js", () => ({
-  createReplyPrefixOptions: vi.fn(() => ({ onModelSelected: () => {} })),
-}));
+vi.mock("openclaw/plugin-sdk/reply-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/reply-runtime")>();
+  return {
+    ...actual,
+    finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+    dispatchReplyWithBufferedBlockDispatcher: replyMocks.dispatchReplyWithBufferedBlockDispatcher,
+    listSkillCommandsForAgents: vi.fn(() => []),
+  };
+});
+vi.mock("openclaw/plugin-sdk/channel-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/channel-runtime")>();
+  return {
+    ...actual,
+    createReplyPrefixOptions: vi.fn(() => ({ onModelSelected: () => {} })),
+    recordInboundSessionMetaSafe: vi.fn(
+      async (params: { cfg: unknown; agentId: string; sessionKey: string; ctx: unknown }) => {
+        await sessionMocks.recordSessionMetaFromInbound({
+          storePath: sessionMocks.resolveStorePath(),
+          sessionKey: params.sessionKey,
+          ctx: params.ctx,
+        });
+      },
+    ),
+  };
+});
 vi.mock("../../../src/infra/outbound/session-binding-service.js", () => ({
   getSessionBindingService: () => ({
     bind: vi.fn(),
@@ -88,11 +160,7 @@ vi.mock("../../../src/infra/outbound/session-binding-service.js", () => ({
     unbind: vi.fn(),
   }),
 }));
-vi.mock("../../../src/auto-reply/skill-commands.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../src/auto-reply/skill-commands.js")>();
-  return { ...actual, listSkillCommandsForAgents: vi.fn(() => []) };
-});
-vi.mock("../../../src/plugins/commands.js", () => ({
+vi.mock("openclaw/plugin-sdk/plugin-runtime", () => ({
   getPluginCommandSpecs: vi.fn(() => []),
   matchPluginCommand: vi.fn(() => null),
   executePluginCommand: vi.fn(async () => ({ text: "ok" })),
