@@ -1416,6 +1416,8 @@ export type PluginHookAgentContext = {
   trigger?: string;
   /** Channel identifier (e.g. "telegram", "discord", "whatsapp"). */
   channelId?: string;
+  /** Conversation target (e.g. group ID, DM address). */
+  conversationId?: string;
 };
 
 // before_model_resolve hook
