@@ -1083,6 +1083,187 @@ describe("deliverOutboundPayloads", () => {
     expect(results).toEqual([{ channel: "matrix", messageId: "mx-1" }]);
   });
 
+  it("passes audioAsVoice through plugin sendMedia context", async () => {
+    const sendMedia = vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-voice" });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "matrix",
+            outbound: {
+              deliveryMode: "direct",
+              sendText: vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-text" }),
+              sendMedia,
+            },
+          }),
+        },
+      ]),
+    );
+
+    const results = await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room:1",
+      payloads: [
+        {
+          text: "voice note",
+          mediaUrl: "https://example.com/voice.mp3",
+          audioAsVoice: true,
+        },
+      ],
+    });
+
+    expect(sendMedia).toHaveBeenCalledTimes(1);
+    expect(sendMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "voice note",
+        mediaUrl: "https://example.com/voice.mp3",
+        audioAsVoice: true,
+      }),
+    );
+    expect(results).toEqual([{ channel: "matrix", messageId: "mx-voice" }]);
+  });
+
+  it("only passes audioAsVoice to audio media entries in multi-media payloads", async () => {
+    const sendMedia = vi
+      .fn()
+      .mockResolvedValueOnce({ channel: "matrix", messageId: "mx-image" })
+      .mockResolvedValueOnce({ channel: "matrix", messageId: "mx-audio" });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "matrix",
+            outbound: {
+              deliveryMode: "direct",
+              sendText: vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-text" }),
+              sendMedia,
+            },
+          }),
+        },
+      ]),
+    );
+
+    const results = await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room:1",
+      payloads: [
+        {
+          text: "mixed media",
+          mediaUrls: ["https://example.com/photo.png", "https://example.com/voice.mp3"],
+          audioAsVoice: true,
+        },
+      ],
+    });
+
+    expect(sendMedia).toHaveBeenCalledTimes(2);
+    expect(sendMedia.mock.calls[0]?.[0]).toMatchObject({ audioAsVoice: false });
+    expect(sendMedia.mock.calls[1]?.[0]).toMatchObject({ audioAsVoice: true });
+    expect(results).toEqual([
+      { channel: "matrix", messageId: "mx-image" },
+      { channel: "matrix", messageId: "mx-audio" },
+    ]);
+  });
+
+  it("uses mediaTypes as a fallback when audio media URLs have no extension", async () => {
+    const sendMedia = vi
+      .fn()
+      .mockResolvedValueOnce({ channel: "matrix", messageId: "mx-image" })
+      .mockResolvedValueOnce({ channel: "matrix", messageId: "mx-audio" });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "matrix",
+            outbound: {
+              deliveryMode: "direct",
+              sendText: vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-text" }),
+              sendMedia,
+            },
+          }),
+        },
+      ]),
+    );
+
+    const results = await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room:1",
+      payloads: [
+        {
+          text: "mixed media",
+          mediaUrls: [
+            "https://example.com/photo?id=1",
+            "https://example.com/download?id=voice-note",
+          ],
+          mediaTypes: ["image/png", "audio/mpeg"],
+          audioAsVoice: true,
+        },
+      ],
+    });
+
+    expect(sendMedia).toHaveBeenCalledTimes(2);
+    expect(sendMedia.mock.calls[0]?.[0]).toMatchObject({
+      contentType: "image/png",
+      audioAsVoice: false,
+    });
+    expect(sendMedia.mock.calls[1]?.[0]).toMatchObject({
+      contentType: "audio/mpeg",
+      audioAsVoice: true,
+    });
+    expect(results).toEqual([
+      { channel: "matrix", messageId: "mx-image" },
+      { channel: "matrix", messageId: "mx-audio" },
+    ]);
+  });
+
+  it("downgrades audioAsVoice for extensionless media URLs when mime is not known yet", async () => {
+    const sendMedia = vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-audio" });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "matrix",
+            outbound: {
+              deliveryMode: "direct",
+              sendText: vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-text" }),
+              sendMedia,
+            },
+          }),
+        },
+      ]),
+    );
+
+    const results = await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room:1",
+      payloads: [
+        {
+          text: "voice note",
+          mediaUrls: ["https://example.com/download?id=voice-note"],
+          audioAsVoice: true,
+        },
+      ],
+    });
+
+    expect(sendMedia).toHaveBeenCalledTimes(1);
+    expect(sendMedia.mock.calls[0]?.[0]).toMatchObject({
+      contentType: undefined,
+      audioAsVoice: false,
+    });
+    expect(results).toEqual([{ channel: "matrix", messageId: "mx-audio" }]);
+  });
+
   it("falls back to one sendText call for multi-media payloads when sendMedia is omitted", async () => {
     const sendText = vi.fn().mockResolvedValue({ channel: "matrix", messageId: "mx-2" });
     setActivePluginRegistry(

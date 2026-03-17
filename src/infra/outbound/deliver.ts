@@ -26,6 +26,7 @@ import {
 import { hasReplyChannelData, hasReplyContent } from "../../interactive/payload.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
+import { getFileExtension, isAudioFileName, normalizeMimeType } from "../../media/mime.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { throwIfAborted } from "./abort.js";
 import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
@@ -44,6 +45,16 @@ export { normalizeOutboundPayloads } from "./payloads.js";
 export { resolveOutboundSendDep, type OutboundSendDeps } from "./send-deps.js";
 
 const log = createSubsystemLogger("outbound/deliver");
+
+function shouldPreserveAudioAsVoice(params: { mediaType?: string; mediaUrl?: string }): boolean {
+  const mediaType = normalizeMimeType(params.mediaType);
+  if (mediaType) {
+    return mediaType.startsWith("audio/");
+  }
+  // This layer has no fetch-time MIME detection, so unknown URLs must downgrade to avoid
+  // forcing voice mode onto extensionless image/document links in mixed-media replies.
+  return Boolean(getFileExtension(params.mediaUrl)) && isAudioFileName(params.mediaUrl);
+}
 
 export type OutboundDeliveryResult = {
   channel: Exclude<OutboundChannel, "none">;
@@ -104,6 +115,8 @@ type ChannelHandler = {
     overrides?: {
       replyToId?: string | null;
       threadId?: string | number | null;
+      contentType?: string;
+      audioAsVoice?: boolean;
     },
   ) => Promise<OutboundDeliveryResult>;
 };
@@ -155,10 +168,14 @@ function createPluginHandler(
   const resolveCtx = (overrides?: {
     replyToId?: string | null;
     threadId?: string | number | null;
+    contentType?: string;
+    audioAsVoice?: boolean;
   }): Omit<ChannelOutboundContext, "text" | "mediaUrl"> => ({
     ...baseCtx,
     replyToId: overrides?.replyToId ?? baseCtx.replyToId,
     threadId: overrides?.threadId ?? baseCtx.threadId,
+    contentType: overrides?.contentType,
+    audioAsVoice: overrides?.audioAsVoice,
   });
   return {
     chunker,
@@ -340,6 +357,8 @@ function buildPayloadSummary(payload: ReplyPayload): NormalizedOutboundPayload {
     text: payload.text ?? "",
     mediaUrls: payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []),
     interactive: payload.interactive,
+    ...(payload.mediaType ? { mediaType: payload.mediaType } : {}),
+    ...(payload.mediaTypes?.length ? { mediaTypes: payload.mediaTypes } : {}),
     channelData: payload.channelData,
   };
 }
@@ -662,6 +681,7 @@ async function deliverOutboundPayloadsCore(
         replyToId: effectivePayload.replyToId ?? params.replyToId ?? undefined,
         threadId: params.threadId ?? undefined,
         forceDocument: params.forceDocument,
+        audioAsVoice: effectivePayload.audioAsVoice === true,
       };
       if (
         handler.sendPayload &&
@@ -723,16 +743,25 @@ async function deliverOutboundPayloadsCore(
 
       let first = true;
       let lastMessageId: string | undefined;
-      for (const url of payloadSummary.mediaUrls) {
+      for (const [index, url] of payloadSummary.mediaUrls.entries()) {
         throwIfAborted(abortSignal);
         const caption = first ? payloadSummary.text : "";
         first = false;
+        const mediaType =
+          payloadSummary.mediaTypes?.[index] ??
+          (payloadSummary.mediaUrls.length === 1 ? payloadSummary.mediaType : undefined);
+        const mediaSendOverrides = {
+          ...sendOverrides,
+          contentType: mediaType,
+          audioAsVoice:
+            sendOverrides.audioAsVoice && shouldPreserveAudioAsVoice({ mediaType, mediaUrl: url }),
+        };
         if (handler.sendFormattedMedia) {
-          const delivery = await handler.sendFormattedMedia(caption, url, sendOverrides);
+          const delivery = await handler.sendFormattedMedia(caption, url, mediaSendOverrides);
           results.push(delivery);
           lastMessageId = delivery.messageId;
         } else {
-          const delivery = await handler.sendMedia(caption, url, sendOverrides);
+          const delivery = await handler.sendMedia(caption, url, mediaSendOverrides);
           results.push(delivery);
           lastMessageId = delivery.messageId;
         }

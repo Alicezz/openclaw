@@ -17,6 +17,7 @@ import {
   stripMarkdown,
   type HistoryEntry,
 } from "openclaw/plugin-sdk/bluebubbles";
+import { getFileExtension, isAudioFileName, normalizeMimeType } from "../../../src/media/mime.js";
 import { downloadBlueBubblesAttachment } from "./attachments.js";
 import { markBlueBubblesChatRead, sendBlueBubblesTyping } from "./chat.js";
 import { fetchBlueBubblesHistory } from "./history.js";
@@ -87,6 +88,19 @@ function trimOrUndefined(value?: string | null): string | undefined {
 
 function normalizeSnippet(value: string): string {
   return stripMarkdown(value).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export function isAudioCompatibleMedia(params: { mediaType?: string; mediaUrl?: string }): boolean {
+  const mediaType = normalizeMimeType(params.mediaType);
+  if (mediaType) {
+    return mediaType.startsWith("audio/");
+  }
+  const ext = getFileExtension(params.mediaUrl);
+  if (!ext) {
+    // No reliable signal yet; preserve voice mode and let fetch-time MIME detection decide.
+    return true;
+  }
+  return isAudioFileName(params.mediaUrl);
 }
 
 function isBlueBubblesSelfChatMessage(
@@ -1248,6 +1262,11 @@ export async function processMessage(
             : payload.mediaUrl
               ? [payload.mediaUrl]
               : [];
+          const mediaTypeList = payload.mediaTypes?.length
+            ? payload.mediaTypes
+            : payload.mediaType
+              ? [payload.mediaType]
+              : [];
           if (mediaList.length > 0) {
             const tableMode = core.channel.text.resolveMarkdownTableMode({
               cfg: config,
@@ -1258,9 +1277,11 @@ export async function processMessage(
               core.channel.text.convertMarkdownTables(payload.text ?? "", tableMode),
             );
             let first = true;
-            for (const mediaUrl of mediaList) {
+            for (const [index, mediaUrl] of mediaList.entries()) {
               const caption = first ? text : undefined;
               first = false;
+              const mediaType =
+                mediaTypeList[index] ?? (mediaList.length === 1 ? payload.mediaType : undefined);
               const cachedBody = (caption ?? "").trim() || "<media:attachment>";
               const pendingId = rememberPendingOutboundMessageId({
                 accountId: account.accountId,
@@ -1277,9 +1298,13 @@ export async function processMessage(
                   cfg: config,
                   to: outboundTarget,
                   mediaUrl,
+                  contentType: mediaType,
                   caption: caption ?? undefined,
                   replyToId: replyToMessageGuid || null,
                   accountId: account.accountId,
+                  asVoice:
+                    payload.audioAsVoice === true &&
+                    isAudioCompatibleMedia({ mediaType, mediaUrl }),
                 });
               } catch (err) {
                 forgetPendingOutboundMessageId(pendingId);
