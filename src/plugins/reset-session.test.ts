@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginRecord } from "./registry.js";
 import type { PluginRuntime } from "./runtime/types.js";
@@ -255,10 +255,6 @@ afterEach(() => {
   vi.doUnmock("../auto-reply/reply/get-reply-directives.js");
   vi.doUnmock("../gateway/session-reset-service.js");
   vi.doUnmock("openclaw/plugin-sdk/text-runtime");
-});
-
-afterAll(() => {
-  vi.doUnmock("@mariozechner/pi-ai/oauth");
 });
 
 describe("plugin resetSession", () => {
