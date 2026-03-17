@@ -56,6 +56,7 @@ import {
   detectLegacyStateMigrations,
   runLegacyStateMigrations,
 } from "./doctor-state-migrations.js";
+import { noteSyntheticAllowlistGaps } from "./doctor-synthetic-allowlist.js";
 import { maybeRepairUiProtocolFreshness } from "./doctor-ui.js";
 import { maybeOfferUpdateBeforeDoctor } from "./doctor-update.js";
 import { noteWorkspaceStatus } from "./doctor-workspace-status.js";
@@ -308,6 +309,7 @@ export async function doctorCommand(
   }
 
   noteWorkspaceStatus(cfg);
+  await noteSyntheticAllowlistGaps(cfg);
   await noteBootstrapFileSize(cfg);
 
   // Check and fix shell completion
