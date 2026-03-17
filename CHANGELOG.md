@@ -39,6 +39,7 @@ Docs: https://docs.openclaw.ai
 - Plugins/Chutes: add a bundled Chutes provider with plugin-owned OAuth/API-key auth, dynamic model discovery, and default-on extension wiring. (#41416) Thanks @Veightor.
 - Plugins/binding: add `onConversationBindingResolved(...)` so plugins can react immediately after bind approvals or denies without blocking channel interaction acknowledgements. (#48678) Thanks @huntharo.
 - CLI/config: expand `config set` with SecretRef and provider builder modes, JSON/batch assignment support, and `--dry-run` validation with structured JSON output. (#49296) Thanks @joshavant.
+- Memory/implicit context: add an opt-in local SQLite FTS5 memory path that retrieves recurring user context before model calls and writes conservative post-turn summaries back to a scoped local store. (#48982) Thanks @danxbuidl.
 
 ### Breaking
 
