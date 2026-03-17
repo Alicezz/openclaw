@@ -31,6 +31,7 @@ type QueuedDeliveryPayload = {
   payloads: ReplyPayload[];
   threadId?: string | number | null;
   replyToId?: string | null;
+  quoteAuthor?: string | null;
   bestEffort?: boolean;
   gifPlayback?: boolean;
   forceDocument?: boolean;
