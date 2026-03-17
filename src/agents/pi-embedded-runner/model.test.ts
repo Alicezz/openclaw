@@ -740,6 +740,40 @@ describe("resolveModel", () => {
     });
   });
 
+  it("keeps the resolved codex gpt-5.4 model when config overrides give it a larger context window", () => {
+    mockOpenAICodexTemplateModel();
+
+    const cfg: OpenClawConfig = {
+      models: {
+        providers: {
+          "openai-codex": {
+            models: [
+              {
+                id: "gpt-5.4",
+                contextWindow: 1_200_000,
+                maxTokens: 64_000,
+              },
+            ],
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    const result = resolveModel("openai-codex", "gpt-5.4", "/tmp/agent", cfg);
+
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      provider: "openai-codex",
+      id: "gpt-5.4",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_200_000,
+      maxTokens: 64_000,
+    });
+  });
+
   it("prefers the codex gpt-5.4 forward-compat model on async resolve when discovery is stale", async () => {
     vi.mocked(discoverModels).mockReturnValue({
       find: vi.fn((provider: string, modelId: string) => {

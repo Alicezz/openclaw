@@ -247,6 +247,9 @@ function preferResolvedModel(
   if (dynamicContextWindow > discoveredContextWindow) {
     return dynamicModel;
   }
+  if (dynamicContextWindow < discoveredContextWindow) {
+    return discoveredModel;
+  }
   const dynamicMaxTokens = dynamicModel.maxTokens ?? 0;
   const discoveredMaxTokens = discoveredModel.maxTokens ?? 0;
   if (dynamicMaxTokens > discoveredMaxTokens) {
