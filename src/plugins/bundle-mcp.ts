@@ -117,7 +117,17 @@ function expandBundleRootPlaceholders(value: string, rootDir: string): string {
   if (!value.includes(CLAUDE_PLUGIN_ROOT_PLACEHOLDER)) {
     return value;
   }
-  return value.split(CLAUDE_PLUGIN_ROOT_PLACEHOLDER).join(rootDir);
+  const expanded = value.split(CLAUDE_PLUGIN_ROOT_PLACEHOLDER).join(rootDir);
+  // Only normalize when the value is a pure path that starts with the
+  // placeholder (e.g. "${CLAUDE_PLUGIN_ROOT}/bin/server").  Calling
+  // path.normalize on flag-embedded values like
+  // "--config=${CLAUDE_PLUGIN_ROOT}/cfg.json" could corrupt the flag prefix
+  // on some platforms.  Windows accepts both separators in flag-embedded
+  // paths so skipping normalization there is safe.
+  if (value.startsWith(CLAUDE_PLUGIN_ROOT_PLACEHOLDER)) {
+    return path.normalize(expanded);
+  }
+  return expanded;
 }
 
 function absolutizeBundleMcpServer(params: {
@@ -236,9 +246,25 @@ function loadBundleMcpConfig(params: {
   rootDir: string;
   bundleFormat: PluginBundleFormat;
 }): { config: BundleMcpConfig; diagnostics: string[] } {
+  // Normalize to the real path so that absolutized cwd/args are canonical on
+  // all platforms. On Windows, fs.mkdtemp (via os.tmpdir()) can return 8.3
+  // short-path forms (e.g. RUNNER~1). fs.realpathSync.native uses the OS
+  // GetFinalPathNameByHandle API which resolves 8.3 short paths to their
+  // long-path equivalents, matching what fs.realpath (async) returns.
+  let rootDir = params.rootDir;
+  try {
+    rootDir = fs.realpathSync.native(rootDir);
+  } catch (err) {
+    // Only swallow ENOENT (directory doesn't exist yet); re-throw permission
+    // errors, I/O failures, and other unexpected errors so they are not
+    // silently discarded.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw err;
+    }
+  }
   const manifestRelativePath = MANIFEST_PATH_BY_FORMAT[params.bundleFormat];
   const manifestLoaded = readPluginJsonObject({
-    rootDir: params.rootDir,
+    rootDir,
     relativePath: manifestRelativePath,
     allowMissing: params.bundleFormat === "claude",
   });
@@ -249,14 +275,14 @@ function loadBundleMcpConfig(params: {
   let merged: BundleMcpConfig = { mcpServers: {} };
   const filePaths = resolveBundleMcpConfigPaths({
     raw: manifestLoaded.raw,
-    rootDir: params.rootDir,
+    rootDir,
     bundleFormat: params.bundleFormat,
   });
   for (const relativePath of filePaths) {
     merged = applyMergePatch(
       merged,
       loadBundleFileBackedMcpConfig({
-        rootDir: params.rootDir,
+        rootDir,
         relativePath,
       }),
     ) as BundleMcpConfig;
@@ -266,7 +292,7 @@ function loadBundleMcpConfig(params: {
     merged,
     loadBundleInlineMcpConfig({
       raw: manifestLoaded.raw,
-      baseDir: params.rootDir,
+      baseDir: rootDir,
     }),
   ) as BundleMcpConfig;
 
