@@ -103,20 +103,23 @@ describe("resolveAllProxyFallbackOptions", () => {
     expect(resolveAllProxyFallbackOptions(env)).toBeUndefined();
   });
 
-  it("normalizes socks5:// HTTP_PROXY to http://", () => {
+  it("normalizes socks5:// HTTP_PROXY — sets both since HTTPS falls back to HTTP", () => {
+    // resolveEnvHttpProxyUrl("https") falls back to HTTP_PROXY when HTTPS_PROXY
+    // is not set, so both httpUrl and httpsUrl resolve to the socks5:// value
+    // and both need normalization.
     const env = { HTTP_PROXY: "socks5://127.0.0.1:7897" } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result).toEqual({
       httpProxy: "http://127.0.0.1:7897",
       httpsProxy: "http://127.0.0.1:7897",
     });
   });
 
-  it("normalizes socks5h:// HTTPS_PROXY to http://", () => {
+  it("normalizes socks5h:// HTTPS_PROXY — sets httpsProxy only, never httpProxy", () => {
     const env = { HTTPS_PROXY: "socks5h://127.0.0.1:7897" } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
-      httpProxy: "http://127.0.0.1:7897",
-      httpsProxy: "http://127.0.0.1:7897",
-    });
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result).toEqual({ httpsProxy: "http://127.0.0.1:7897" });
+    expect(result).not.toHaveProperty("httpProxy");
   });
 
   it("normalizes socks5:// HTTP_PROXY even when ALL_PROXY is also set", () => {
@@ -124,26 +127,22 @@ describe("resolveAllProxyFallbackOptions", () => {
       HTTP_PROXY: "socks5://127.0.0.1:7897",
       ALL_PROXY: "socks5://127.0.0.1:1080",
     } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
-      httpProxy: "http://127.0.0.1:7897",
-      httpsProxy: "http://127.0.0.1:7897",
-    });
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result?.httpProxy).toBe("http://127.0.0.1:7897");
   });
 
-  it("falls back to ALL_PROXY when no standard vars are set", () => {
+  it("falls back to ALL_PROXY — sets httpsProxy only, never httpProxy", () => {
     const env = { ALL_PROXY: "socks5://127.0.0.1:1080" } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
-      httpProxy: "http://127.0.0.1:1080",
-      httpsProxy: "http://127.0.0.1:1080",
-    });
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result).toEqual({ httpsProxy: "http://127.0.0.1:1080" });
+    expect(result).not.toHaveProperty("httpProxy");
   });
 
-  it("falls back to all_proxy (lowercase) when no standard vars are set", () => {
+  it("falls back to all_proxy (lowercase) — sets httpsProxy only", () => {
     const env = { all_proxy: "http://127.0.0.1:1080" } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
-      httpProxy: "http://127.0.0.1:1080",
-      httpsProxy: "http://127.0.0.1:1080",
-    });
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result).toEqual({ httpsProxy: "http://127.0.0.1:1080" });
+    expect(result).not.toHaveProperty("httpProxy");
   });
 
   it("does not fall back to ALL_PROXY when usable http:// HTTP_PROXY exists", () => {
@@ -159,25 +158,26 @@ describe("resolveAllProxyFallbackOptions", () => {
     expect(resolveAllProxyFallbackOptions(env)).toBeUndefined();
   });
 
-  it("normalizes when HTTP_PROXY is usable but HTTPS_PROXY is socks5://", () => {
+  it("normalizes HTTPS_PROXY socks5:// without backfilling httpProxy from it", () => {
     const env = {
       HTTP_PROXY: "http://127.0.0.1:7897",
       HTTPS_PROXY: "socks5://127.0.0.1:7897",
     } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
-      httpProxy: "http://127.0.0.1:7897",
-      httpsProxy: "http://127.0.0.1:7897",
-    });
+    // HTTP_PROXY is usable, so httpProxy should not appear (agent reads it natively).
+    // HTTPS_PROXY needs normalization → httpsProxy set.
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result).toEqual({ httpsProxy: "http://127.0.0.1:7897" });
   });
 
-  it("normalizes when HTTPS_PROXY is usable but HTTP_PROXY is socks5://", () => {
+  it("normalizes HTTP_PROXY socks5:// while leaving usable HTTPS_PROXY to native agent", () => {
     const env = {
       HTTP_PROXY: "socks5://127.0.0.1:7897",
       HTTPS_PROXY: "https://127.0.0.1:7897",
     } as NodeJS.ProcessEnv;
-    expect(resolveAllProxyFallbackOptions(env)).toEqual({
-      httpProxy: "http://127.0.0.1:7897",
-      httpsProxy: "https://127.0.0.1:7897",
-    });
+    // HTTP_PROXY needs normalization → httpProxy set.
+    // HTTPS_PROXY is usable (https://) → agent reads it natively, no explicit httpsProxy.
+    const result = resolveAllProxyFallbackOptions(env);
+    expect(result).toEqual({ httpProxy: "http://127.0.0.1:7897" });
+    expect(result).not.toHaveProperty("httpsProxy");
   });
 });

@@ -17,6 +17,18 @@ export function hasProxyEnvConfigured(env: NodeJS.ProcessEnv = process.env): boo
   return false;
 }
 
+/**
+ * Normalize an env var value for proxy resolution.
+ *
+ * Three-state return:
+ * - `undefined` — variable is not set in the environment
+ * - `null` — variable is set but empty/whitespace (explicit disable)
+ * - `string` — non-empty trimmed value
+ *
+ * The `undefined` vs `null` distinction matters for precedence: a present-but-empty
+ * lower-case var (e.g. `http_proxy=""`) must override a non-empty upper-case var
+ * (`HTTP_PROXY="http://proxy:8080"`) per Unix convention.
+ */
 function normalizeProxyEnvValue(value: string | undefined): string | null | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -54,7 +66,7 @@ export function hasEnvHttpProxyConfigured(
   return resolveEnvHttpProxyUrl(protocol, env) !== undefined;
 }
 
-const SOCKS_PROTOCOL_RE = /^socks(?:4|5h?)?:\/\//i;
+const SOCKS_PROTOCOL_RE = /^socks(?:4a?|5h?)?:\/\//i;
 
 /**
  * Rewrite proxy URLs whose protocol is unsupported by undici's
@@ -81,21 +93,27 @@ function normalizeProxyUrlForUndici(url: string): string | null {
 }
 
 /**
- * Return explicit `httpProxy` / `httpsProxy` options for `EnvHttpProxyAgent`
- * when the environment proxy URLs need normalization or bridging.
+ * Return explicit proxy options for `EnvHttpProxyAgent` when the environment
+ * proxy URLs need normalization or bridging.
  *
  * Covers two cases:
  * 1. HTTP_PROXY / HTTPS_PROXY contain a protocol that `EnvHttpProxyAgent`
  *    cannot handle (e.g. `socks5://`) — normalize to `http://`.
  * 2. Only ALL_PROXY (or `all_proxy`) is set — `EnvHttpProxyAgent` ignores
- *    ALL_PROXY entirely, so we pass its (normalized) value explicitly.
+ *    ALL_PROXY entirely, so we pass its (normalized) value as `httpsProxy`.
+ *
+ * `httpProxy` is only set when HTTP_PROXY itself needs normalization.
+ * It is never backfilled from HTTPS_PROXY or ALL_PROXY — doing so would
+ * force plain-HTTP traffic (health checks, localhost webhooks) through the
+ * proxy, reversing the documented precedence where HTTPS can fall back to
+ * HTTP but not vice versa.
  *
  * Returns `undefined` when no explicit options are needed (standard vars
  * are set with `http://` / `https://` URLs that the agent handles natively).
  */
 export function resolveAllProxyFallbackOptions(
   env: NodeJS.ProcessEnv = process.env,
-): { httpProxy: string; httpsProxy: string } | undefined {
+): { httpProxy?: string; httpsProxy?: string } | undefined {
   const httpUrl = resolveEnvHttpProxyUrl("http", env);
   const httpsUrl = resolveEnvHttpProxyUrl("https", env);
 
@@ -112,20 +130,28 @@ export function resolveAllProxyFallbackOptions(
   }
 
   // Standard vars exist but at least one uses an incompatible protocol
-  // (e.g. socks5://). Normalize each individually, keeping usable ones as-is.
+  // (e.g. socks5://). Normalize only the incompatible ones; usable URLs are
+  // left to EnvHttpProxyAgent's native reading. Never backfill httpProxy
+  // from an HTTPS-only value.
   if (hasStandard) {
-    const effectiveHttpUrl = httpUrl ? normalizeProxyUrlForUndici(httpUrl) : null;
-    const effectiveHttpsUrl = httpsUrl ? normalizeProxyUrlForUndici(httpsUrl) : null;
-    const resolved = effectiveHttpsUrl ?? effectiveHttpUrl;
-    if (resolved) {
-      return {
-        httpProxy: effectiveHttpUrl ?? resolved,
-        httpsProxy: effectiveHttpsUrl ?? resolved,
-      };
+    const result: { httpProxy?: string; httpsProxy?: string } = {};
+    if (!httpOk && httpUrl) {
+      const normalized = normalizeProxyUrlForUndici(httpUrl);
+      if (normalized) {
+        result.httpProxy = normalized;
+      }
     }
+    if (!httpsOk && httpsUrl) {
+      const normalized = normalizeProxyUrlForUndici(httpsUrl);
+      if (normalized) {
+        result.httpsProxy = normalized;
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
-  // Fall back to ALL_PROXY / all_proxy.
+  // Fall back to ALL_PROXY / all_proxy. Only set httpsProxy — users who
+  // want to proxy HTTP traffic should set HTTP_PROXY explicitly.
   const lowerAllProxy = normalizeProxyEnvValue(env.all_proxy);
   const allProxy =
     lowerAllProxy !== undefined ? lowerAllProxy : normalizeProxyEnvValue(env.ALL_PROXY);
@@ -138,5 +164,5 @@ export function resolveAllProxyFallbackOptions(
     return undefined;
   }
 
-  return { httpProxy: proxyUrl, httpsProxy: proxyUrl };
+  return { httpsProxy: proxyUrl };
 }

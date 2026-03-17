@@ -8,6 +8,11 @@ import {
 
 const log = createSubsystemLogger("net/global-proxy");
 
+/**
+ * One-shot latch: `applyGlobalProxyDispatcher` runs once at gateway startup
+ * (after dotenv loading). It is NOT re-entrant after config reload — proxy
+ * env changes require a full gateway restart.
+ */
 let applied = false;
 
 /**
@@ -39,10 +44,19 @@ export function applyGlobalProxyDispatcher(): void {
   }
 
   try {
-    // EnvHttpProxyAgent natively reads HTTP_PROXY / HTTPS_PROXY but ignores
-    // ALL_PROXY. When only ALL_PROXY (or all_proxy) is set, pass its value
-    // explicitly as httpProxy/httpsProxy so the agent still routes through it.
-    const agentOptions = resolveAllProxyFallbackOptions() ?? {};
+    const fallbackOptions = resolveAllProxyFallbackOptions();
+    const agentOptions = fallbackOptions ?? {};
+
+    // Warn when a SOCKS URL was rewritten — pure-SOCKS endpoints (e.g.
+    // ssh -D tunnels) will fail at connect time with an opaque error.
+    if (fallbackOptions) {
+      const rawAllProxy = process.env.all_proxy?.trim() || process.env.ALL_PROXY?.trim() || "";
+      if (rawAllProxy && fallbackOptions.httpsProxy && fallbackOptions.httpsProxy !== rawAllProxy) {
+        log.warn(
+          `ALL_PROXY "${rawAllProxy}" rewritten to "${fallbackOptions.httpsProxy}" for undici compatibility — if your proxy only supports SOCKS, LLM requests will fail`,
+        );
+      }
+    }
 
     setGlobalDispatcher(new EnvHttpProxyAgent(agentOptions));
     applied = true;
