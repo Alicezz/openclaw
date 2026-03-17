@@ -111,11 +111,19 @@ const MemoryQmdSchema = z
   })
   .strict();
 
+const MemoryIsolationSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 const MemorySchema = z
   .object({
     backend: z.union([z.literal("builtin"), z.literal("qmd")]).optional(),
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
     qmd: MemoryQmdSchema.optional(),
+    isolation: MemoryIsolationSchema.optional(),
   })
   .strict()
   .optional();
@@ -854,6 +862,14 @@ export const OpenClawSchema = z
               .optional(),
             allowCommands: z.array(z.string()).optional(),
             denyCommands: z.array(z.string()).optional(),
+          })
+          .strict()
+          .optional(),
+        configBackup: z
+          .object({
+            enabled: z.boolean().optional(),
+            keepBackups: z.number().int().positive().optional(),
+            autoRollback: z.boolean().optional(),
           })
           .strict()
           .optional(),

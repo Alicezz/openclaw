@@ -379,6 +379,8 @@ export async function startGatewayServer(
             .join("\n")}`,
         );
       }
+      // Re-read config after migration
+      configSnapshot = await readConfigFileSnapshot();
     }
   }
 
@@ -469,6 +471,9 @@ export async function startGatewayServer(
       }
     });
 
+  // Fail fast before startup if required refs are unresolved.
+  // Note: Config rollback is handled in the CLI layer (gateway-cli/run.ts) before loadConfig().
+  // This validation in startGatewayServer serves as a safety net for direct callers (e.g., tests).
   let cfgAtStart: OpenClawConfig;
   const startupRuntimeConfig = applyConfigOverrides(configSnapshot.config);
   const authBootstrap = await prepareGatewayStartupConfig({
