@@ -1365,6 +1365,9 @@ export const chatHandlers: GatewayRequestHandlers = {
             }
           },
           onModelSelected,
+          // Keep reasoning stream callback defined so embedded runner emits
+          // thinking events for websocket clients when reasoning is set to stream.
+          onReasoningStream: async () => {},
         },
       })
         .then(() => {
