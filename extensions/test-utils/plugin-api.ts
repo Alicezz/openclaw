@@ -5,6 +5,7 @@ type TestPluginApiInput = Partial<OpenClawPluginApi> &
 
 export function createTestPluginApi(api: TestPluginApiInput): OpenClawPluginApi {
   return {
+    registrationMode: "full",
     logger: { info() {}, warn() {}, error() {}, debug() {} },
     registerTool() {},
     registerHook() {},
@@ -14,6 +15,10 @@ export function createTestPluginApi(api: TestPluginApiInput): OpenClawPluginApi 
     registerCli() {},
     registerService() {},
     registerProvider() {},
+    registerSpeechProvider() {},
+    registerMediaUnderstandingProvider() {},
+    registerWebSearchProvider() {},
+    registerInteractiveHandler() {},
     registerCommand() {},
     registerContextEngine() {},
     resolvePath(input: string) {
