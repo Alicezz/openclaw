@@ -35,23 +35,35 @@ const mockPluginSideEffects = () => {
     };
   });
 
-  vi.doMock("@mariozechner/pi-ai/oauth", () => ({
-    getOAuthApiKey: () => "",
-    getOAuthProviders: () => [],
-    loginOpenAICodex: vi.fn(),
-  }));
-
   vi.doMock(
-    "../agents/auth-profiles/oauth.js",
+    "@mariozechner/pi-ai/oauth",
     () => ({
-      resolveApiKeyForProfile: vi.fn(async () => ({
-        apiKey: "",
-        provider: "mock",
-      })),
-      getOAuthProviders: vi.fn(() => []),
+      __esModule: true,
+      getOAuthApiKey: () => "",
+      getOAuthProviders: () => [],
+      loginOpenAICodex: vi.fn(),
+      default: {
+        getOAuthApiKey: () => "",
+        getOAuthProviders: () => [],
+        loginOpenAICodex: vi.fn(),
+      },
     }),
     { virtual: true },
   );
+
+  const mockAuthProfilesOauth = {
+    resolveApiKeyForProfile: vi.fn(async () => ({
+      apiKey: "",
+      provider: "mock",
+    })),
+    getOAuthProviders: vi.fn(() => []),
+  };
+  vi.doMock("../agents/auth-profiles/oauth.js", () => mockAuthProfilesOauth, { virtual: true });
+  vi.doMock("../agents/auth-profiles/oauth.ts", () => mockAuthProfilesOauth, { virtual: true });
+
+  vi.doMock("openclaw/plugin-sdk/text-runtime", async () => {
+    return await import("../plugin-sdk/text-runtime.js");
+  });
 
   vi.doMock(
     "../channels/registry.js",
