@@ -26,6 +26,7 @@ import { lineSetupWizard } from "./setup-surface.js";
 
 // Extended LineChannelData type with outbound media fields not yet in the SDK type.
 type LineChannelDataWithMedia = LineChannelData & {
+  mediaKind?: "image" | "video" | "audio";
   previewImageUrl?: string;
   durationMs?: number;
   trackingId?: string;
@@ -262,6 +263,7 @@ export const linePlugin: ChannelPlugin<ResolvedLineAccount> = {
           }
           const resolved = await resolveLineOutboundMedia(trimmed, {
             mediaLocalRoots,
+            mediaKind: lineData.mediaKind,
             previewImageUrl: lineData.previewImageUrl,
             durationMs: lineData.durationMs,
             trackingId: lineData.trackingId,
@@ -380,6 +382,7 @@ export const linePlugin: ChannelPlugin<ResolvedLineAccount> = {
           }
           const resolved = await resolveLineOutboundMedia(trimmed, {
             mediaLocalRoots,
+            mediaKind: lineData.mediaKind,
             previewImageUrl: lineData.previewImageUrl,
             durationMs: lineData.durationMs,
             trackingId: lineData.trackingId,
