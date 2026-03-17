@@ -957,6 +957,27 @@ export async function resolveImplicitCopilotProvider(params: {
     return "";
   };
 
+  const takeResolvableCopilotToken = (
+    candidateProfileIds: string[],
+    options?: { skipEligibilityCheck?: boolean; seenProfileIds?: Set<string> },
+  ): string => {
+    const seenProfileIds = options?.seenProfileIds;
+    for (const profileId of candidateProfileIds) {
+      if (seenProfileIds?.has(profileId)) {
+        continue;
+      }
+      seenProfileIds?.add(profileId);
+      if (!options?.skipEligibilityCheck && !isEligibleProfileId(profileId)) {
+        continue;
+      }
+      const resolvedToken = resolveCopilotTokenFromProfileId(profileId);
+      if (resolvedToken) {
+        return resolvedToken;
+      }
+    }
+    return "";
+  };
+
   let selectedGithubToken = githubToken;
   if (!selectedGithubToken && hasProfile) {
     // Respect auth.order when picking a discovery profile, but continue to
@@ -978,33 +999,16 @@ export async function resolveImplicitCopilotProvider(params: {
         : configuredOrder.length > 0
           ? configuredOrder
           : profileIds;
-    const orderedCandidatesAlreadyEligible = orderedCandidates === configuredOrder;
     const seenProfileIds = new Set<string>();
+    const orderedCandidatesAlreadyEligible = orderedCandidates !== profileIds;
 
-    for (const profileId of orderedCandidates) {
-      if (seenProfileIds.has(profileId)) {
-        continue;
-      }
-      seenProfileIds.add(profileId);
-      if (!orderedCandidatesAlreadyEligible && !isEligibleProfileId(profileId)) {
-        continue;
-      }
-      selectedGithubToken = resolveCopilotTokenFromProfileId(profileId);
-      if (selectedGithubToken) {
-        break;
-      }
-    }
+    selectedGithubToken = takeResolvableCopilotToken(orderedCandidates, {
+      skipEligibilityCheck: orderedCandidatesAlreadyEligible,
+      seenProfileIds,
+    });
 
     if (!selectedGithubToken && orderedProfileIds.length === 0 && configuredOrder.length > 0) {
-      for (const profileId of profileIds) {
-        if (seenProfileIds.has(profileId) || !isEligibleProfileId(profileId)) {
-          continue;
-        }
-        selectedGithubToken = resolveCopilotTokenFromProfileId(profileId);
-        if (selectedGithubToken) {
-          break;
-        }
-      }
+      selectedGithubToken = takeResolvableCopilotToken(profileIds, { seenProfileIds });
     }
   }
 
