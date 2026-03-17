@@ -68,6 +68,28 @@ describe("transcribeOpenAiAudio", () => {
     }
   });
 
+  it("appends extension from MIME type when fileName has none", async () => {
+    const { fetchFn, getRequest } = createRequestCaptureJsonFetch({ text: "transcribed" });
+
+    const result = await transcribeOpenAiCompatibleAudio({
+      buffer: Buffer.from("aac-bytes"),
+      fileName: "voice-note",
+      mime: "audio/aac",
+      apiKey: "test-key",
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    expect(result.text).toBe("transcribed");
+    const form = getRequest().init?.body as FormData;
+    const file = form.get("file");
+    expect(file).not.toBeNull();
+    expect(file).toHaveProperty("name");
+    // AAC is remapped to .m4a for OpenAI API compatibility (AAC in M4A
+    // container is the same codec; .aac is not in the supported format list).
+    expect((file as File).name).toBe("voice-note.m4a");
+  });
+
   it("throws when the provider response omits text", async () => {
     const { fetchFn } = createRequestCaptureJsonFetch({});
 

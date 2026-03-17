@@ -1,4 +1,5 @@
 import path from "node:path";
+import { extensionForMime } from "../../media/mime.js";
 import type { AudioTranscriptionRequest, AudioTranscriptionResult } from "../types.js";
 import {
   assertOkOrThrowHttpError,
@@ -27,7 +28,24 @@ export async function transcribeOpenAiCompatibleAudio(
 
   const model = resolveModel(params.model, params.defaultModel);
   const form = new FormData();
-  const fileName = params.fileName?.trim() || path.basename(params.fileName) || "audio";
+  let fileName = params.fileName?.trim() || path.basename(params.fileName) || "audio";
+
+  // If the filename has no extension but we know the MIME type, append the
+  // correct extension so the API can identify the audio format (e.g. Signal
+  // AAC voice notes arrive without an extension).
+  // OpenAI only accepts: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm.
+  // AAC audio is the same codec wrapped in an M4A container, so remap .aac
+  // to .m4a for API compatibility.
+  if (!path.extname(fileName) && params.mime) {
+    let ext = extensionForMime(params.mime);
+    if (ext === ".aac") {
+      ext = ".m4a";
+    }
+    if (ext) {
+      fileName += ext;
+    }
+  }
+
   const bytes = new Uint8Array(params.buffer);
   const blob = new Blob([bytes], {
     type: params.mime ?? "application/octet-stream",
