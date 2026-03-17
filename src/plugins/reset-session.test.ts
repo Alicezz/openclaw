@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginRecord } from "./registry.js";
@@ -7,6 +8,15 @@ import type {
   PluginRegistrationMode,
   PluginResetSessionResult,
 } from "./types.js";
+
+const resolveModuleId = (specifier: string) => fileURLToPath(new URL(specifier, import.meta.url));
+
+const AUTH_PROFILES_OAUTH_MODULE_IDS = [
+  "../agents/auth-profiles/oauth.js",
+  "../agents/auth-profiles/oauth.ts",
+  resolveModuleId("../agents/auth-profiles/oauth.js"),
+  resolveModuleId("../agents/auth-profiles/oauth.ts"),
+];
 
 const mockPluginSideEffects = () => {
   vi.doMock("../agents/sandbox/constants.js", () => {
@@ -58,8 +68,9 @@ const mockPluginSideEffects = () => {
     })),
     getOAuthProviders: vi.fn(() => []),
   };
-  vi.doMock("../agents/auth-profiles/oauth.js", () => mockAuthProfilesOauth, { virtual: true });
-  vi.doMock("../agents/auth-profiles/oauth.ts", () => mockAuthProfilesOauth, { virtual: true });
+  for (const id of AUTH_PROFILES_OAUTH_MODULE_IDS) {
+    vi.doMock(id, () => mockAuthProfilesOauth, { virtual: true });
+  }
 
   vi.doMock("openclaw/plugin-sdk/text-runtime", async () => {
     return await import("../plugin-sdk/text-runtime.js");
@@ -242,7 +253,9 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.doUnmock("../agents/sandbox/constants.js");
   vi.doUnmock("@mariozechner/pi-ai/oauth");
-  vi.doUnmock("../agents/auth-profiles/oauth.js");
+  for (const id of AUTH_PROFILES_OAUTH_MODULE_IDS) {
+    vi.doUnmock(id);
+  }
   vi.doUnmock("../channels/registry.js");
   vi.doUnmock("@modelcontextprotocol/sdk/client/index.js");
   vi.doUnmock("@modelcontextprotocol/sdk/client/stdio.js");
