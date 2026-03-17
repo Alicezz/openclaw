@@ -9,6 +9,23 @@ import type {
   PluginResetSessionResult,
 } from "./types.js";
 
+vi.mock("@mariozechner/pi-ai/oauth", () => {
+  const loginOpenAICodex = vi.fn();
+  const getOAuthProviders = vi.fn(() => []);
+  const getOAuthApiKey = vi.fn(() => "");
+  return {
+    __esModule: true,
+    getOAuthApiKey,
+    getOAuthProviders,
+    loginOpenAICodex,
+    default: {
+      getOAuthApiKey,
+      getOAuthProviders,
+      loginOpenAICodex,
+    },
+  };
+});
+
 const resolveModuleId = (specifier: string) => fileURLToPath(new URL(specifier, import.meta.url));
 
 const AUTH_PROFILES_OAUTH_MODULE_IDS = [
@@ -44,22 +61,6 @@ const mockPluginSideEffects = () => {
       SANDBOX_BROWSER_REGISTRY_PATH: "/tmp/sandbox/browsers.json",
     };
   });
-
-  vi.doMock(
-    "@mariozechner/pi-ai/oauth",
-    () => ({
-      __esModule: true,
-      getOAuthApiKey: () => "",
-      getOAuthProviders: () => [],
-      loginOpenAICodex: vi.fn(),
-      default: {
-        getOAuthApiKey: () => "",
-        getOAuthProviders: () => [],
-        loginOpenAICodex: vi.fn(),
-      },
-    }),
-    { virtual: true },
-  );
 
   const mockAuthProfilesOauth = {
     resolveApiKeyForProfile: vi.fn(async () => ({
@@ -252,7 +253,6 @@ afterEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   vi.doUnmock("../agents/sandbox/constants.js");
-  vi.doUnmock("@mariozechner/pi-ai/oauth");
   for (const id of AUTH_PROFILES_OAUTH_MODULE_IDS) {
     vi.doUnmock(id);
   }
