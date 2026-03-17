@@ -81,6 +81,7 @@ import { isXaiProvider } from "../../schema/clean-for-xai.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
 import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
 import { sanitizeToolUseResultPairing } from "../../session-transcript-repair.js";
+import { installSessionWriteGuard } from "../../session-write-guard.js";
 import {
   acquireSessionWriteLock,
   resolveSessionLockMaxHoldFromTimeout,
@@ -1737,11 +1738,21 @@ export async function runEmbeddedAttempt(
           compactionTimeoutMs: resolveCompactionTimeoutMs(params.config),
         }),
       }),
+      onForceRelease: () => {
+        log.warn(
+          `[attempt] session lock force-released by watchdog, aborting run: ` +
+            `runId=${params.runId} sessionId=${params.sessionId}`,
+        );
+        runAbortController.abort(new Error("session lock force-released by watchdog"));
+        // Also abort the active session to stop in-flight streaming/tool execution.
+        void session?.abort();
+      },
     });
 
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     let removeToolResultContextGuard: (() => void) | undefined;
+    let removeWriteGuard: (() => void) | undefined;
     try {
       await repairSessionFileIfNeeded({
         sessionFile: params.sessionFile,
@@ -1767,6 +1778,20 @@ export async function runEmbeddedAttempt(
         allowedToolNames,
       });
       trackSessionManagerAccess(params.sessionFile);
+
+      // Install write guard: prevents writes after lock loss and ensures fsync.
+      removeWriteGuard = installSessionWriteGuard({
+        sessionManager,
+        sessionFile: params.sessionFile,
+        onLockLost: () => {
+          log.warn(
+            `[attempt] write guard detected lock loss, aborting: ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+          runAbortController.abort(new Error("session lock lost during write"));
+          void session?.abort();
+        },
+      });
 
       if (hadSessionFile && params.contextEngine?.bootstrap) {
         try {
@@ -2888,6 +2913,9 @@ export async function runEmbeddedAttempt(
         sessionManager,
         clearPendingOnTimeout: true,
       });
+      // Remove write guard before releasing lock to prevent false-positive lock-loss errors
+      // during the final flush above.
+      removeWriteGuard?.();
       session?.dispose();
       releaseWsSession(params.sessionId);
       await bundleMcpRuntime?.dispose();
