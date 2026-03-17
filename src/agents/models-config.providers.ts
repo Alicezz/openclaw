@@ -8,6 +8,14 @@ import { coerceSecretRef, resolveSecretInputRef } from "../config/types.secrets.
 import { isRecord } from "../utils.js";
 import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
+import {
+  AIMLAPI_BASE_URL,
+  AIMLAPI_DEFAULT_CONTEXT_WINDOW,
+  AIMLAPI_DEFAULT_COST,
+  AIMLAPI_DEFAULT_MAX_TOKENS,
+  AIMLAPI_DEFAULT_MODEL_ID,
+  discoverAimlapiModels,
+} from "./aimlapi-models.js";
 import { discoverBedrockModels } from "./bedrock-discovery.js";
 import { normalizeGoogleModelId } from "./model-id-normalization.js";
 import { resolveOllamaApiBase } from "./models-config.providers.discovery.js";
@@ -62,6 +70,29 @@ const MODELSTUDIO_NATIVE_BASE_URLS = new Set([
 ]);
 
 const ENV_VAR_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+export { AIMLAPI_BASE_URL, AIMLAPI_DEFAULT_MODEL_ID };
+
+export function buildAimlapiModelDefinition() {
+  return {
+    id: AIMLAPI_DEFAULT_MODEL_ID,
+    name: "GPT-5 Nano (2025-08-07)",
+    reasoning: false,
+    input: ["text", "image"] as Array<"text" | "image">,
+    cost: AIMLAPI_DEFAULT_COST,
+    contextWindow: AIMLAPI_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: AIMLAPI_DEFAULT_MAX_TOKENS,
+  };
+}
+
+async function buildAimlapiProviderWithModels(): Promise<ProviderConfig> {
+  const models = await discoverAimlapiModels();
+  return {
+    baseUrl: AIMLAPI_BASE_URL,
+    api: "openai-completions",
+    models,
+  };
+}
 
 function normalizeApiKeyConfig(value: string): string {
   const trimmed = value.trim();
@@ -647,6 +678,31 @@ function mergeImplicitProviderSet(
   }
 }
 
+async function resolveImplicitAimlapiProvider(params: {
+  explicitProviders?: Record<string, ProviderConfig> | null;
+  authStore: ReturnType<typeof ensureAuthProfileStore>;
+  env: NodeJS.ProcessEnv;
+}): Promise<ProviderConfig | undefined> {
+  if (params.explicitProviders?.aimlapi) {
+    return undefined;
+  }
+  const envVar = resolveEnvApiKeyVarName("aimlapi", params.env);
+  const apiKey =
+    envVar ??
+    resolveApiKeyFromProfiles({
+      provider: "aimlapi",
+      store: params.authStore,
+      env: params.env,
+    })?.apiKey;
+  if (!apiKey) {
+    return undefined;
+  }
+  return {
+    ...(await buildAimlapiProviderWithModels()),
+    apiKey,
+  };
+}
+
 async function resolvePluginImplicitProviders(
   ctx: ImplicitProviderContext,
   order: import("../plugins/types.js").ProviderDiscoveryOrder,
@@ -792,6 +848,17 @@ export async function resolveImplicitProviders(
   mergeImplicitProviderSet(providers, await resolvePluginImplicitProviders(context, "profile"));
   mergeImplicitProviderSet(providers, await resolvePluginImplicitProviders(context, "paired"));
   mergeImplicitProviderSet(providers, await resolvePluginImplicitProviders(context, "late"));
+
+  if (!providers.aimlapi) {
+    const implicitAimlapi = await resolveImplicitAimlapiProvider({
+      explicitProviders: params.explicitProviders,
+      authStore,
+      env,
+    });
+    if (implicitAimlapi) {
+      providers.aimlapi = implicitAimlapi;
+    }
+  }
 
   const implicitBedrock = await resolveImplicitBedrockProvider({
     agentDir: params.agentDir,

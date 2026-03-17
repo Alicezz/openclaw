@@ -158,4 +158,13 @@ describe("formatRawAssistantErrorForUi", () => {
       "The AI service is temporarily unavailable (HTTP 521). Please try again in a moment.",
     );
   });
+  it("guides AIMLAPI auth failures to the key page", () => {
+    const msg = {
+      stopReason: "error",
+      errorMessage: 'No API key resolved for provider "aimlapi" (auth mode: api-key).',
+      provider: "aimlapi",
+    } as AssistantMessage;
+    const result = formatAssistantErrorText(msg);
+    expect(result).toContain("https://aimlapi.com/app/keys/");
+  });
 });

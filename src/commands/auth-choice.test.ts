@@ -7,6 +7,7 @@ import cloudflareAiGatewayPlugin from "../../extensions/cloudflare-ai-gateway/in
 import googlePlugin from "../../extensions/google/index.js";
 import huggingfacePlugin from "../../extensions/huggingface/index.js";
 import kimiCodingPlugin from "../../extensions/kimi-coding/index.js";
+import aimlapiPlugin from "../../extensions/aimlapi/index.js";
 import minimaxPlugin from "../../extensions/minimax/index.js";
 import mistralPlugin from "../../extensions/mistral/index.js";
 import moonshotPlugin from "../../extensions/moonshot/index.js";
@@ -85,6 +86,7 @@ type StoredAuthProfile = {
 function createDefaultProviderPlugins() {
   return registerProviderPlugins(
     anthropicPlugin,
+    aimlapiPlugin,
     chutesPlugin,
     cloudflareAiGatewayPlugin,
     googlePlugin,
@@ -134,6 +136,7 @@ describe("applyAuthChoice", () => {
     "SYNTHETIC_API_KEY",
     "SSH_TTY",
     "CHUTES_CLIENT_ID",
+    "AIMLAPI_API_KEY",
   ]);
   let activeStateDir: string | null = null;
   async function setupTempState() {
@@ -1205,6 +1208,76 @@ describe("applyAuthChoice", () => {
     });
   });
 
+   it("uses existing AIMLAPI_API_KEY when selecting aimlapi-api-key", async () => {
+  await setupTempState();
+  process.env.AIMLAPI_API_KEY = "aimlapi-test-key";
+
+  const text = vi.fn();
+  const confirm = vi.fn(async () => true);
+  const { prompter, runtime } = createApiKeyPromptHarness({ text, confirm });
+
+  const result = await applyAuthChoice({
+    authChoice: "aimlapi-api-key",
+    config: {},
+    prompter,
+    runtime,
+    setDefaultModel: true,
+  });
+
+  expect(confirm).toHaveBeenCalledWith(
+    expect.objectContaining({
+      message: expect.stringContaining("AIMLAPI_API_KEY"),
+    }),
+  );
+  expect(text).not.toHaveBeenCalled();
+
+  expect(result.config.auth?.profiles?.["aimlapi:default"]).toMatchObject({
+    provider: "aimlapi",
+    mode: "api_key",
+  });
+
+  expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+    "aimlapi/openai/gpt-5-nano-2025-08-07",
+  );
+
+  expect((await readAuthProfile("aimlapi:default"))?.key).toBe("aimlapi-test-key");
+
+  delete process.env.AIMLAPI_API_KEY;
+});
+
+it("prompts and writes AIMLAPI API key when no env var is set", async () => {
+  await setupTempState();
+  delete process.env.AIMLAPI_API_KEY;
+
+  const text = vi.fn().mockResolvedValue("sk-aimlapi-test");
+  const confirm = vi.fn(async () => false);
+  const { prompter, runtime } = createApiKeyPromptHarness({ text, confirm });
+
+  const result = await applyAuthChoice({
+    authChoice: "aimlapi-api-key",
+    config: {},
+    prompter,
+    runtime,
+    setDefaultModel: true,
+  });
+
+  expect(text).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "Enter AI/ML API key" }),
+  );
+  expect(confirm).not.toHaveBeenCalled();
+
+  expect(result.config.auth?.profiles?.["aimlapi:default"]).toMatchObject({
+    provider: "aimlapi",
+    mode: "api_key",
+  });
+
+  expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+    "aimlapi/openai/gpt-5-nano-2025-08-07",
+  );
+
+  expect((await readAuthProfile("aimlapi:default"))?.key).toBe("sk-aimlapi-test");
+});
+
   it("configures cloudflare ai gateway via env key and explicit opts", async () => {
     const scenarios: Array<{
       envGatewayKey?: string;
@@ -1513,7 +1586,9 @@ describe("resolvePreferredProviderForAuthChoice", () => {
       { authChoice: "github-copilot" as const, expectedProvider: "github-copilot" },
       { authChoice: "qwen-portal" as const, expectedProvider: "qwen-portal" },
       { authChoice: "mistral-api-key" as const, expectedProvider: "mistral" },
+      { authChoice: "aimlapi-api-key" as const, expectedProvider: "aimlapi" },
       { authChoice: "ollama" as const, expectedProvider: "ollama" },
+      { authChoice: "aimlapi-api-key" as const, expectedProvider: "aimlapi" },
       { authChoice: "unknown" as AuthChoice, expectedProvider: undefined },
     ] as const;
     for (const scenario of scenarios) {

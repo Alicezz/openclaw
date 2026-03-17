@@ -3,9 +3,11 @@ import fs from "node:fs";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionId } from "../../agents/cli-session.js";
+import { describeFailoverError, isFailoverError } from "../../agents/failover-error.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import {
+  isAuthErrorMessage,
   BILLING_ERROR_USER_MESSAGE,
   isCompactionFailureError,
   isContextOverflowError,
@@ -534,6 +536,16 @@ export async function runAgentTurnWithFallback(params: {
       const isSessionCorruption = /function call turn comes immediately after/i.test(message);
       const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
       const isTransientHttp = isTransientHttpError(message);
+      const channel = resolveMessageChannel(params.sessionCtx.Surface, params.sessionCtx.Provider);
+      const isTelegram = channel === "telegram";
+      const failoverInfo = describeFailoverError(err);
+      const isAuthFailure =
+        failoverInfo.reason === "auth" ||
+        failoverInfo.status === 401 ||
+        isAuthErrorMessage(message);
+      const isAimlapiFailure =
+        (isFailoverError(err) && err.provider === "aimlapi") ||
+        message.toLowerCase().includes("aimlapi");
 
       if (
         isCompactionFailure &&
@@ -558,6 +570,28 @@ export async function runAgentTurnWithFallback(params: {
             },
           };
         }
+      }
+
+      if (isAuthFailure && isAimlapiFailure) {
+        const guidanceText = isTelegram
+          ? [
+              // Placeholder for Telegram-specific instructions
+              // In future, we might provide Telegram-specific steps here.
+              "🔑 It looks like your AI/ML API key is missing or invalid.",
+              "Do you already have a key? If not, open https://aimlapi.com/app/keys/,",
+              "sign up/subscribe, then paste the key into the bot.",
+            ].join("\n")
+          : [
+              "🔑 It looks like your AI/ML API key is missing or invalid.",
+              "Do you already have a key? If not, open https://aimlapi.com/app/keys/,",
+              "sign up/subscribe, then paste the key into the bot.",
+            ].join("\n");
+        return {
+          kind: "final",
+          payload: {
+            text: guidanceText,
+          },
+        };
       }
 
       // Auto-recover from Gemini session corruption by resetting the session

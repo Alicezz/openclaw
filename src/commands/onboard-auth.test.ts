@@ -4,6 +4,10 @@ import path from "node:path";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyAimlapiConfig,
+  applyAimlapiProviderConfig,
+} from "../../extensions/aimlapi/onboard.js";
+import {
   applyMinimaxApiConfig,
   applyMinimaxApiProviderConfig,
 } from "../../extensions/minimax/onboard.js";
@@ -49,6 +53,7 @@ import {
 } from "../plugin-sdk/provider-models.js";
 import { applyAuthProfileConfig } from "../plugins/provider-auth-helpers.js";
 import {
+  AIMLAPI_DEFAULT_MODEL_REF,
   OPENROUTER_DEFAULT_MODEL_REF,
   setMinimaxApiKey,
   writeOAuthCredentials,
@@ -767,5 +772,48 @@ describe("default-model config helpers", () => {
       const cfgWithFallbacks = applyConfig(createConfigWithFallbacks());
       expectFallbacksPreserved(cfgWithFallbacks);
     }
+  });
+});
+
+describe("applyAimlapiProviderConfig", () => {
+  it("adds allowlist entry for the default model", () => {
+    const cfg = applyAimlapiProviderConfig({});
+    const models = cfg.agents?.defaults?.models ?? {};
+    expect(Object.keys(models)).toContain(AIMLAPI_DEFAULT_MODEL_REF);
+  });
+
+  it("preserves existing alias for the default model", () => {
+    const cfg = applyAimlapiProviderConfig({
+      agents: {
+        defaults: {
+          models: {
+            [AIMLAPI_DEFAULT_MODEL_REF]: { alias: "AIML" },
+          },
+        },
+      },
+    });
+    expect(cfg.agents?.defaults?.models?.[AIMLAPI_DEFAULT_MODEL_REF]?.alias).toBe("AIML");
+  });
+});
+
+describe("applyAimlapiConfig", () => {
+  it("sets correct primary model", () => {
+    const cfg = applyAimlapiConfig({});
+    expect(resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model)).toBe(
+      AIMLAPI_DEFAULT_MODEL_REF,
+    );
+  });
+
+  it("preserves existing model fallbacks", () => {
+    const cfg = applyAimlapiConfig({
+      agents: {
+        defaults: {
+          model: { fallbacks: ["anthropic/claude-opus-4-5"] },
+        },
+      },
+    });
+    expect(resolveAgentModelFallbackValues(cfg.agents?.defaults?.model)).toEqual([
+      "anthropic/claude-opus-4-5",
+    ]);
   });
 });

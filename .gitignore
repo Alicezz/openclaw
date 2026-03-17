@@ -92,6 +92,7 @@ USER.md
 
 # local tooling
 .serena/
+/.idea
 
 # Agent credentials and memory (NEVER COMMIT)
 /memory/
