@@ -364,18 +364,21 @@ export function applyExtraParamsToAgent(
 
   if (provider === "amazon-bedrock") {
     // Try to get the model name from configuration for better detection of Anthropic models
-    // when using Application Inference Profile ARNs
+    // when using Application Inference Profile ARNs.
+    // Check provider model name first (most reliable), then fall back to alias.
     let modelName: string | undefined;
-    const modelKey = `${provider}/${modelId}`;
-    const modelConfig = cfg?.agents?.defaults?.models?.[modelKey];
-    if (modelConfig?.alias) {
-      modelName = modelConfig.alias;
-    } else {
-      // Try to get from provider models configuration
-      const providerConfig = cfg?.models?.providers?.[provider];
-      if (providerConfig?.models) {
-        const modelDef = providerConfig.models.find((m) => m.id === modelId);
-        modelName = modelDef?.name;
+    const providerConfig = cfg?.models?.providers?.[provider];
+    if (providerConfig?.models) {
+      const modelDef = providerConfig.models.find((m) => m.id === modelId);
+      if (modelDef?.name) {
+        modelName = modelDef.name;
+      }
+    }
+    if (!modelName) {
+      const modelKey = `${provider}/${modelId}`;
+      const modelConfig = cfg?.agents?.defaults?.models?.[modelKey];
+      if (modelConfig?.alias) {
+        modelName = modelConfig.alias;
       }
     }
 
