@@ -172,7 +172,7 @@ export type PluginRecord = {
   providerIds: string[];
   speechProviderIds: string[];
   mediaUnderstandingProviderIds: string[];
-  imageGenerationProviderIds?: string[];
+  imageGenerationProviderIds: string[];
   webSearchProviderIds: string[];
   gatewayMethods: string[];
   cliCommands: string[];
@@ -195,7 +195,7 @@ export type PluginRegistry = {
   providers: PluginProviderRegistration[];
   speechProviders: PluginSpeechProviderRegistration[];
   mediaUnderstandingProviders: PluginMediaUnderstandingProviderRegistration[];
-  imageGenerationProviders?: PluginImageGenerationProviderRegistration[];
+  imageGenerationProviders: PluginImageGenerationProviderRegistration[];
   webSearchProviders: PluginWebSearchProviderRegistration[];
   gatewayHandlers: GatewayRequestHandlers;
   httpRoutes: PluginHttpRouteRegistration[];
@@ -898,19 +898,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     });
   };
 
-  const ensureImageGenerationRegistrations = () => {
-    if (!registry.imageGenerationProviders) {
-      registry.imageGenerationProviders = [];
-    }
-    return registry.imageGenerationProviders;
-  };
-
-  const ensureImageGenerationOwnedIds = (record: PluginRecord) => {
-    if (!record.imageGenerationProviderIds) {
-      record.imageGenerationProviderIds = [];
-    }
-    return record.imageGenerationProviderIds;
-  };
   const registerImageGenerationProvider = (
     record: PluginRecord,
     provider: ImageGenerationProviderPlugin,
@@ -919,8 +906,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       record,
       provider,
       kindLabel: "image-generation provider",
-      registrations: ensureImageGenerationRegistrations(),
-      ownedIds: ensureImageGenerationOwnedIds(record),
+      registrations: registry.imageGenerationProviders,
+      ownedIds: record.imageGenerationProviderIds,
     });
   };
 

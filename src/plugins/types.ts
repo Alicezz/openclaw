@@ -1263,7 +1263,7 @@ export type OpenClawPluginApi = {
   registerProvider: (provider: ProviderPlugin) => void;
   registerSpeechProvider: (provider: SpeechProviderPlugin) => void;
   registerMediaUnderstandingProvider: (provider: MediaUnderstandingProviderPlugin) => void;
-  registerImageGenerationProvider?: (provider: ImageGenerationProviderPlugin) => void;
+  registerImageGenerationProvider: (provider: ImageGenerationProviderPlugin) => void;
   registerWebSearchProvider: (provider: WebSearchProviderPlugin) => void;
   registerInteractiveHandler: (registration: PluginInteractiveHandlerRegistration) => void;
   /**
