@@ -475,16 +475,25 @@ private enum ExecHostExecutor {
         context: ExecApprovalContext)
     {
         guard decision == .allowAlways, context.security == .allowlist else { return }
-        var seenPatterns = Set<String>()
+        var seenKeys = Set<String>()
         for candidate in context.allowlistResolutions {
-            guard let pattern = ExecApprovalHelpers.allowlistPattern(
+            guard let entry = ExecApprovalHelpers.allowlistEntry(
                 command: context.command,
                 resolution: candidate)
             else {
                 continue
             }
-            if seenPatterns.insert(pattern).inserted {
-                ExecApprovalsStore.addAllowlistEntry(agentId: context.agentId, pattern: pattern)
+            let key: String
+            if let args = entry.args {
+                key = "\(entry.pattern)\0\(args.joined(separator: "\0"))"
+            } else {
+                key = entry.pattern
+            }
+            if seenKeys.insert(key).inserted {
+                ExecApprovalsStore.addAllowlistEntry(
+                    agentId: context.agentId,
+                    pattern: entry.pattern,
+                    args: entry.args)
             }
         }
     }
