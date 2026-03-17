@@ -250,4 +250,107 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
     expect(cronSession.sessionEntry.model).toBe("claude-opus-4-6");
     expect(cronSession.sessionEntry.modelProvider).toBe("anthropic");
   });
+
+  it("resolves alias-only session modelOverride without provider prefix (#18556)", async () => {
+    // No cron payload model — the job has no model field
+    const jobWithoutModel = makeJob({
+      payload: { kind: "agentTurn", message: "run daily digest" },
+    });
+
+    // Session-level /model override set to an alias (no provider prefix)
+    cronSession.sessionEntry = makeFreshSessionEntry({
+      modelOverride: "sonnet",
+      providerOverride: undefined,
+    });
+    resolveCronSessionMock.mockReturnValue(cronSession);
+
+    // BUG (#18556): before the fix, the session override path prepended the
+    // default provider ("anthropic/sonnet"), which caused resolveAllowedModelRef
+    // to skip alias lookup (aliases only resolve when raw has no '/').
+    // The mock discriminates: alias "sonnet" succeeds; "anthropic/sonnet" fails.
+    resolveAllowedModelRefMock.mockImplementation(
+      (params: { raw: string; defaultProvider: string }) => {
+        if (params.raw === "sonnet") {
+          return {
+            ref: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            key: "anthropic/claude-sonnet-4-6",
+          };
+        }
+        // Provider-prefixed alias → the old broken path
+        return { error: `model not allowed: ${params.defaultProvider}/${params.raw}` };
+      },
+    );
+
+    runWithModelFallbackMock.mockRejectedValueOnce(new Error("LLM provider timeout"));
+
+    const result = await runCronIsolatedAgentTurn(makeParams({ job: jobWithoutModel }));
+
+    expect(result.status).toBe("error");
+    // The alias should resolve to the actual model, not fall back to the default.
+    expect(cronSession.sessionEntry.model).toBe("claude-sonnet-4-6");
+    expect(cronSession.sessionEntry.modelProvider).toBe("anthropic");
+  });
+
+  it("resolves alias-only payload.model in cron jobs (#18556)", async () => {
+    // Cron payload uses an alias name
+    const jobWithAlias = makeJob({
+      payload: { kind: "agentTurn", message: "run daily digest", model: "sonnet" },
+    });
+
+    // Alias resolves correctly through resolveAllowedModelRef
+    resolveAllowedModelRefMock.mockImplementation((params: { raw: string }) => {
+      if (params.raw === "sonnet") {
+        return {
+          ref: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          key: "anthropic/claude-sonnet-4-6",
+        };
+      }
+      return { error: `model not allowed: ${params.raw}` };
+    });
+
+    // Use rejected mock so the test asserts pre-run persist state (not the
+    // post-run setSessionRuntimeModel path which would mask a broken alias).
+    runWithModelFallbackMock.mockRejectedValueOnce(new Error("LLM provider timeout"));
+
+    const result = await runCronIsolatedAgentTurn(makeParams({ job: jobWithAlias }));
+
+    expect(result.status).toBe("error");
+    // Model set by pre-run persist, proving alias was resolved before the run:
+    expect(cronSession.sessionEntry.model).toBe("claude-sonnet-4-6");
+    expect(cronSession.sessionEntry.modelProvider).toBe("anthropic");
+  });
+
+  it("session modelOverride with explicit providerOverride still works (#18556)", async () => {
+    // No cron payload model
+    const jobWithoutModel = makeJob({
+      payload: { kind: "agentTurn", message: "run daily digest" },
+    });
+
+    // Session has an explicit provider + model override (not an alias)
+    cronSession.sessionEntry = makeFreshSessionEntry({
+      modelOverride: "gpt-4o",
+      providerOverride: "openai",
+    });
+    resolveCronSessionMock.mockReturnValue(cronSession);
+
+    // The provider override is prepended to raw so the resolver sees "openai/gpt-4o",
+    // and defaultProvider stays aligned with the config default (anthropic) so the
+    // allowlist auto-added key does not create a policy bypass.
+    resolveAllowedModelRefMock.mockImplementation(
+      (params: { raw: string; defaultProvider: string }) => {
+        if (params.raw === "openai/gpt-4o" && params.defaultProvider === "anthropic") {
+          return { ref: { provider: "openai", model: "gpt-4o" }, key: "openai/gpt-4o" };
+        }
+        return { error: `model not allowed: ${params.raw}` };
+      },
+    );
+
+    runWithModelFallbackMock.mockRejectedValueOnce(new Error("LLM provider timeout"));
+
+    const result = await runCronIsolatedAgentTurn(makeParams({ job: jobWithoutModel }));
+
+    expect(result.status).toBe("error");
+    expect(cronSession.sessionEntry.model).toBe("gpt-4o");
+    expect(cronSession.sessionEntry.modelProvider).toBe("openai");
+  });
 });

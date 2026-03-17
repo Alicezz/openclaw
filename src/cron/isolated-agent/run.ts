@@ -406,12 +406,19 @@ export async function runCronIsolatedAgentTurn(params: {
   if (!modelOverride && !hooksGmailModelApplied) {
     const sessionModelOverride = cronSession.sessionEntry.modelOverride?.trim();
     if (sessionModelOverride) {
-      const sessionProviderOverride =
-        cronSession.sessionEntry.providerOverride?.trim() || resolvedDefault.provider;
+      const sessionProviderOverride = cronSession.sessionEntry.providerOverride?.trim();
+      // Always prepend the session provider when one is set, even when it
+      // matches resolvedDefault.provider. Model IDs can themselves contain
+      // slashes (e.g. OpenRouter's "anthropic/claude-sonnet-4-5"), so passing
+      // the raw override without a provider prefix causes parseModelRef to
+      // split on the wrong delimiter and route to the wrong provider.  #18556
+      const raw = sessionProviderOverride
+        ? `${sessionProviderOverride}/${sessionModelOverride}`
+        : sessionModelOverride;
       const resolvedSessionOverride = resolveAllowedModelRef({
         cfg: cfgWithAgentDefaults,
         catalog: await loadCatalog(),
-        raw: `${sessionProviderOverride}/${sessionModelOverride}`,
+        raw,
         defaultProvider: resolvedDefault.provider,
         defaultModel: resolvedDefault.model,
       });
