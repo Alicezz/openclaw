@@ -7,6 +7,7 @@ import {
   HumanDelaySchema,
   IdentitySchema,
   SecretInputSchema,
+  AgentVoiceConfigSchema,
   ToolsLinksSchema,
   ToolsMediaSchema,
 } from "./zod-schema.core.js";
@@ -800,6 +801,7 @@ export const AgentEntrySchema = z
     params: z.record(z.string(), z.unknown()).optional(),
     tools: AgentToolsSchema,
     runtime: AgentRuntimeSchema,
+    voice: AgentVoiceConfigSchema,
   })
   .strict();
 

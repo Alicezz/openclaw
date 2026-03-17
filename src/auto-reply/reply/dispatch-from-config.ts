@@ -40,7 +40,11 @@ import {
 } from "../../plugins/conversation-binding.js";
 import { getGlobalHookRunner, getGlobalPluginRegistry } from "../../plugins/hook-runner-global.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
-import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
+import {
+  maybeApplyTtsToPayload,
+  normalizeTtsAutoMode,
+  resolveTtsConfigForAgent,
+} from "../../tts/tts.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import { getReplyFromConfig } from "../reply.js";
 import type { FinalizedMsgContext } from "../templating.js";
@@ -196,6 +200,7 @@ export async function dispatchReplyFromConfig(params: {
     ctx.MessageThreadId ?? parseSessionThreadInfo(acpDispatchSessionKey).threadId;
   const inboundAudio = isInboundAudioContext(ctx);
   const sessionTtsAuto = normalizeTtsAutoMode(sessionStoreEntry.entry?.ttsAuto);
+  const sessionAgentId = resolveSessionAgentId({ sessionKey: acpDispatchSessionKey, config: cfg });
   const hookRunner = getGlobalHookRunner();
 
   // Extract message context for hooks (plugin and internal)
@@ -560,6 +565,7 @@ export async function dispatchReplyFromConfig(params: {
               kind: "tool",
               inboundAudio,
               ttsAuto: sessionTtsAuto,
+              agentId: sessionAgentId,
             });
             const deliveryPayload = resolveToolDeliveryPayload(ttsPayload);
             if (!deliveryPayload) {
@@ -596,6 +602,7 @@ export async function dispatchReplyFromConfig(params: {
               kind: "block",
               inboundAudio,
               ttsAuto: sessionTtsAuto,
+              agentId: sessionAgentId,
             });
             if (shouldRouteToOriginating) {
               await sendPayloadAsync(ttsPayload, context?.abortSignal, false);
@@ -652,6 +659,7 @@ export async function dispatchReplyFromConfig(params: {
         kind: "final",
         inboundAudio,
         ttsAuto: sessionTtsAuto,
+        agentId: sessionAgentId,
       });
       if (shouldRouteToOriginating && originatingChannel && originatingTo) {
         // Route final reply to originating channel.
@@ -680,7 +688,7 @@ export async function dispatchReplyFromConfig(params: {
       }
     }
 
-    const ttsMode = resolveTtsConfig(cfg).mode ?? "final";
+    const ttsMode = resolveTtsConfigForAgent(cfg, sessionAgentId).mode ?? "final";
     // Generate TTS-only reply after block streaming completes (when there's no final reply).
     // This handles the case where block streaming succeeds and drops final payloads,
     // but we still want TTS audio to be generated from the accumulated block content.
@@ -698,6 +706,7 @@ export async function dispatchReplyFromConfig(params: {
           kind: "final",
           inboundAudio,
           ttsAuto: sessionTtsAuto,
+          agentId: sessionAgentId,
         });
         // Only send if TTS was actually applied (mediaUrl exists)
         if (ttsSyntheticReply.mediaUrl) {
