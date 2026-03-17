@@ -498,6 +498,7 @@ export function buildIMessageInboundContext(params: {
     CommandAuthorized: decision.commandAuthorized,
     OriginatingChannel: "imessage" as const,
     OriginatingTo: imessageTo,
+    WorkspaceOverride: decision.route.workspaceOverride,
   });
 
   return { ctxPayload, fromLabel, chatTarget, imessageTo, inboundHistory };

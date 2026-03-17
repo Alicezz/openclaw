@@ -1058,6 +1058,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       ...(attachments.length > 0 && { Attachments: attachments }),
       OriginatingChannel: "tlon",
       OriginatingTo: `tlon:${isGroup ? groupChannel : botShipName}`,
+      WorkspaceOverride: route.workspaceOverride,
       // Include thread context for automatic reply routing
       ...(parentId && { ThreadId: String(parentId), ReplyToId: String(parentId) }),
     });

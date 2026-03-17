@@ -586,6 +586,7 @@ export async function registerSlackMonitorSlashCommands(params: {
         CommandAuthorized: commandAuthorized,
         OriginatingChannel: "slack" as const,
         OriginatingTo: `user:${command.user_id}`,
+        WorkspaceOverride: route.workspaceOverride,
       });
 
       await recordInboundSessionMetaSafe({
