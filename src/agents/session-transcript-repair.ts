@@ -390,15 +390,32 @@ export function repairToolUseResultPairing(messages: AgentMessage[]): ToolUseRep
 
     const assistant = msg as Extract<AgentMessage, { role: "assistant" }>;
 
-    // Skip tool call extraction for aborted or errored assistant messages.
-    // When stopReason is "error" or "aborted", the tool_use blocks may be incomplete
-    // (e.g., partialJson: true) and should not have synthetic tool_results created.
-    // Creating synthetic results for incomplete tool calls causes API 400 errors:
-    // "unexpected tool_use_id found in tool_result blocks"
-    // See: https://github.com/openclaw/openclaw/issues/4597
+    // For aborted or errored assistant messages, strip any tool_use/toolCall blocks
+    // rather than skipping the message entirely. These messages are the most likely
+    // to contain orphaned tool_use blocks (tool call started but result never generated).
+    // Previously we skipped them to avoid creating synthetic tool_results for incomplete
+    // tool calls (see #4597), but skipping preserves the orphaned blocks, which then
+    // cause permanent session corruption — Anthropic rejects every subsequent request
+    // with "tool_use ids were found without tool_result blocks" (see #48354).
+    // The safe fix: strip the tool call blocks entirely instead of trying to pair them.
     const stopReason = (assistant as { stopReason?: string }).stopReason;
     if (stopReason === "error" || stopReason === "aborted") {
-      out.push(msg);
+      const errorToolCalls = extractToolCallsFromAssistant(assistant);
+      if (errorToolCalls.length > 0) {
+        const content = Array.isArray(assistant.content) ? assistant.content : [];
+        const stripped = content.filter(
+          (b: { type?: string }) => b && b.type !== "toolCall" && b.type !== "toolUse",
+        );
+        const strippedIds = errorToolCalls.map((t) => t.id);
+        added.push(...strippedIds.map((id) => `stripped-error-${id}`));
+        changed = true;
+        out.push({
+          ...assistant,
+          content: stripped.length > 0 ? stripped : [{ type: "text" as const, text: "[tool calls from errored turn stripped]" }],
+        } as typeof assistant);
+      } else {
+        out.push(msg);
+      }
       continue;
     }
 
