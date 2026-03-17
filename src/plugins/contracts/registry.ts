@@ -3,6 +3,7 @@ import bravePlugin from "../../../extensions/brave/index.js";
 import byteplusPlugin from "../../../extensions/byteplus/index.js";
 import cloudflareAiGatewayPlugin from "../../../extensions/cloudflare-ai-gateway/index.js";
 import copilotProxyPlugin from "../../../extensions/copilot-proxy/index.js";
+import elevenLabsPlugin from "../../../extensions/elevenlabs/index.js";
 import firecrawlPlugin from "../../../extensions/firecrawl/index.js";
 import githubCopilotPlugin from "../../../extensions/github-copilot/index.js";
 import googleAntigravityAuthPlugin from "../../../extensions/google-antigravity-auth/index.js";
@@ -10,6 +11,7 @@ import googlePlugin from "../../../extensions/google/index.js";
 import huggingFacePlugin from "../../../extensions/huggingface/index.js";
 import kilocodePlugin from "../../../extensions/kilocode/index.js";
 import kimiCodingPlugin from "../../../extensions/kimi-coding/index.js";
+import microsoftPlugin from "../../../extensions/microsoft/index.js";
 import minimaxPlugin from "../../../extensions/minimax/index.js";
 import mistralPlugin from "../../../extensions/mistral/index.js";
 import modelStudioPlugin from "../../../extensions/modelstudio/index.js";
@@ -34,7 +36,7 @@ import xaiPlugin from "../../../extensions/xai/index.js";
 import xiaomiPlugin from "../../../extensions/xiaomi/index.js";
 import zaiPlugin from "../../../extensions/zai/index.js";
 import { createCapturedPluginRegistration } from "../../test-utils/plugin-registration.js";
-import type { ProviderPlugin, WebSearchProviderPlugin } from "../types.js";
+import type { ProviderPlugin, SpeechProviderPlugin, WebSearchProviderPlugin } from "../types.js";
 
 type RegistrablePlugin = {
   id: string;
@@ -52,9 +54,15 @@ type WebSearchProviderContractEntry = {
   credentialValue: unknown;
 };
 
+type SpeechProviderContractEntry = {
+  pluginId: string;
+  provider: SpeechProviderPlugin;
+};
+
 type PluginRegistrationContractEntry = {
   pluginId: string;
   providerIds: string[];
+  speechProviderIds: string[];
   webSearchProviderIds: string[];
   toolNames: string[];
 };
@@ -103,6 +111,8 @@ const bundledWebSearchPlugins: Array<RegistrablePlugin & { credentialValue: unkn
   { ...xaiPlugin, credentialValue: "xai-test" },
 ];
 
+const bundledSpeechPlugins: RegistrablePlugin[] = [elevenLabsPlugin, microsoftPlugin, openAIPlugin];
+
 function captureRegistrations(plugin: RegistrablePlugin) {
   const captured = createCapturedPluginRegistration();
   plugin.register(captured.api);
@@ -129,9 +139,20 @@ export const webSearchProviderContractRegistry: WebSearchProviderContractEntry[]
     }));
   });
 
+export const speechProviderContractRegistry: SpeechProviderContractEntry[] =
+  bundledSpeechPlugins.flatMap((plugin) => {
+    const captured = captureRegistrations(plugin);
+    return captured.speechProviders.map((provider) => ({
+      pluginId: plugin.id,
+      provider,
+    }));
+  });
+
 const bundledPluginRegistrationList = [
   ...new Map(
-    [...bundledProviderPlugins, ...bundledWebSearchPlugins].map((plugin) => [plugin.id, plugin]),
+    [...bundledProviderPlugins, ...bundledSpeechPlugins, ...bundledWebSearchPlugins].map(
+      (plugin) => [plugin.id, plugin],
+    ),
   ).values(),
 ];
 
@@ -141,6 +162,7 @@ export const pluginRegistrationContractRegistry: PluginRegistrationContractEntry
     return {
       pluginId: plugin.id,
       providerIds: captured.providers.map((provider) => provider.id),
+      speechProviderIds: captured.speechProviders.map((provider) => provider.id),
       webSearchProviderIds: captured.webSearchProviders.map((provider) => provider.id),
       toolNames: captured.tools.map((tool) => tool.name),
     };
