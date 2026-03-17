@@ -76,7 +76,6 @@ vi.mock("../../infra/voicewake-routing.js", () => ({
   loadVoiceWakeRoutingConfig: mocks.loadVoiceWakeRoutingConfig,
   resolveVoiceWakeRouteByTrigger: mocks.resolveVoiceWakeRouteByTrigger,
 }));
-}));
 
 vi.mock("../../sessions/send-policy.js", () => ({
   resolveSendPolicy: () => "allow",
