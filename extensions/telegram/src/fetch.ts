@@ -449,7 +449,7 @@ export type TelegramTransport = {
 
 export function resolveTelegramTransport(
   proxyFetch?: typeof fetch,
-  options?: { network?: TelegramNetworkConfig },
+  options?: { network?: TelegramNetworkConfig; apiRoot?: string },
 ): TelegramTransport {
   const autoSelectDecision = resolveTelegramAutoSelectFamilyDecision({
     network: options?.network,
@@ -602,7 +602,16 @@ export function resolveTelegramTransport(
 
 export function resolveTelegramFetch(
   proxyFetch?: typeof fetch,
-  options?: { network?: TelegramNetworkConfig },
+  options?: { network?: TelegramNetworkConfig; apiRoot?: string },
 ): typeof fetch {
   return resolveTelegramTransport(proxyFetch, options).fetch;
+}
+
+/**
+ * Resolve the Telegram Bot API base URL from an optional `apiRoot` config value.
+ * Returns a trimmed URL without trailing slash, or the standard default.
+ */
+export function resolveTelegramApiBase(apiRoot?: string): string {
+  const trimmed = apiRoot?.trim();
+  return trimmed ? trimmed.replace(/\/+$/, "") : `https://${TELEGRAM_API_HOSTNAME}`;
 }
