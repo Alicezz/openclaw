@@ -2,7 +2,7 @@ import { getChannelPlugin } from "../channels/plugins/index.js";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveChannelGroupToolsPolicy } from "../config/group-policy.js";
-import type { AgentToolsConfig } from "../config/types.tools.js";
+import type { AgentToolsConfig, ToolProfileId } from "../config/types.tools.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { resolveThreadParentSessionKey } from "../sessions/session-key-utils.js";
 import { normalizeMessageChannel } from "../utils/message-channel.js";
@@ -210,18 +210,21 @@ function hasExplicitToolSection(section: unknown): boolean {
 function resolveImplicitProfileAlsoAllow(params: {
   globalTools?: OpenClawConfig["tools"];
   agentTools?: AgentToolsConfig;
+  profileId?: ToolProfileId;
 }): string[] | undefined {
   const implicit = new Set<string>();
   if (
-    hasExplicitToolSection(params.agentTools?.exec) ||
-    hasExplicitToolSection(params.globalTools?.exec)
+    params.profileId !== "minimal" &&
+    (hasExplicitToolSection(params.agentTools?.exec) ||
+      hasExplicitToolSection(params.globalTools?.exec))
   ) {
     implicit.add("exec");
     implicit.add("process");
   }
   if (
-    hasExplicitToolSection(params.agentTools?.fs) ||
-    hasExplicitToolSection(params.globalTools?.fs)
+    params.profileId !== "minimal" &&
+    (hasExplicitToolSection(params.agentTools?.fs) ||
+      hasExplicitToolSection(params.globalTools?.fs))
   ) {
     implicit.add("read");
     implicit.add("write");
@@ -262,7 +265,11 @@ export function resolveEffectiveToolPolicy(params: {
   });
   const explicitProfileAlsoAllow =
     resolveExplicitProfileAlsoAllow(agentTools) ?? resolveExplicitProfileAlsoAllow(globalTools);
-  const implicitProfileAlsoAllow = resolveImplicitProfileAlsoAllow({ globalTools, agentTools });
+  const implicitProfileAlsoAllow = resolveImplicitProfileAlsoAllow({
+    globalTools,
+    agentTools,
+    profileId: profile,
+  });
   const profileAlsoAllow =
     explicitProfileAlsoAllow || implicitProfileAlsoAllow
       ? Array.from(
