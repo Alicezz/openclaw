@@ -75,6 +75,33 @@ describe("chat context notice", () => {
     );
   });
 
+  it("falls back to input tokens when totalTokens is missing", async () => {
+    const app = mountApp("/chat");
+    await app.updateComplete;
+
+    app.sessionsResult = {
+      count: 1,
+      defaults: { contextTokens: 1000, model: "openai/gpt-5.2" },
+      sessions: [
+        {
+          key: "main",
+          inputTokens: 910,
+          contextTokens: 1000,
+          reasoningLevel: "off",
+          model: "openai/gpt-5.2",
+        },
+      ],
+    } as never;
+    app.requestUpdate();
+    await app.updateComplete;
+
+    const notice = app.querySelector<HTMLElement>(".context-notice");
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toContain("Model context");
+    expect(notice?.textContent).toContain("Used 910");
+    expect(notice?.textContent).toContain("Limit 1k");
+  });
+
   it("keeps the 85% model warning for known models before the pricing threshold", async () => {
     const app = mountApp("/chat");
     await app.updateComplete;

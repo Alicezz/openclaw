@@ -333,12 +333,13 @@ function renderContextNotice(
     return nothing;
   }
 
-  const modelRatio = hasContextUsed ? contextUsed / modelLimit : 0;
+  const effectiveContextUsed = hasContextUsed ? contextUsed : inputUsed;
+  const modelRatio = effectiveContextUsed / modelLimit;
   const shouldShowPricing =
     showPricingThresholdNotice &&
     typeof known?.pricingThresholdTokens === "number" &&
     inputUsed >= known.pricingThresholdTokens;
-  const shouldShowModel = hasContextUsed && modelRatio >= 0.85;
+  const shouldShowModel = modelRatio >= 0.85;
   if (!shouldShowPricing && !shouldShowModel) {
     return nothing;
   }
@@ -348,7 +349,7 @@ function renderContextNotice(
   const pricingThreshold = showPricingThresholdNotice
     ? (known?.pricingThresholdTokens ?? null)
     : null;
-  const shouldShowModelWarning = hasContextUsed && contextUsed >= modelLimit;
+  const shouldShowModelWarning = effectiveContextUsed >= modelLimit;
   const shouldShowCompactionHint = shouldShowPricing && hasContextUsed && contextUsed < modelLimit;
   const shouldShow = shouldShowPricing || shouldShowModelWarning || shouldShowModel;
   if (!shouldShow) {
@@ -368,15 +369,9 @@ function renderContextNotice(
     >
       <div class="context-notice__summary">
         <span class="context-notice__summary-label">Model context</span>
-        ${
-          hasContextUsed
-            ? html`
-              <span class="context-notice__metric context-notice__metric--used">
-                Used ${formatTokensCompact(contextUsed)}
-              </span>
-            `
-            : nothing
-        }
+        <span class="context-notice__metric context-notice__metric--used">
+          Used ${formatTokensCompact(effectiveContextUsed)}
+        </span>
         ${
           pricingThreshold
             ? html`
