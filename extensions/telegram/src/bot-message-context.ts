@@ -26,6 +26,8 @@ import { enforceTelegramDmAccess } from "./dm-access.js";
 import { evaluateTelegramGroupBaseAccess } from "./group-access.js";
 import {
   buildTelegramStatusReactionVariants,
+  isTelegramSupportedReactionEmoji,
+  normalizeTelegramReactionEmoji,
   resolveTelegramAllowedEmojiReactions,
   resolveTelegramReactionVariant,
   resolveTelegramStatusReactionEmojis,
@@ -93,10 +95,7 @@ export const buildTelegramMessageContext = async ({
   const requiresExplicitAccountBinding = (
     candidate: ReturnType<typeof resolveTelegramConversationRoute>["route"],
   ): boolean => candidate.accountId !== DEFAULT_ACCOUNT_ID && candidate.matchedBy === "default";
-  const isNamedAccountFallback = requiresExplicitAccountBinding(route);
-  // Named-account groups still require an explicit binding; DMs get a
-  // per-account fallback session key below to preserve isolation.
-  if (isNamedAccountFallback && isGroup) {
+  if (requiresExplicitAccountBinding(route)) {
     logInboundDrop({
       log: logVerbose,
       channel: "telegram",
@@ -381,6 +380,7 @@ export const buildTelegramMessageContext = async ({
           },
         })
       : null;
+  const normalizedAckReaction = normalizeTelegramReactionEmoji(ackReaction);
 
   // When status reactions are enabled, setQueued() replaces the simple ack reaction
   const ackReactionPromise = statusReactionController
@@ -390,10 +390,18 @@ export const buildTelegramMessageContext = async ({
           () => false,
         )
       : null
-    : shouldAckReaction() && msg.message_id && reactionApi
+    : shouldAckReaction() &&
+        msg.message_id &&
+        reactionApi &&
+        normalizedAckReaction &&
+        isTelegramSupportedReactionEmoji(normalizedAckReaction)
       ? withTelegramApiErrorLogging({
           operation: "setMessageReaction",
-          fn: () => reactionApi(chatId, msg.message_id, [{ type: "emoji", emoji: ackReaction }]),
+          fn: () => {
+            return reactionApi(chatId, msg.message_id, [
+              { type: "emoji", emoji: normalizedAckReaction },
+            ]);
+          },
         }).then(
           () => true,
           (err) => {

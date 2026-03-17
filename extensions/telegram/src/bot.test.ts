@@ -25,6 +25,11 @@ import {
   wasSentByBot,
 } from "./bot.create-telegram-bot.test-harness.js";
 
+const loadModelCatalogMock = vi.hoisted(() => vi.fn(async () => []));
+vi.mock("../../../src/agents/model-catalog.js", () => ({
+  loadModelCatalog: loadModelCatalogMock,
+}));
+
 // Import after the harness registers `vi.mock(...)` for grammY and Telegram internals.
 const { listNativeCommandSpecs, listNativeCommandSpecsForConfig } =
   await import("../../../src/auto-reply/commands-registry.js");
@@ -54,6 +59,8 @@ describe("createTelegramBot", () => {
 
   beforeEach(() => {
     setMyCommandsSpy.mockClear();
+    loadModelCatalogMock.mockReset();
+    loadModelCatalogMock.mockResolvedValue([]);
     clearPluginInteractiveHandlers();
     loadConfig.mockReturnValue({
       agents: {

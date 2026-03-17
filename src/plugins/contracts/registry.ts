@@ -7,6 +7,7 @@ import copilotProxyPlugin from "../../../extensions/copilot-proxy/index.js";
 import elevenLabsPlugin from "../../../extensions/elevenlabs/index.js";
 import firecrawlPlugin from "../../../extensions/firecrawl/index.js";
 import githubCopilotPlugin from "../../../extensions/github-copilot/index.js";
+import googleAntigravityAuthPlugin from "../../../extensions/google-antigravity-auth/index.js";
 import googlePlugin from "../../../extensions/google/index.js";
 import huggingFacePlugin from "../../../extensions/huggingface/index.js";
 import kilocodePlugin from "../../../extensions/kilocode/index.js";
@@ -83,6 +84,7 @@ const bundledProviderPlugins: RegistrablePlugin[] = [
   copilotProxyPlugin,
   githubCopilotPlugin,
   googlePlugin,
+  googleAntigravityAuthPlugin,
   huggingFacePlugin,
   kilocodePlugin,
   kimiCodingPlugin,

@@ -107,6 +107,8 @@ function resolveBundledWebSearchRegistrations(params: {
   });
 }
 
+export type ResolvedPluginWebSearchProvider = PluginWebSearchProviderEntry;
+
 export function resolvePluginWebSearchProviders(params: {
   config?: PluginLoadOptions["config"];
   workspaceDir?: string;

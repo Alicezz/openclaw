@@ -18,7 +18,7 @@ import {
   type MemoryPluginStatus,
   type MemoryStatusSnapshot,
 } from "./status.scan.shared.js";
-import { getStatusSummary } from "./status.summary.js";
+import { getStatusSummaryForFastJson } from "./status.summary.fast-json.js";
 import { getUpdateCheckResult } from "./status.update.js";
 
 let pluginRegistryModulePromise: Promise<typeof import("../cli/plugin-registry.js")> | undefined;
@@ -143,7 +143,7 @@ export async function scanStatusJsonFast(
     includeRegistry: true,
   });
   const agentStatusPromise = getAgentLocalStatuses(cfg);
-  const summaryPromise = getStatusSummary({ config: cfg, sourceConfig: loadedRaw });
+  const summaryPromise = getStatusSummaryForFastJson({ config: cfg, sourceConfig: loadedRaw });
 
   const tailscaleDnsPromise =
     tailscaleMode === "off"

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { withTempHome } from "../../test/helpers/temp-home.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "../agents/auth-profiles.js";
 import { withEnvAsync } from "../test-utils/env.js";
@@ -12,6 +12,13 @@ import {
   type UsageSummary,
 } from "./provider-usage.js";
 import { loadUsageWithAuth, usageNow } from "./provider-usage.test-support.js";
+
+const WINDOWS_CI_TIMEOUT_MS = process.platform === "win32" ? 240_000 : 120_000;
+
+vi.mock("../plugins/provider-runtime.js", () => ({
+  resetProviderRuntimeHookCacheForTest: vi.fn(),
+  resolveProviderUsageSnapshotWithPlugin: vi.fn().mockResolvedValue(null),
+}));
 
 const minimaxRemainsEndpoint = "api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
 
@@ -116,64 +123,68 @@ describe("provider usage formatting", () => {
 });
 
 describe("provider usage loading", () => {
-  it("loads usage snapshots with injected auth", async () => {
-    const mockFetch = createProviderUsageFetch(async (url) => {
-      if (url.includes("api.anthropic.com")) {
-        return makeResponse(200, {
-          five_hour: { utilization: 20, resets_at: "2026-01-07T01:00:00Z" },
-        });
-      }
-      if (url.includes("api.z.ai")) {
-        return makeResponse(200, {
-          success: true,
-          code: 200,
-          data: {
-            planName: "Pro",
-            limits: [
-              {
-                type: "TOKENS_LIMIT",
-                percentage: 25,
-                unit: 3,
-                number: 6,
-                nextResetTime: "2026-01-07T06:00:00Z",
-              },
-            ],
-          },
-        });
-      }
-      if (url.includes(minimaxRemainsEndpoint)) {
-        return makeResponse(200, {
-          base_resp: { status_code: 0, status_msg: "ok" },
-          data: {
-            total: 200,
-            remain: 50,
-            reset_at: "2026-01-07T05:00:00Z",
-            plan_name: "Coding Plan",
-          },
-        });
-      }
-      return makeResponse(404, "not found");
-    });
+  it(
+    "loads usage snapshots with injected auth",
+    async () => {
+      const mockFetch = createProviderUsageFetch(async (url) => {
+        if (url.includes("api.anthropic.com")) {
+          return makeResponse(200, {
+            five_hour: { utilization: 20, resets_at: "2026-01-07T01:00:00Z" },
+          });
+        }
+        if (url.includes("api.z.ai")) {
+          return makeResponse(200, {
+            success: true,
+            code: 200,
+            data: {
+              planName: "Pro",
+              limits: [
+                {
+                  type: "TOKENS_LIMIT",
+                  percentage: 25,
+                  unit: 3,
+                  number: 6,
+                  nextResetTime: "2026-01-07T06:00:00Z",
+                },
+              ],
+            },
+          });
+        }
+        if (url.includes(minimaxRemainsEndpoint)) {
+          return makeResponse(200, {
+            base_resp: { status_code: 0, status_msg: "ok" },
+            data: {
+              total: 200,
+              remain: 50,
+              reset_at: "2026-01-07T05:00:00Z",
+              plan_name: "Coding Plan",
+            },
+          });
+        }
+        return makeResponse(404, "not found");
+      });
 
-    const summary = await loadUsageWithAuth(
-      loadProviderUsageSummary,
-      [
-        { provider: "anthropic", token: "token-1" },
-        { provider: "minimax", token: "token-1b" },
-        { provider: "zai", token: "token-2" },
-      ],
-      mockFetch,
-    );
+      const summary = await loadUsageWithAuth(
+        loadProviderUsageSummary,
+        [
+          { provider: "anthropic", token: "token-1" },
+          { provider: "minimax", token: "token-1b" },
+          { provider: "zai", token: "token-2" },
+        ],
+        mockFetch,
+      );
 
-    expect(summary.providers).toHaveLength(3);
-    const claude = summary.providers.find((p) => p.provider === "anthropic");
-    const minimax = summary.providers.find((p) => p.provider === "minimax");
-    const zai = summary.providers.find((p) => p.provider === "zai");
-    expect(claude?.windows[0]?.label).toBe("5h");
-    expect(minimax?.windows[0]?.usedPercent).toBe(75);
-    expect(zai?.plan).toBe("Pro");
-    expect(mockFetch).toHaveBeenCalled();
-  });
+      expect(summary.providers).toHaveLength(3);
+      const claude = summary.providers.find((p) => p.provider === "anthropic");
+      const minimax = summary.providers.find((p) => p.provider === "minimax");
+      const zai = summary.providers.find((p) => p.provider === "zai");
+      expect(claude?.windows[0]?.label).toBe("5h");
+      expect(minimax?.windows[0]?.usedPercent).toBe(75);
+      expect(zai?.plan).toBe("Pro");
+      expect(mockFetch).toHaveBeenCalled();
+    },
+    WINDOWS_CI_TIMEOUT_MS,
+  );
 
   it.each([
     {

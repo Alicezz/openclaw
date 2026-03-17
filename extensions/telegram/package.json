@@ -8,6 +8,9 @@
     "extensions": [
       "./index.ts"
     ],
-    "setupEntry": "./setup-entry.ts"
+    "setupEntry": "./setup-entry.ts",
+    "startup": {
+      "deferConfiguredChannelFullLoadUntilAfterListen": true
+    }
   }
 }
