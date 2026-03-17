@@ -265,9 +265,9 @@ function parseFeishuMessageItem(
     chatType:
       item.chat_type === "group" || item.chat_type === "private" || item.chat_type === "p2p"
         ? item.chat_type
-        : item.chat_id?.startsWith("oc_")
+        : item.chat_id?.startsWith("oc_") && !item.chat_id?.startsWith("oc_dm")
           ? "group"
-          : item.chat_id?.startsWith("ou_")
+          : item.chat_id?.startsWith("ou_") || item.chat_id?.startsWith("oc_dm")
             ? "p2p"
             : undefined,
     senderId: item.sender?.id,
