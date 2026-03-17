@@ -1618,6 +1618,7 @@ export async function handleFeishuMessage(params: {
     const rawMessageId = ctx.messageId;
     const isReactionSynthetic =
       rawMessageId.startsWith("om_") && rawMessageId.includes(":reaction:");
+    // Format: om_xxx:reaction:{actionType}:{emoji}:{senderId} - extract original messageId (part before :reaction:)
     const effectiveMessageId = isReactionSynthetic
       ? rawMessageId.split(":reaction:")[0]
       : rawMessageId;
