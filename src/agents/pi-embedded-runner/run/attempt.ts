@@ -19,6 +19,7 @@ import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import {
   buildImplicitMemoryWriteback,
   isAutoMemoryEnabled,
+  resolveImplicitMemoryScopeKey,
   retrieveImplicitContext,
   saveImplicitExperience,
 } from "../../../memory/implicit-memory.runtime.js";
@@ -2402,6 +2403,13 @@ export async function runEmbeddedAttempt(
       let promptErrorSource: "prompt" | "compaction" | null = null;
       const prePromptMessageCount = activeSession.messages.length;
       const implicitMemoryUserInput = params.prompt.trim();
+      const implicitMemoryScopeKey = resolveImplicitMemoryScopeKey({
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+        messageChannel: params.messageChannel,
+        messageProvider: params.messageProvider,
+        senderId: params.senderId,
+      });
       try {
         const promptStartedAt = Date.now();
 
@@ -2462,7 +2470,10 @@ export async function runEmbeddedAttempt(
 
         if (autoMemoryEnabled && implicitMemoryUserInput) {
           try {
-            const implicitContext = await retrieveImplicitContext(implicitMemoryUserInput);
+            const implicitContext = await retrieveImplicitContext(
+              implicitMemoryUserInput,
+              implicitMemoryScopeKey,
+            );
             if (implicitContext) {
               const implicitSystemContext = `Implicit user context: ${implicitContext}`;
               const nextSystemPrompt = composeSystemPromptWithHookContext({
@@ -2905,7 +2916,10 @@ export async function runEmbeddedAttempt(
           error: promptError ? describeUnknownError(promptError) : undefined,
         });
         if (writeback) {
-          void saveImplicitExperience(writeback).catch((err) => {
+          void saveImplicitExperience({
+            ...writeback,
+            scopeKey: implicitMemoryScopeKey,
+          }).catch((err) => {
             log.warn(`implicit memory writeback failed: ${String(err)}`);
           });
         }
