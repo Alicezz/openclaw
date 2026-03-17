@@ -3,6 +3,7 @@ import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeResolvedSecretInputString } from "../../config/types.secrets.js";
 import { logVerbose } from "../../globals.js";
+import { matchesHostnameAllowlist } from "../../infra/net/ssrf.js";
 import type { RuntimeWebSearchMetadata } from "../../secrets/runtime-web-tools.types.js";
 import { wrapWebContent } from "../../security/external-content.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
@@ -19,6 +20,7 @@ import {
   readResponseText,
   resolveCacheTtlMs,
   resolveTimeoutSeconds,
+  resolveUrlAllowlist,
   writeCache,
 } from "./web-shared.js";
 
@@ -1640,6 +1642,9 @@ async function runWebSearch(params: {
   );
   const cached = readCache(SEARCH_CACHE, cacheKey);
   if (cached) {
+    // Cache stores unfiltered results. The caller (createWebSearchTool) applies
+    // the real allowlist filter on every result — including cache hits — so no
+    // filtering is needed here.
     return { ...cached.value, cached: true };
   }
 
@@ -1906,6 +1911,89 @@ async function runWebSearch(params: {
   return payload;
 }
 
+export function filterResultsByAllowlist<T extends { url?: string }>(
+  results: T[],
+  allowlist: string[],
+): T[] {
+  if (allowlist.length === 0) {
+    return results;
+  }
+  return results.filter((entry) => {
+    const url = entry.url;
+    if (!url) {
+      // URL-less entries cannot be validated against the allowlist and would be
+      // unreachable by web_fetch. Drop them consistently whenever an allowlist is active.
+      return false;
+    }
+    try {
+      const parsed = new URL(url);
+      return matchesHostnameAllowlist(parsed.hostname, allowlist);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function applyUrlAllowlistToPayload(
+  payload: Record<string, unknown>,
+  allowlist: string[] | undefined,
+): Record<string, unknown> {
+  if (!allowlist) {
+    return payload;
+  }
+
+  const patched: Record<string, unknown> = { ...payload };
+
+  // Brave / Perplexity-sonar: { results: Array<{ url, title, ... }> }
+  const results = payload.results;
+  if (Array.isArray(results)) {
+    const filtered = filterResultsByAllowlist(results as Array<{ url?: string }>, allowlist);
+    patched.results = filtered;
+    // `count` is the only result-count field emitted by all active providers (Brave/Perplexity-sonar).
+    // No provider in this codebase emits totalResults, numResults, or total alongside results.
+    patched.count = filtered.length;
+  }
+
+  // Perplexity-chat / Grok / Kimi / Gemini: { citations: string[] }
+  // Replace blocked entries with a placeholder instead of splicing them out,
+  // so positional [N] inline citation references in `content` stay index-aligned.
+  const citations = payload.citations;
+  if (Array.isArray(citations)) {
+    patched.citations = (citations as string[]).map((url) => {
+      if (typeof url !== "string") {
+        return "[blocked by urlAllowlist]";
+      }
+      try {
+        return matchesHostnameAllowlist(new URL(url).hostname, allowlist)
+          ? url
+          : "[blocked by urlAllowlist]";
+      } catch {
+        return "[blocked by urlAllowlist]";
+      }
+    });
+  }
+
+  // Grok: { inlineCitations: Array<{ url, title?, ... }> }
+  // Use map() + placeholder (same as citations above) to preserve positional [N] index alignment.
+  const inlineCitations = payload.inlineCitations;
+  if (Array.isArray(inlineCitations)) {
+    patched.inlineCitations = (inlineCitations as Array<{ url?: string }>).map((entry) => {
+      if (!entry.url) {
+        return entry;
+      }
+      try {
+        return matchesHostnameAllowlist(new URL(entry.url).hostname, allowlist)
+          ? entry
+          : { ...entry, url: "[blocked by urlAllowlist]" };
+      } catch {
+        return { ...entry, url: "[blocked by urlAllowlist]" };
+      }
+    });
+  }
+
+  return patched;
+}
+
 export function createWebSearchTool(options?: {
   config?: OpenClawConfig;
   sandboxed?: boolean;
@@ -1929,6 +2017,7 @@ export function createWebSearchTool(options?: {
   const grokConfig = resolveGrokConfig(search);
   const geminiConfig = resolveGeminiConfig(search);
   const kimiConfig = resolveKimiConfig(search);
+  const urlAllowlist = resolveUrlAllowlist(options?.config?.tools?.web);
   const braveConfig = resolveBraveConfig(search);
   const braveMode = resolveBraveMode(braveConfig);
 
@@ -2207,7 +2296,8 @@ export function createWebSearchTool(options?: {
         kimiModel: resolveKimiModel(kimiConfig),
         braveMode,
       });
-      return jsonResult(result);
+      const filtered = applyUrlAllowlistToPayload(result, urlAllowlist);
+      return jsonResult(filtered);
     },
   };
 }
@@ -2239,4 +2329,6 @@ export const __testing = {
   resolveRedirectUrl: resolveCitationRedirectUrl,
   resolveBraveMode,
   mapBraveLlmContextResults,
+  filterResultsByAllowlist,
+  applyUrlAllowlistToPayload,
 } as const;
