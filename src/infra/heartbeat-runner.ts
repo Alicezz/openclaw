@@ -710,7 +710,7 @@ export async function runHeartbeatOnce(opts: {
       heartbeatModelOverride || timeoutOverrideSeconds !== undefined
         ? {
             isHeartbeat: true,
-            heartbeatModelOverride,
+            ...(heartbeatModelOverride !== undefined && { heartbeatModelOverride }),
             suppressToolErrorWarnings,
             bootstrapContextMode,
             ...(timeoutOverrideSeconds !== undefined && { timeoutOverrideSeconds }),
