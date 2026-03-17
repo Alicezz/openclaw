@@ -1,3 +1,5 @@
+import { parseTelegramChatIdFromTarget } from "../../acp/conversation-id.js";
+import { resolveConfiguredAcpBindingRecord } from "../../acp/persistent-bindings.js";
 import {
   resolveAgentDir,
   resolveDefaultAgentId,
@@ -15,22 +17,150 @@ import { toAgentModelListLike } from "../../config/model-input.js";
 import type { SessionEntry, SessionScope } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import {
+  getSessionBindingService,
+  type SessionBindingService,
+} from "../../infra/outbound/session-binding-service.js";
+import {
   formatUsageWindowSummary,
   loadProviderUsageSummary,
   resolveUsageProviderId,
 } from "../../infra/provider-usage.js";
 import type { MediaUnderstandingDecision } from "../../media-understanding/types.js";
+import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { normalizeGroupActivation } from "../group-activation.js";
 import { resolveSelectedAndActiveModel } from "../model-runtime.js";
 import { buildStatusMessage } from "../status.js";
+import type { MsgContext } from "../templating.js";
 import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import type { CommandContext } from "./commands-types.js";
 import { getFollowupQueueDepth, resolveQueueSettings } from "./queue.js";
 import { resolveSubagentLabel } from "./subagents-utils.js";
+import { resolveTelegramConversationId } from "./telegram-context.js";
+
+type StatusRoutingLineDeps = {
+  resolveConfiguredBinding?: typeof resolveConfiguredAcpBindingRecord;
+  sessionBindingService?: Pick<SessionBindingService, "resolveByConversation">;
+};
+
+export function buildTelegramTopicStatusLines(
+  params: {
+    cfg: OpenClawConfig;
+    ctx?: MsgContext;
+    command: Pick<CommandContext, "to">;
+    sessionEntry?: SessionEntry;
+  },
+  deps: StatusRoutingLineDeps = {},
+): string[] {
+  const ctx = params.ctx;
+  const channel = normalizeMessageChannel(
+    typeof ctx?.OriginatingChannel === "string"
+      ? ctx.OriginatingChannel
+      : (ctx?.Surface ?? ctx?.Provider),
+  );
+  if (channel !== "telegram") {
+    return [];
+  }
+
+  const rawThreadId = ctx?.MessageThreadId != null ? String(ctx.MessageThreadId).trim() : "";
+  if (!rawThreadId) {
+    return [];
+  }
+
+  const conversationId = resolveTelegramConversationId({
+    ctx: {
+      MessageThreadId: ctx?.MessageThreadId,
+      OriginatingTo: ctx?.OriginatingTo,
+      To: ctx?.To,
+    },
+    command: {
+      to: params.command.to,
+    },
+  });
+  if (!conversationId) {
+    return [];
+  }
+
+  const accountId = ctx?.AccountId?.trim() || "default";
+  const parentConversationId =
+    parseTelegramChatIdFromTarget(ctx?.OriginatingTo) ??
+    parseTelegramChatIdFromTarget(params.command.to) ??
+    parseTelegramChatIdFromTarget(ctx?.To);
+
+  const resolveConfiguredBinding =
+    deps.resolveConfiguredBinding ?? resolveConfiguredAcpBindingRecord;
+  const sessionBindingService = deps.sessionBindingService ?? getSessionBindingService();
+  const configuredBinding = resolveConfiguredBinding({
+    cfg: params.cfg,
+    channel: "telegram",
+    accountId,
+    conversationId,
+    parentConversationId,
+  });
+  const liveBinding = sessionBindingService.resolveByConversation({
+    channel: "telegram",
+    accountId,
+    conversationId,
+    parentConversationId,
+  });
+
+  const lines = [
+    `📍 Topic: ${conversationId}`,
+    `🚚 Delivery: ${
+      parentConversationId
+        ? `telegram:${parentConversationId} · topic ${rawThreadId}`
+        : `topic ${rawThreadId}`
+    }`,
+  ];
+
+  const configuredTargetSessionKey = configuredBinding?.record.targetSessionKey?.trim();
+  if (configuredBinding && configuredTargetSessionKey) {
+    const details = [
+      configuredBinding.spec.mode,
+      configuredBinding.spec.backend ?? params.sessionEntry?.acp?.backend,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(
+      `🗂 Configured: ACP${details ? ` (${details})` : ""} -> ${configuredTargetSessionKey}`,
+    );
+  }
+
+  const liveTargetSessionKey = liveBinding?.targetSessionKey?.trim();
+  if (liveBinding && liveTargetSessionKey) {
+    const kindLabel =
+      liveBinding.targetKind === "subagent" ? "focused subagent" : "focused session";
+    lines.push(`🧷 Live: ${kindLabel} (${liveBinding.status}) -> ${liveTargetSessionKey}`);
+  }
+
+  if (
+    configuredTargetSessionKey &&
+    liveTargetSessionKey &&
+    configuredTargetSessionKey !== liveTargetSessionKey
+  ) {
+    lines.push("⚠️ Drift: configured target differs from live binding");
+  }
+
+  if (params.sessionEntry?.acp) {
+    const identity = params.sessionEntry.acp.identity;
+    const acpId = identity?.acpxSessionId ?? identity?.acpxRecordId ?? identity?.agentSessionId;
+    const acpBits = [
+      params.sessionEntry.acp.backend,
+      params.sessionEntry.acp.mode,
+      params.sessionEntry.acp.state,
+      acpId ? `id=${acpId}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`🛰 ACP: ${acpBits}`);
+  }
+
+  return lines;
+}
 
 export async function buildStatusReply(params: {
   cfg: OpenClawConfig;
+  ctx?: MsgContext;
   command: CommandContext;
   sessionEntry?: SessionEntry;
   sessionKey: string;
@@ -52,6 +182,7 @@ export async function buildStatusReply(params: {
 }): Promise<ReplyPayload | undefined> {
   const {
     cfg,
+    ctx,
     command,
     sessionEntry,
     sessionKey,
@@ -199,6 +330,12 @@ export async function buildStatusReply(params: {
     modelAuth: selectedModelAuth,
     activeModelAuth,
     usageLine: usageLine ?? undefined,
+    routingLines: buildTelegramTopicStatusLines({
+      cfg,
+      ctx,
+      command,
+      sessionEntry,
+    }),
     queue: {
       mode: queueSettings.mode,
       depth: queueDepth,

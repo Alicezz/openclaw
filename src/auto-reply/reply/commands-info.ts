@@ -133,6 +133,7 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
   }
   const reply = await buildStatusReply({
     cfg: params.cfg,
+    ctx: params.ctx,
     command: params.command,
     sessionEntry: params.sessionEntry,
     sessionKey: params.sessionKey,

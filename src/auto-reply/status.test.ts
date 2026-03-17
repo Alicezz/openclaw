@@ -473,6 +473,26 @@ describe("buildStatusMessage", () => {
     expect(text).toContain("Queue: collect (depth 3 · debounce 2s · cap 5 · drop old)");
   });
 
+  it("renders routing lines beneath the session line", () => {
+    const text = buildStatusMessage({
+      agent: {},
+      sessionEntry: { sessionId: "topic-status", updatedAt: 0 },
+      sessionKey: "agent:main:telegram:group:-1001234567890:topic:42",
+      sessionScope: "per-sender",
+      queue: { mode: "collect", depth: 0 },
+      routingLines: [
+        "📍 Topic: -1001234567890:topic:42",
+        "🚚 Delivery: telegram:-1001234567890 · topic 42",
+      ],
+    });
+
+    const lines = normalizeTestText(text).split("\n");
+    const sessionIndex = lines.findIndex((line) => line.includes("Session:"));
+    expect(sessionIndex).toBeGreaterThan(-1);
+    expect(lines[sessionIndex + 1]).toContain("Topic: -1001234567890:topic:42");
+    expect(lines[sessionIndex + 2]).toContain("Delivery: telegram:-1001234567890 · topic 42");
+  });
+
   it("inserts usage summary beneath context line", () => {
     const text = buildStatusMessage({
       agent: { model: "anthropic/claude-opus-4-5", contextTokens: 32_000 },

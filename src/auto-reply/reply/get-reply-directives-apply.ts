@@ -173,6 +173,7 @@ export async function applyInlineDirectiveOverrides(params: {
     if (directives.hasStatusDirective && allowTextCommands && command.isAuthorizedSender) {
       statusReply = await buildStatusReply({
         cfg,
+        ctx,
         command,
         sessionEntry,
         sessionKey,
