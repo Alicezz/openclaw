@@ -259,6 +259,18 @@ function shouldPreferDynamicModelOverride(params: { provider: string; modelId: s
   return normalizeProviderId(params.provider) === "openai-codex" && params.modelId === "gpt-5.4";
 }
 
+function shouldSkipDynamicModelResolution(params: {
+  provider: string;
+  modelId: string;
+  explicitModel: ReturnType<typeof resolveExplicitModelWithRegistry>;
+}): boolean {
+  return (
+    params.explicitModel?.kind === "resolved" &&
+    !shouldPreferDynamicModelOverride(params) &&
+    normalizeProviderId(params.provider) === "openrouter"
+  );
+}
+
 function resolvePreferredResolvedModel(params: {
   provider: string;
   modelId: string;
@@ -302,6 +314,9 @@ export function resolveModelWithRegistry(params: {
   const explicitModel = resolveExplicitModelWithRegistry(params);
   if (explicitModel?.kind === "suppressed") {
     return undefined;
+  }
+  if (shouldSkipDynamicModelResolution({ provider, modelId, explicitModel })) {
+    return explicitModel?.kind === "resolved" ? explicitModel.model : undefined;
   }
   const providerConfig = resolveConfiguredProviderConfig(cfg, provider);
   const pluginDynamicModel = runProviderDynamicModel({

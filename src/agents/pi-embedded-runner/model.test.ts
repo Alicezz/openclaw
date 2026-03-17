@@ -460,6 +460,46 @@ describe("resolveModel", () => {
     });
   });
 
+  it("does not run OpenRouter dynamic resolution when the registry already resolved the model", () => {
+    mockDiscoveredModel({
+      provider: "openrouter",
+      modelId: "openrouter/healer-alpha",
+      templateModel: {
+        id: "openrouter/healer-alpha",
+        name: "Healer Alpha",
+        api: "openai-completions",
+        provider: "openrouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 262144,
+        maxTokens: 65536,
+      },
+    });
+    mockGetOpenRouterModelCapabilities.mockReturnValue({
+      name: "Unexpected Dynamic Path",
+      input: ["text"],
+      reasoning: false,
+      contextWindow: 8192,
+      maxTokens: 2048,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    });
+
+    const result = resolveModel("openrouter", "openrouter/healer-alpha", "/tmp/agent");
+
+    expect(mockGetOpenRouterModelCapabilities).not.toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      provider: "openrouter",
+      id: "openrouter/healer-alpha",
+      name: "Healer Alpha",
+      input: ["text", "image"],
+      contextWindow: 262144,
+      maxTokens: 65536,
+    });
+  });
+
   it("falls back to text-only when OpenRouter API cache is empty", () => {
     mockGetOpenRouterModelCapabilities.mockReturnValue(undefined);
 
