@@ -255,6 +255,42 @@ function preferResolvedModel(
   return discoveredModel;
 }
 
+function shouldPreferDynamicModelOverride(params: { provider: string; modelId: string }): boolean {
+  return normalizeProviderId(params.provider) === "openai-codex" && params.modelId === "gpt-5.4";
+}
+
+function resolvePreferredResolvedModel(params: {
+  provider: string;
+  modelId: string;
+  explicitModel: ReturnType<typeof resolveExplicitModelWithRegistry>;
+  pluginDynamicModel: Model<Api> | undefined;
+  cfg?: OpenClawConfig;
+  agentDir?: string;
+}): Model<Api> | undefined {
+  const { provider, modelId, explicitModel, pluginDynamicModel, cfg, agentDir } = params;
+  if (explicitModel?.kind === "suppressed") {
+    return undefined;
+  }
+  if (!pluginDynamicModel) {
+    return explicitModel?.kind === "resolved" ? explicitModel.model : undefined;
+  }
+  if (explicitModel?.kind === "resolved") {
+    if (!shouldPreferDynamicModelOverride({ provider, modelId })) {
+      return explicitModel.model;
+    }
+    const preferredModel = preferResolvedModel(explicitModel.model, pluginDynamicModel);
+    if (preferredModel === explicitModel.model) {
+      return explicitModel.model;
+    }
+  }
+  return normalizeResolvedModel({
+    provider,
+    cfg,
+    agentDir,
+    model: pluginDynamicModel,
+  });
+}
+
 export function resolveModelWithRegistry(params: {
   provider: string;
   modelId: string;
@@ -280,10 +316,14 @@ export function resolveModelWithRegistry(params: {
       providerConfig,
     },
   });
-  const preferredResolvedModel =
-    explicitModel?.kind === "resolved"
-      ? preferResolvedModel(explicitModel.model, pluginDynamicModel)
-      : pluginDynamicModel;
+  const preferredResolvedModel = resolvePreferredResolvedModel({
+    provider,
+    modelId,
+    explicitModel,
+    pluginDynamicModel,
+    cfg,
+    agentDir,
+  });
   if (preferredResolvedModel) {
     return preferredResolvedModel;
   }
@@ -405,17 +445,36 @@ export async function resolveModelAsync(
         },
       });
     }
-  }
-  const model =
-    explicitModel?.kind === "resolved"
-      ? explicitModel.model
-      : resolveModelWithRegistry({
+  } else if (
+    explicitModel.kind === "resolved" &&
+    shouldPreferDynamicModelOverride({ provider, modelId })
+  ) {
+    const providerPlugin = resolveProviderRuntimePlugin({
+      provider,
+      config: cfg,
+    });
+    if (providerPlugin?.prepareDynamicModel) {
+      await prepareProviderDynamicModel({
+        provider,
+        config: cfg,
+        context: {
+          config: cfg,
+          agentDir: resolvedAgentDir,
           provider,
           modelId,
           modelRegistry,
-          cfg,
-          agentDir: resolvedAgentDir,
-        });
+          providerConfig: resolveConfiguredProviderConfig(cfg, provider),
+        },
+      });
+    }
+  }
+  const model = resolveModelWithRegistry({
+    provider,
+    modelId,
+    modelRegistry,
+    cfg,
+    agentDir: resolvedAgentDir,
+  });
   if (model) {
     return { model, authStorage, modelRegistry };
   }

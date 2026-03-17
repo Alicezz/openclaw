@@ -700,6 +700,39 @@ describe("resolveModel", () => {
     });
   });
 
+  it("prefers the codex gpt-5.4 forward-compat model on async resolve when discovery is stale", async () => {
+    vi.mocked(discoverModels).mockReturnValue({
+      find: vi.fn((provider: string, modelId: string) => {
+        if (provider !== "openai-codex") {
+          return null;
+        }
+        if (modelId === "gpt-5.4") {
+          return {
+            ...buildOpenAICodexForwardCompatExpectation("gpt-5.4"),
+            contextWindow: 272000,
+            maxTokens: 128000,
+          };
+        }
+        if (modelId === "gpt-5.3-codex") {
+          return {
+            ...buildOpenAICodexForwardCompatExpectation("gpt-5.3-codex"),
+            name: "GPT-5.3 Codex",
+          };
+        }
+        return null;
+      }),
+    } as unknown as ReturnType<typeof discoverModels>);
+
+    const result = await resolveModelAsync("openai-codex", "gpt-5.4", "/tmp/agent");
+
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      ...buildOpenAICodexForwardCompatExpectation("gpt-5.4"),
+      contextWindow: 1_050_000,
+      maxTokens: 128_000,
+    });
+  });
+
   it("builds an openai-codex fallback for gpt-5.3-codex-spark", () => {
     mockOpenAICodexTemplateModel();
 
