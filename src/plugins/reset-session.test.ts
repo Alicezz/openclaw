@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginRecord } from "./registry.js";
 import type { PluginRuntime } from "./runtime/types.js";
@@ -7,6 +7,38 @@ import type {
   PluginRegistrationMode,
   PluginResetSessionResult,
 } from "./types.js";
+
+const ensureUndiciMockCleanup = (() => {
+  let patched = false;
+  return () => {
+    if (patched) {
+      return;
+    }
+    patched = true;
+
+    const registerCleanup = () => {
+      afterAll(() => {
+        vi.doUnmock("undici");
+        vi.resetModules();
+      });
+    };
+
+    const wrapMock =
+      (original: (...args: unknown[]) => unknown) =>
+      (specifier: unknown, ...rest: unknown[]) => {
+        if (specifier === "undici") {
+          registerCleanup();
+        }
+        return original(specifier, ...rest);
+      };
+
+    // Bind to preserve the original `vi` context before wrapping.
+    const originalMock = vi.mock.bind(vi);
+    const originalDoMock = vi.doMock.bind(vi);
+    vi.mock = wrapMock(originalMock) as typeof vi.mock;
+    vi.doMock = wrapMock(originalDoMock) as typeof vi.doMock;
+  };
+})();
 
 const mockPluginSideEffects = () => {
   vi.doMock("@mariozechner/pi-ai/oauth", () => ({
@@ -66,6 +98,7 @@ function createRecord(): PluginRecord {
 }
 
 async function createApiHarness(options?: RegistryImportOptions) {
+  ensureUndiciMockCleanup();
   vi.resetModules();
   mockPluginSideEffects();
 
