@@ -553,7 +553,7 @@ describe("compactEmbeddedPiSessionDirect hooks", () => {
       expect.objectContaining({ sessionKey: "session-1" }),
     );
     expect(hookRunner.runAfterCompaction).toHaveBeenCalledWith(
-      expect.any(Object),
+      expect.objectContaining({ sessionFile: "/tmp/session.jsonl" }),
       expect.objectContaining({ sessionKey: "session-1" }),
     );
   });
