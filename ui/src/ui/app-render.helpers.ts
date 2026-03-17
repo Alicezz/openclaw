@@ -10,6 +10,7 @@ import {
   buildChatModelOption,
   createChatModelOverride,
   formatChatModelDisplay,
+  getDeduplicatedProviders,
   normalizeChatModelOverrideValue,
   resolveServerChatModelValue,
 } from "./chat-model-ref.ts";
@@ -554,31 +555,42 @@ function buildChatModelOptions(
   currentOverride: string,
   defaultModel: string,
 ): Array<{ value: string; label: string }> {
-  const seen = new Set<string>();
+  const seenModelIds = new Set<string>();
   const options: Array<{ value: string; label: string }> = [];
-  const addOption = (value: string, label?: string) => {
+
+  // Process catalog entries, deduplicating only when a model appears under
+  // both local proxy (ollama, vllm) and real cloud providers.
+  // When multiple real providers offer the same model (e.g., openai + openrouter),
+  // keep all variants so users can choose their preferred provider.
+  for (const entry of catalog) {
+    const modelId = entry.id.trim().toLowerCase();
+    if (seenModelIds.has(modelId)) {
+      continue;
+    }
+    seenModelIds.add(modelId);
+
+    const deduped = getDeduplicatedProviders(catalog, entry.id);
+    for (const e of deduped) {
+      const option = buildChatModelOption(e);
+      options.push({ value: option.value, label: option.label });
+    }
+  }
+
+  // Helper to add options for override/default without dedup conflicts
+  const addUniqueOption = (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed) {
-      return;
-    }
+    if (!trimmed) return;
     const key = trimmed.toLowerCase();
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    options.push({ value: trimmed, label: label ?? trimmed });
+    // Check if we already have this exact value
+    if (options.some((o) => o.value.toLowerCase() === key)) return;
+    options.push({ value: trimmed, label: trimmed });
   };
 
-  for (const entry of catalog) {
-    const option = buildChatModelOption(entry);
-    addOption(option.value, option.label);
-  }
-
   if (currentOverride) {
-    addOption(currentOverride);
+    addUniqueOption(currentOverride);
   }
   if (defaultModel) {
-    addOption(defaultModel);
+    addUniqueOption(defaultModel);
   }
   return options;
 }

@@ -91,3 +91,39 @@ export function buildChatModelOption(entry: ModelCatalogEntry): { value: string;
     label: provider ? `${entry.id} · ${provider}` : entry.id,
   };
 }
+
+/**
+ * Local proxy providers that should be deprioritized when the same model ID
+ * appears under multiple providers. A real provider (anthropic, openai, etc.)
+ * is always preferred over a local proxy (ollama, vllm, sglang).
+ */
+const LOCAL_PROXY_PROVIDERS = new Set(["ollama", "vllm", "sglang", "local"]);
+
+function isLocalProxy(provider: string): boolean {
+  return LOCAL_PROXY_PROVIDERS.has(provider.trim().toLowerCase());
+}
+
+/**
+ * For a given model ID, return entries that should be deduplicated.
+ * Only deduplicates when there's a mix of local proxies and real providers
+ * (keep real, drop proxies). When all providers are real, returns all of them.
+ */
+export function getDeduplicatedProviders(
+  entries: ModelCatalogEntry[],
+  modelId: string,
+): ModelCatalogEntry[] {
+  const normalizedId = modelId.trim().toLowerCase();
+  const matches = entries.filter(
+    (e) => e.id.trim().toLowerCase() === normalizedId,
+  );
+  if (matches.length <= 1) return matches;
+
+  const nonProxy = matches.filter((e) => !isLocalProxy(e.provider ?? ""));
+  const proxies = matches.filter((e) => isLocalProxy(e.provider ?? ""));
+
+  // If there's at least one real provider, drop all proxies
+  if (nonProxy.length >= 1) return nonProxy;
+
+  // All are proxies — keep them all (edge case, but let user choose)
+  return matches;
+}
