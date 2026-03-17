@@ -9,8 +9,10 @@ import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js
 import {
   ensureAuthProfileStore,
   listProfilesForProvider,
+  resolveAuthProfileEligibility,
   resolveAuthProfileOrder,
 } from "./auth-profiles.js";
+import { findNormalizedProviderValue } from "./model-selection.js";
 import { discoverBedrockModels } from "./bedrock-discovery.js";
 import {
   buildCloudflareAiGatewayModelDefinition,
@@ -931,23 +933,76 @@ export async function resolveImplicitCopilotProvider(params: {
     return null;
   }
 
+  const isEligibleProfileId = (profileId: string): boolean =>
+    resolveAuthProfileEligibility({
+      cfg: params.config,
+      store: authStore,
+      provider: "github-copilot",
+      profileId,
+    }).eligible;
+
+  const resolveCopilotTokenFromProfileId = (profileId: string): string => {
+    const profile = authStore.profiles[profileId];
+    if (!profile || profile.type !== "token") {
+      return "";
+    }
+    const inlineToken = profile.token?.trim() ?? "";
+    if (inlineToken) {
+      return inlineToken;
+    }
+    const tokenRef = coerceSecretRef(profile.tokenRef);
+    if (tokenRef?.source === "env" && tokenRef.id.trim()) {
+      return (env[tokenRef.id] ?? process.env[tokenRef.id] ?? "").trim();
+    }
+    return "";
+  };
+
   let selectedGithubToken = githubToken;
   if (!selectedGithubToken && hasProfile) {
-    // Respect auth.order when picking a discovery profile, but keep the
-    // previous first-stored-profile fallback when no explicit order exists.
+    // Respect auth.order when picking a discovery profile, but continue to
+    // other eligible candidates if the preferred token cannot be resolved.
     const orderedProfileIds = resolveAuthProfileOrder({
       cfg: params.config,
       store: authStore,
       provider: "github-copilot",
     });
-    const profileId = orderedProfileIds[0] ?? profileIds[0];
-    const profile = profileId ? authStore.profiles[profileId] : undefined;
-    if (profile && profile.type === "token") {
-      selectedGithubToken = profile.token?.trim() ?? "";
-      if (!selectedGithubToken) {
-        const tokenRef = coerceSecretRef(profile.tokenRef);
-        if (tokenRef?.source === "env" && tokenRef.id.trim()) {
-          selectedGithubToken = (env[tokenRef.id] ?? process.env[tokenRef.id] ?? "").trim();
+    const configuredOrder =
+      orderedProfileIds.length === 0
+        ? (findNormalizedProviderValue(params.config?.auth?.order, "github-copilot") ?? []).filter(
+            isEligibleProfileId,
+          )
+        : [];
+    const orderedCandidates =
+      orderedProfileIds.length > 0
+        ? orderedProfileIds
+        : configuredOrder.length > 0
+          ? configuredOrder
+          : profileIds;
+    const orderedCandidatesAlreadyEligible = orderedCandidates === configuredOrder;
+    const seenProfileIds = new Set<string>();
+
+    for (const profileId of orderedCandidates) {
+      if (seenProfileIds.has(profileId)) {
+        continue;
+      }
+      seenProfileIds.add(profileId);
+      if (!orderedCandidatesAlreadyEligible && !isEligibleProfileId(profileId)) {
+        continue;
+      }
+      selectedGithubToken = resolveCopilotTokenFromProfileId(profileId);
+      if (selectedGithubToken) {
+        break;
+      }
+    }
+
+    if (!selectedGithubToken && orderedProfileIds.length === 0 && configuredOrder.length > 0) {
+      for (const profileId of profileIds) {
+        if (seenProfileIds.has(profileId) || !isEligibleProfileId(profileId)) {
+          continue;
+        }
+        selectedGithubToken = resolveCopilotTokenFromProfileId(profileId);
+        if (selectedGithubToken) {
+          break;
         }
       }
     }
