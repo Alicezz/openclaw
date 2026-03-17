@@ -10,6 +10,7 @@ import {
   capArrayByJsonBytes,
   classifySessionKey,
   deriveSessionTitle,
+  getSessionDefaults,
   listAgentsForGateway,
   listSessionsFromStore,
   loadCombinedSessionStoreForGateway,
@@ -871,4 +872,25 @@ describe("loadCombinedSessionStoreForGateway includes disk-only agents (#32804)"
       expect(store["agent:codex:acp-task"]).toBeDefined();
     });
   });
+});
+
+test("getSessionDefaults uses per-agent model override when agentId is provided", () => {
+  const cfg: OpenClawConfig = {
+    agents: {
+      defaults: {
+        model: { primary: "anthropic/claude-sonnet-4-6" },
+      },
+      list: [
+        {
+          id: "main",
+          model: { primary: "anthropic/claude-opus-4-6" },
+        },
+      ],
+    },
+  };
+  const globalDefaults = getSessionDefaults(cfg);
+  expect(globalDefaults.model).toBe("claude-sonnet-4-6");
+
+  const agentDefaults = getSessionDefaults(cfg, "main");
+  expect(agentDefaults.model).toBe("claude-opus-4-6");
 });
