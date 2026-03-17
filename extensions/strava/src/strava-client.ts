@@ -97,9 +97,9 @@ export async function getAthleteStats(
 /** Convert m/s to pace string like "5:30 /km". */
 export function formatPace(metersPerSecond: number): string {
   if (metersPerSecond <= 0) return "N/A";
-  const secPerKm = 1000 / metersPerSecond;
-  const min = Math.floor(secPerKm / 60);
-  const sec = Math.round(secPerKm % 60);
+  const totalSec = Math.round(1000 / metersPerSecond);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
   return `${min}:${String(sec).padStart(2, "0")} /km`;
 }
 
