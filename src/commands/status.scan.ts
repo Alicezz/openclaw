@@ -18,6 +18,7 @@ import {
   pickGatewaySelfPresence,
   resolveGatewayProbeSnapshot,
   resolveMemoryPluginStatus,
+  resolveStatusTailscaleDns,
   resolveSharedMemoryStatusSnapshot,
   type GatewayProbeSnapshot,
   type MemoryPluginStatus,
@@ -151,16 +152,12 @@ async function scanStatusJsonFast(opts: {
   const agentStatusPromise = getAgentLocalStatuses(cfg);
   const summaryPromise = getStatusSummary({ config: cfg, sourceConfig: loadedRaw });
 
-  const tailscaleDnsPromise =
-    tailscaleMode === "off"
-      ? Promise.resolve<string | null>(null)
-      : loadStatusScanDepsRuntimeModule()
-          .then(({ getTailnetHostname }) =>
-            getTailnetHostname((cmd, args) =>
-              runExec(cmd, args, { timeoutMs: 1200, maxBuffer: 200_000 }),
-            ),
-          )
-          .catch(() => null);
+  const tailscaleDnsPromise = resolveStatusTailscaleDns(tailscaleMode, async () => {
+    const { getTailnetHostname } = await loadStatusScanDepsRuntimeModule();
+    return await getTailnetHostname((cmd, args) =>
+      runExec(cmd, args, { timeoutMs: 1200, maxBuffer: 200_000 }),
+    );
+  });
 
   const gatewayProbePromise = resolveGatewayProbeSnapshot({ cfg, opts });
 
@@ -248,16 +245,12 @@ export async function scanStatus(
         });
       const osSummary = resolveOsSummary();
       const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
-      const tailscaleDnsPromise =
-        tailscaleMode === "off"
-          ? Promise.resolve<string | null>(null)
-          : loadStatusScanDepsRuntimeModule()
-              .then(({ getTailnetHostname }) =>
-                getTailnetHostname((cmd, args) =>
-                  runExec(cmd, args, { timeoutMs: 1200, maxBuffer: 200_000 }),
-                ),
-              )
-              .catch(() => null);
+      const tailscaleDnsPromise = resolveStatusTailscaleDns(tailscaleMode, async () => {
+        const { getTailnetHostname } = await loadStatusScanDepsRuntimeModule();
+        return await getTailnetHostname((cmd, args) =>
+          runExec(cmd, args, { timeoutMs: 1200, maxBuffer: 200_000 }),
+        );
+      });
       const updateTimeoutMs = opts.all ? 6500 : 2500;
       const updatePromise = deferResult(
         getUpdateCheckResult({

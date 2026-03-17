@@ -27,6 +27,7 @@ import { normalizeUpdateChannel, resolveUpdateChannelDisplay } from "../infra/up
 import { checkUpdateStatus, formatGitInstallLabel } from "../infra/update-check.js";
 import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { withTimeout } from "../utils/with-timeout.js";
 import { VERSION } from "../version.js";
 import { resolveControlUiLinks } from "./onboard-helpers.js";
 import { getAgentLocalStatuses } from "./status-all/agents.js";
@@ -34,6 +35,7 @@ import { buildChannelsTable } from "./status-all/channels.js";
 import { formatDurationPrecise, formatGatewayAuthUsed } from "./status-all/format.js";
 import { pickGatewaySelfPresence } from "./status-all/gateway.js";
 import { buildStatusAllReportLines } from "./status-all/report-lines.js";
+import { STATUS_TAILSCALE_TIMEOUT_MS } from "./status.scan.shared.js";
 import { readServiceStatusSummary } from "./status.service-summary.js";
 import { formatUpdateOneLiner } from "./status.update.js";
 
@@ -59,9 +61,12 @@ export async function statusAllCommand(
     const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
     const tailscale = await (async () => {
       try {
-        const parsed = await readTailscaleStatusJson(runExec, {
-          timeoutMs: 1200,
-        });
+        const parsed = await withTimeout(
+          readTailscaleStatusJson(runExec, {
+            timeoutMs: 1200,
+          }),
+          STATUS_TAILSCALE_TIMEOUT_MS,
+        );
         const backendState = typeof parsed.BackendState === "string" ? parsed.BackendState : null;
         const self =
           typeof parsed.Self === "object" && parsed.Self !== null
