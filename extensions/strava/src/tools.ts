@@ -104,16 +104,20 @@ function createActivitiesTool(deps: ToolDeps) {
       const before = params.before as string | undefined;
       const sportType = params.sportType as string | undefined;
 
+      // When filtering by sport type, fetch extra pages to compensate for
+      // mixed-sport results being filtered out client-side.
+      const fetchSize = sportType ? Math.min(count * 3, 200) : count;
+
       let activities = await client.getActivities(token, {
-        perPage: count,
+        perPage: fetchSize,
         after,
         before,
       });
 
       if (sportType) {
-        activities = activities.filter(
-          (a) => a.sport_type.toLowerCase() === sportType.toLowerCase(),
-        );
+        activities = activities
+          .filter((a) => a.sport_type.toLowerCase() === sportType.toLowerCase())
+          .slice(0, count);
       }
 
       const formatted = activities.map((a) => ({

@@ -62,8 +62,16 @@ export async function getActivities(
   const params: Record<string, string> = {};
   if (opts.perPage) params.per_page = String(opts.perPage);
   if (opts.page) params.page = String(opts.page);
-  if (opts.after) params.after = String(Math.floor(new Date(opts.after).getTime() / 1000));
-  if (opts.before) params.before = String(Math.floor(new Date(opts.before).getTime() / 1000));
+  if (opts.after) {
+    const ts = new Date(opts.after).getTime();
+    if (Number.isNaN(ts)) throw new Error(`Invalid "after" date: ${opts.after}`);
+    params.after = String(Math.floor(ts / 1000));
+  }
+  if (opts.before) {
+    const ts = new Date(opts.before).getTime();
+    if (Number.isNaN(ts)) throw new Error(`Invalid "before" date: ${opts.before}`);
+    params.before = String(Math.floor(ts / 1000));
+  }
 
   return stravaFetch<StravaActivity[]>(token, "/athlete/activities", params);
 }

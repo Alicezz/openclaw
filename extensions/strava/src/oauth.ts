@@ -106,7 +106,7 @@ export class TokenStore {
 
   save(tokens: StravaTokens): void {
     fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(this.filePath(), JSON.stringify(tokens, null, 2));
+    fs.writeFileSync(this.filePath(), JSON.stringify(tokens, null, 2), { mode: 0o600 });
   }
 
   load(): StravaTokens | null {
