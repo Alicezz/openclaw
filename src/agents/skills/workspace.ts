@@ -705,6 +705,7 @@ export function resolveSkillsPromptForRun(params: {
     const prompt = buildWorkspaceSkillsPrompt(params.workspaceDir, {
       entries: params.entries,
       config: params.config,
+      skillFilter: params.skillsSnapshot?.skillFilter,
     });
     return prompt.trim() ? prompt : "";
   }
