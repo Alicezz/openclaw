@@ -719,6 +719,25 @@ async function handlePluginAction(ctx: ResolvedActionContext): Promise<MessageAc
   };
 }
 
+function resolvePluginDefaultAccountIdForAction(params: {
+  action: ChannelMessageActionName;
+  channel: ChannelId;
+  cfg: OpenClawConfig;
+}): string | undefined {
+  // Keep generic WhatsApp send/poll paths aligned with the channel's own
+  // default-account behavior without changing omitted-account semantics for
+  // other channels or non-send actions.
+  if (params.channel !== "whatsapp") {
+    return undefined;
+  }
+  if (params.action !== "send" && params.action !== "poll") {
+    return undefined;
+  }
+  return resolveOutboundChannelPlugin({ channel: params.channel, cfg: params.cfg })
+    ?.config.defaultAccountId?.(params.cfg)
+    ?.trim();
+}
+
 export async function runMessageAction(
   input: RunMessageActionParams,
 ): Promise<MessageActionRunResult> {
@@ -751,6 +770,16 @@ export async function runMessageAction(
     const boundAccountIds = byAgent?.get(normalizeAgentId(resolvedAgentId));
     if (boundAccountIds && boundAccountIds.length > 0) {
       accountId = boundAccountIds[0];
+    }
+  }
+  if (!accountId) {
+    const pluginDefaultAccountId = resolvePluginDefaultAccountIdForAction({
+      action,
+      channel,
+      cfg,
+    });
+    if (pluginDefaultAccountId) {
+      accountId = pluginDefaultAccountId;
     }
   }
   if (accountId) {
