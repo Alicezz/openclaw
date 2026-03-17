@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type { ClawdbotConfig, RuntimeEnv, HistoryEntry } from "openclaw/plugin-sdk/feishu";
+import { resolveThreadBindingSpawnPolicy } from "openclaw/plugin-sdk/feishu";
 import { resolveFeishuAccount } from "./accounts.js";
 import { raceWithTimeoutAndAbort } from "./async.js";
 import {
@@ -651,7 +652,15 @@ export async function monitorSingleAccount(params: MonitorSingleAccountParams): 
   try {
     const eventDispatcher = createEventDispatcher(account);
     const chatHistories = new Map<string, HistoryEntry[]>();
-    threadBindingManager = createFeishuThreadBindingManager({ accountId, cfg });
+    const tbPolicy = resolveThreadBindingSpawnPolicy({
+      cfg,
+      channel: "feishu",
+      accountId,
+      kind: "subagent",
+    });
+    if (tbPolicy.enabled) {
+      threadBindingManager = createFeishuThreadBindingManager({ accountId, cfg });
+    }
 
     registerEventHandlers(eventDispatcher, {
       cfg,
