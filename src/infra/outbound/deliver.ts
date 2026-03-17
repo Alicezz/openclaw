@@ -73,6 +73,7 @@ type ChannelHandler = {
     payload: ReplyPayload,
     overrides?: {
       replyToId?: string | null;
+      quoteAuthor?: string | null;
       threadId?: string | number | null;
     },
   ) => Promise<OutboundDeliveryResult>;
@@ -80,6 +81,7 @@ type ChannelHandler = {
     text: string,
     overrides?: {
       replyToId?: string | null;
+      quoteAuthor?: string | null;
       threadId?: string | number | null;
     },
   ) => Promise<OutboundDeliveryResult[]>;
@@ -88,6 +90,7 @@ type ChannelHandler = {
     mediaUrl: string,
     overrides?: {
       replyToId?: string | null;
+      quoteAuthor?: string | null;
       threadId?: string | number | null;
     },
   ) => Promise<OutboundDeliveryResult>;
@@ -95,6 +98,7 @@ type ChannelHandler = {
     text: string,
     overrides?: {
       replyToId?: string | null;
+      quoteAuthor?: string | null;
       threadId?: string | number | null;
     },
   ) => Promise<OutboundDeliveryResult>;
@@ -103,6 +107,7 @@ type ChannelHandler = {
     mediaUrl: string,
     overrides?: {
       replyToId?: string | null;
+      quoteAuthor?: string | null;
       threadId?: string | number | null;
     },
   ) => Promise<OutboundDeliveryResult>;
@@ -114,6 +119,7 @@ type ChannelHandlerParams = {
   to: string;
   accountId?: string;
   replyToId?: string | null;
+  quoteAuthor?: string | null;
   threadId?: string | number | null;
   identity?: OutboundIdentity;
   deps?: OutboundSendDeps;
@@ -154,10 +160,18 @@ function createPluginHandler(
   const chunkerMode = outbound.chunkerMode;
   const resolveCtx = (overrides?: {
     replyToId?: string | null;
+    quoteAuthor?: string | null;
     threadId?: string | number | null;
   }): Omit<ChannelOutboundContext, "text" | "mediaUrl"> => ({
     ...baseCtx,
-    replyToId: overrides?.replyToId ?? baseCtx.replyToId,
+    // Explicit null in overrides means "suppress reply" — convert to undefined
+    // so adapters see no replyToId. Undefined means "no opinion, use base".
+    replyToId:
+      overrides?.replyToId !== undefined ? (overrides.replyToId ?? undefined) : baseCtx.replyToId,
+    quoteAuthor:
+      overrides?.quoteAuthor !== undefined
+        ? (overrides.quoteAuthor ?? undefined)
+        : baseCtx.quoteAuthor,
     threadId: overrides?.threadId ?? baseCtx.threadId,
   });
   return {
@@ -232,6 +246,7 @@ function createChannelOutboundContextBase(
     to: params.to,
     accountId: params.accountId,
     replyToId: params.replyToId,
+    quoteAuthor: params.quoteAuthor,
     threadId: params.threadId,
     identity: params.identity,
     gifPlayback: params.gifPlayback,
@@ -251,6 +266,7 @@ type DeliverOutboundPayloadsCoreParams = {
   accountId?: string;
   payloads: ReplyPayload[];
   replyToId?: string | null;
+  quoteAuthor?: string | null;
   threadId?: string | number | null;
   identity?: OutboundIdentity;
   deps?: OutboundSendDeps;
@@ -491,6 +507,7 @@ export async function deliverOutboundPayloads(
         payloads,
         threadId: params.threadId,
         replyToId: params.replyToId,
+        quoteAuthor: params.quoteAuthor,
         bestEffort: params.bestEffort,
         gifPlayback: params.gifPlayback,
         forceDocument: params.forceDocument,
@@ -557,6 +574,7 @@ async function deliverOutboundPayloadsCore(
     deps,
     accountId,
     replyToId: params.replyToId,
+    quoteAuthor: params.quoteAuthor,
     threadId: params.threadId,
     identity: params.identity,
     gifPlayback: params.gifPlayback,
@@ -576,7 +594,11 @@ async function deliverOutboundPayloadsCore(
 
   const sendTextChunks = async (
     text: string,
-    overrides?: { replyToId?: string | null; threadId?: string | number | null },
+    overrides?: {
+      replyToId?: string | null;
+      quoteAuthor?: string | null;
+      threadId?: string | number | null;
+    },
   ) => {
     throwIfAborted(abortSignal);
     if (!handler.chunker || textLimit === undefined) {
@@ -658,8 +680,16 @@ async function deliverOutboundPayloadsCore(
       payloadSummary = hookResult.payloadSummary;
 
       params.onPayload?.(payloadSummary);
+      // If the payload explicitly sets replyToId (even to null), use it;
+      // otherwise inherit from the top-level params.
+      // null means "explicitly no reply" (suppresses inherited reply).
+      const effectiveReplyTo =
+        effectivePayload.replyToId !== undefined
+          ? effectivePayload.replyToId
+          : (params.replyToId ?? undefined);
       const sendOverrides = {
-        replyToId: effectivePayload.replyToId ?? params.replyToId ?? undefined,
+        replyToId: effectiveReplyTo,
+        quoteAuthor: effectiveReplyTo ? (params.quoteAuthor ?? undefined) : undefined,
         threadId: params.threadId ?? undefined,
         forceDocument: params.forceDocument,
       };
