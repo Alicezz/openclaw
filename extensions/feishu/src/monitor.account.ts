@@ -674,6 +674,9 @@ export async function monitorSingleAccount(params: MonitorSingleAccountParams): 
     } finally {
       unregisterDebouncer();
       threadBindingManager?.stop();
+      threadBindingManager = null;
     }
+  } finally {
+    threadBindingManager?.stop();
   }
 }
