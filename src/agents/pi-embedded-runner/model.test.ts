@@ -1196,6 +1196,46 @@ describe("resolveModel", () => {
     });
   });
 
+  it("preserves configured openai-codex overrides when stale discovery loses to the dynamic gpt-5.4 model", () => {
+    vi.mocked(discoverModels).mockReturnValue({
+      find: vi.fn((provider: string, modelId: string) => {
+        if (provider !== "openai-codex" || modelId !== "gpt-5.4") {
+          return null;
+        }
+        return {
+          ...buildOpenAICodexForwardCompatExpectation("gpt-5.4"),
+          contextWindow: 272000,
+          maxTokens: 64000,
+        };
+      }),
+    } as unknown as ReturnType<typeof discoverModels>);
+
+    const cfg: OpenClawConfig = {
+      models: {
+        providers: {
+          "openai-codex": {
+            baseUrl: "https://custom.example.com",
+            headers: { "X-Custom-Auth": "token-123" },
+            models: [{ id: "gpt-5.4" }],
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    const result = resolveModel("openai-codex", "gpt-5.4", "/tmp/agent", cfg);
+
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      api: "openai-codex-responses",
+      baseUrl: "https://custom.example.com",
+      headers: { "X-Custom-Auth": "token-123" },
+      id: "gpt-5.4",
+      provider: "openai-codex",
+      contextWindow: 1_050_000,
+      maxTokens: 128_000,
+    });
+  });
+
   it("normalizes openai-codex gpt-5.4 overrides away from /v1/responses", () => {
     mockOpenAICodexTemplateModel();
 

@@ -279,21 +279,28 @@ function resolvePreferredResolvedModel(params: {
   modelId: string;
   explicitModel: ReturnType<typeof resolveExplicitModelWithRegistry>;
   pluginDynamicModel: Model<Api> | undefined;
+  providerConfig?: InlineProviderConfig;
   cfg?: OpenClawConfig;
   agentDir?: string;
 }): Model<Api> | undefined {
-  const { provider, modelId, explicitModel, pluginDynamicModel, cfg, agentDir } = params;
+  const { provider, modelId, explicitModel, pluginDynamicModel, providerConfig, cfg, agentDir } =
+    params;
   if (explicitModel?.kind === "suppressed") {
     return undefined;
   }
   if (!pluginDynamicModel) {
     return explicitModel?.kind === "resolved" ? explicitModel.model : undefined;
   }
+  const configuredDynamicModel = applyConfiguredProviderOverrides({
+    discoveredModel: pluginDynamicModel,
+    providerConfig,
+    modelId,
+  });
   if (explicitModel?.kind === "resolved") {
     if (!shouldPreferDynamicModelOverride({ provider, modelId })) {
       return explicitModel.model;
     }
-    const preferredModel = preferResolvedModel(explicitModel.model, pluginDynamicModel);
+    const preferredModel = preferResolvedModel(explicitModel.model, configuredDynamicModel);
     if (preferredModel === explicitModel.model) {
       return explicitModel.model;
     }
@@ -302,7 +309,7 @@ function resolvePreferredResolvedModel(params: {
     provider,
     cfg,
     agentDir,
-    model: pluginDynamicModel,
+    model: configuredDynamicModel,
   });
 }
 
@@ -339,6 +346,7 @@ export function resolveModelWithRegistry(params: {
     modelId,
     explicitModel,
     pluginDynamicModel,
+    providerConfig,
     cfg,
     agentDir,
   });
