@@ -44,6 +44,31 @@ export type TelegramNetworkConfig = {
 export type TelegramInlineButtonsScope = "off" | "dm" | "group" | "all" | "allowlist";
 export type TelegramStreamingMode = "off" | "partial" | "block" | "progress";
 export type TelegramExecApprovalTarget = "dm" | "channel" | "both";
+export type TelegramReactionSemanticAction = "ignore" | "queue" | "wake";
+
+export type TelegramReactionSemanticRule = {
+  /**
+   * Human-readable meaning attached to this reaction.
+   * Example: "completed", "clarification-needed", "execute-approved-plan".
+   */
+  meaning?: string;
+  /**
+   * Optional instruction appended to the reaction system event so the agent can
+   * interpret the mapped reaction consistently.
+   */
+  instruction?: string;
+  /**
+   * What to do when this mapped reaction is received:
+   * - "ignore": log only, do not enqueue a system event
+   * - "queue": enqueue a system event but do not wake the agent immediately
+   * - "wake": enqueue a system event and request an immediate heartbeat wake
+   *
+   * Default: "wake"
+   */
+  action?: TelegramReactionSemanticAction;
+};
+
+export type TelegramReactionSemanticsConfig = Record<string, string | TelegramReactionSemanticRule>;
 
 export type TelegramExecApprovalConfig = {
   /** Enable Telegram exec approvals for this account. Default: false. */
@@ -182,6 +207,12 @@ export type TelegramAccountConfig = {
    * - "extensive": agent can react liberally when appropriate
    */
   reactionLevel?: "off" | "ack" | "minimal" | "extensive";
+  /**
+   * Optional mapping from normalized Telegram reaction keys to semantic rules.
+   * Keys may be raw emoji (shorthand for emoji:<emoji>) or explicit keys such
+   * as emoji:👍 and custom_emoji:<telegram-custom-emoji-id>.
+   */
+  reactionSemantics?: TelegramReactionSemanticsConfig;
   /** Heartbeat visibility settings for this channel. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
   /** Channel health monitor overrides for this channel/account. */

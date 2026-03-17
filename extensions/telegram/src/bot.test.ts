@@ -19,6 +19,7 @@ import {
   getOnHandler,
   listSkillCommandsForAgents,
   onSpy,
+  requestHeartbeatNowSpy,
   replySpy,
   sendMessageSpy,
   setMyCommandsSpy,
@@ -1581,11 +1582,247 @@ describe("createTelegramBot", () => {
 
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
-      "Telegram reaction added: 👍 by Ada (@ada_bot) on msg 42",
+      "Telegram reaction added: 👍 by Ada (@ada_bot) on msg 42 (reaction_key=emoji:👍)",
       expect.objectContaining({
-        contextKey: expect.stringContaining("telegram:reaction:add:1234:42:9"),
+        contextKey: expect.stringContaining("telegram:reaction:add:1234:42:9:emoji:👍"),
       }),
     );
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
+  });
+
+  it("wakes immediately for mapped semantic emoji reactions", async () => {
+    onSpy.mockClear();
+    enqueueSystemEventSpy.mockClear();
+    requestHeartbeatNowSpy.mockClear();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          reactionNotifications: "all",
+          reactionSemantics: {
+            "👍": {
+              meaning: "execute-approved-plan",
+              instruction:
+                "Treat this as operator approval to execute the previously proposed action set if policy allows.",
+            },
+          },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message_reaction") as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+
+    await handler({
+      update: { update_id: 500 },
+      messageReaction: {
+        chat: { id: 1234, type: "private" },
+        message_id: 42,
+        user: { id: 9, first_name: "Ada", username: "ada_bot" },
+        date: 1736380800,
+        old_reaction: [],
+        new_reaction: [{ type: "emoji", emoji: "👍" }],
+      },
+    });
+
+    expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
+      "Telegram reaction trigger: execute-approved-plan by Ada (@ada_bot) on msg 42 (reaction_key=emoji:👍). Treat this as operator approval to execute the previously proposed action set if policy allows.",
+      expect.objectContaining({
+        contextKey: expect.stringContaining("telegram:reaction:add:1234:42:9:emoji:👍"),
+      }),
+    );
+    expect(requestHeartbeatNowSpy).toHaveBeenCalledWith({
+      reason: "wake",
+      sessionKey: expect.stringContaining("agent:main:"),
+    });
+  });
+
+  it("does not wake for mapped semantic reactions dropped by system-event dedupe", async () => {
+    onSpy.mockClear();
+    enqueueSystemEventSpy.mockClear();
+    enqueueSystemEventSpy.mockReturnValue(false);
+    requestHeartbeatNowSpy.mockClear();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          reactionNotifications: "all",
+          reactionSemantics: {
+            "👍": {
+              meaning: "execute-approved-plan",
+              instruction:
+                "Treat this as operator approval to execute the previously proposed action set if policy allows.",
+            },
+          },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message_reaction") as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+
+    await handler({
+      update: { update_id: 501 },
+      messageReaction: {
+        chat: { id: 1234, type: "private" },
+        message_id: 42,
+        user: { id: 9, first_name: "Ada", username: "ada_bot" },
+        date: 1736380800,
+        old_reaction: [],
+        new_reaction: [{ type: "emoji", emoji: "👍" }],
+      },
+    });
+
+    expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
+      "Telegram reaction trigger: execute-approved-plan by Ada (@ada_bot) on msg 42 (reaction_key=emoji:👍). Treat this as operator approval to execute the previously proposed action set if policy allows.",
+      expect.objectContaining({
+        contextKey: expect.stringContaining("telegram:reaction:add:1234:42:9:emoji:👍"),
+      }),
+    );
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
+  });
+
+  it("queues mapped semantic reactions without waking when action is queue", async () => {
+    onSpy.mockClear();
+    enqueueSystemEventSpy.mockClear();
+    requestHeartbeatNowSpy.mockClear();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          reactionNotifications: "all",
+          reactionSemantics: {
+            "emoji:✅": {
+              meaning: "completed",
+              action: "queue",
+            },
+          },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message_reaction") as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+
+    await handler({
+      update: { update_id: 500 },
+      messageReaction: {
+        chat: { id: 1234, type: "private" },
+        message_id: 42,
+        user: { id: 9, first_name: "Ada" },
+        date: 1736380800,
+        old_reaction: [],
+        new_reaction: [{ type: "emoji", emoji: "✅" }],
+      },
+    });
+
+    expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
+      "Telegram reaction trigger: completed by Ada on msg 42 (reaction_key=emoji:✅)",
+      expect.any(Object),
+    );
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
+  });
+
+  it("ignores mapped semantic reactions when action is ignore", async () => {
+    onSpy.mockClear();
+    enqueueSystemEventSpy.mockClear();
+    requestHeartbeatNowSpy.mockClear();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          reactionNotifications: "all",
+          reactionSemantics: {
+            "emoji:👀": {
+              meaning: "watching",
+              action: "ignore",
+            },
+          },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message_reaction") as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+
+    await handler({
+      update: { update_id: 500 },
+      messageReaction: {
+        chat: { id: 1234, type: "private" },
+        message_id: 42,
+        user: { id: 9, first_name: "Ada" },
+        date: 1736380800,
+        old_reaction: [],
+        new_reaction: [{ type: "emoji", emoji: "👀" }],
+      },
+    });
+
+    expect(enqueueSystemEventSpy).not.toHaveBeenCalled();
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
+  });
+
+  it("supports mapped custom emoji reactions", async () => {
+    onSpy.mockClear();
+    enqueueSystemEventSpy.mockClear();
+    requestHeartbeatNowSpy.mockClear();
+
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          reactionNotifications: "all",
+          reactionSemantics: {
+            "custom_emoji:1234567890123456789": {
+              meaning: "execute-approved-plan",
+              instruction:
+                "Treat this as operator approval to execute the previously proposed action set if policy allows.",
+            },
+          },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message_reaction") as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+
+    await handler({
+      update: { update_id: 500 },
+      messageReaction: {
+        chat: { id: 1234, type: "private" },
+        message_id: 42,
+        user: { id: 9, first_name: "Ada", username: "ada_bot" },
+        date: 1736380800,
+        old_reaction: [],
+        new_reaction: [{ type: "custom_emoji", custom_emoji_id: "1234567890123456789" }],
+      },
+    });
+
+    expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
+      "Telegram reaction trigger: execute-approved-plan by Ada (@ada_bot) on msg 42 (reaction_key=custom_emoji:1234567890123456789). Treat this as operator approval to execute the previously proposed action set if policy allows.",
+      expect.objectContaining({
+        contextKey: expect.stringContaining(
+          "telegram:reaction:add:1234:42:9:custom_emoji:1234567890123456789",
+        ),
+      }),
+    );
+    expect(requestHeartbeatNowSpy).toHaveBeenCalledWith({
+      reason: "wake",
+      sessionKey: expect.stringContaining("agent:main:"),
+    });
   });
 
   it.each([
@@ -1769,9 +2006,10 @@ describe("createTelegramBot", () => {
 
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
-      "Telegram reaction added: 🎉 by Ada on msg 99",
+      "Telegram reaction added: 🎉 by Ada on msg 99 (reaction_key=emoji:🎉)",
       expect.any(Object),
     );
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
   });
 
   it("skips reaction in own mode when message is not sent by bot", async () => {
@@ -1930,9 +2168,10 @@ describe("createTelegramBot", () => {
 
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(2);
     expect(enqueueSystemEventSpy.mock.calls.map((call) => call[0])).toEqual([
-      "Telegram reaction added: 🔥 by Ada on msg 42",
-      "Telegram reaction added: 🎉 by Ada on msg 42",
+      "Telegram reaction added: 🔥 by Ada on msg 42 (reaction_key=emoji:🔥)",
+      "Telegram reaction added: 🎉 by Ada on msg 42 (reaction_key=emoji:🎉)",
     ]);
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
   });
 
   it("routes forum group reactions to the general topic (thread id not available on reactions)", async () => {
@@ -1966,12 +2205,13 @@ describe("createTelegramBot", () => {
 
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
-      "Telegram reaction added: 🔥 by Bob (@bob_user) on msg 100",
+      "Telegram reaction added: 🔥 by Bob (@bob_user) on msg 100 (reaction_key=emoji:🔥)",
       expect.objectContaining({
         sessionKey: expect.stringContaining("telegram:group:5678:topic:1"),
-        contextKey: expect.stringContaining("telegram:reaction:add:5678:100:10"),
+        contextKey: expect.stringContaining("telegram:reaction:add:5678:100:10:emoji:🔥"),
       }),
     );
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
   });
 
   it("uses correct session key for forum group reactions in general topic", async () => {
@@ -2004,12 +2244,13 @@ describe("createTelegramBot", () => {
 
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
-      "Telegram reaction added: 👀 by Bob on msg 101",
+      "Telegram reaction added: 👀 by Bob on msg 101 (reaction_key=emoji:👀)",
       expect.objectContaining({
         sessionKey: expect.stringContaining("telegram:group:5678:topic:1"),
-        contextKey: expect.stringContaining("telegram:reaction:add:5678:101:10"),
+        contextKey: expect.stringContaining("telegram:reaction:add:5678:101:10:emoji:👀"),
       }),
     );
+    expect(requestHeartbeatNowSpy).not.toHaveBeenCalled();
   });
 
   it("uses correct session key for regular group reactions without topic", async () => {
@@ -2041,10 +2282,10 @@ describe("createTelegramBot", () => {
 
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEventSpy).toHaveBeenCalledWith(
-      "Telegram reaction added: ❤️ by Charlie on msg 200",
+      "Telegram reaction added: ❤️ by Charlie on msg 200 (reaction_key=emoji:❤️)",
       expect.objectContaining({
         sessionKey: expect.stringContaining("telegram:group:9999"),
-        contextKey: expect.stringContaining("telegram:reaction:add:9999:200:11"),
+        contextKey: expect.stringContaining("telegram:reaction:add:9999:200:11:emoji:❤️"),
       }),
     );
     // Verify session key does NOT contain :topic:

@@ -671,22 +671,46 @@ curl "https://api.telegram.org/bot<bot_token>/getUpdates"
 
     When enabled, OpenClaw enqueues system events like:
 
-    - `Telegram reaction added: 👍 by Alice (@alice) on msg 42`
+    - `Telegram reaction added: 👍 by Alice (@alice) on msg 42 (reaction_key=emoji:👍)`
+    - `Telegram reaction trigger: execute-approved-plan by Alice (@alice) on msg 42 (reaction_key=custom_emoji:1234567890123456789). Treat this as operator approval to execute the previously proposed action set if policy allows.`
 
     Config:
 
     - `channels.telegram.reactionNotifications`: `off | own | all` (default: `own`)
     - `channels.telegram.reactionLevel`: `off | ack | minimal | extensive` (default: `minimal`)
+    - `channels.telegram.reactionSemantics`: optional reaction-key map for first-class reaction meanings and wake behavior
 
     Notes:
 
     - `own` means user reactions to bot-sent messages only (best-effort via sent-message cache).
+    - `reactionSemantics` keys accept raw emoji shorthand (for example `👍` or `emoji:👍`) and explicit custom emoji ids (`custom_emoji:<id>`).
+    - Mapped reactions default to `action: "wake"` so reaction-only inputs can request an immediate heartbeat wake for the routed session. Use `action: "queue"` to enqueue without waking, or `action: "ignore"` to suppress the system event entirely.
     - Reaction events still respect Telegram access controls (`dmPolicy`, `allowFrom`, `groupPolicy`, `groupAllowFrom`); unauthorized senders are dropped.
     - Telegram does not provide thread IDs in reaction updates.
       - non-forum groups route to group chat session
       - forum groups route to the group general-topic session (`:topic:1`), not the exact originating topic
 
     `allowed_updates` for polling/webhook include `message_reaction` automatically.
+
+    Example:
+
+```json5
+{
+  channels: {
+    telegram: {
+      reactionNotifications: "all",
+      reactionSemantics: {
+        "👍": { meaning: "acknowledged", action: "queue" },
+        "emoji:🤔": { meaning: "clarification-needed" },
+        "custom_emoji:1234567890123456789": {
+          meaning: "execute-approved-plan",
+          instruction: "Treat this as operator approval to execute the previously proposed action set if policy allows.",
+        },
+      },
+    },
+  },
+}
+```
 
   </Accordion>
 

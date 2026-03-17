@@ -12,6 +12,10 @@ import {
   normalizeTelegramCommandName,
   resolveTelegramCustomCommands,
 } from "./telegram-custom-commands.js";
+import {
+  findInvalidTelegramReactionSemanticsKeys,
+  findTelegramReactionSemanticsCollisions,
+} from "./telegram-reaction-semantics.js";
 import { ToolPolicySchema } from "./zod-schema.agent-runtime.js";
 import {
   ChannelHealthMonitorSchema,
@@ -53,6 +57,33 @@ const DiscordIdListSchema = z.array(DiscordIdSchema);
 
 const TelegramInlineButtonsScopeSchema = z.enum(["off", "dm", "group", "all", "allowlist"]);
 const TelegramIdListSchema = z.array(z.union([z.string(), z.number()]));
+const TelegramReactionSemanticActionSchema = z.enum(["ignore", "queue", "wake"]);
+const TelegramReactionSemanticRuleSchema = z
+  .object({
+    meaning: z.string().optional(),
+    instruction: z.string().optional(),
+    action: TelegramReactionSemanticActionSchema.optional(),
+  })
+  .strict();
+const TelegramReactionSemanticsSchema = z
+  .record(z.string(), z.union([z.string(), TelegramReactionSemanticRuleSchema]))
+  .superRefine((value, ctx) => {
+    for (const invalid of findInvalidTelegramReactionSemanticsKeys(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [invalid.rawKey],
+        message: `Telegram reaction semantics key "${invalid.rawKey}" is invalid. Use a bare emoji, "emoji:<emoji>", or "custom_emoji:<id>".`,
+      });
+    }
+    for (const collision of findTelegramReactionSemanticsCollisions(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [collision.duplicateRawKey],
+        message: `Telegram reaction semantics key "${collision.duplicateRawKey}" duplicates "${collision.firstRawKey}" after normalization (${collision.normalizedKey}). Use only one form.`,
+      });
+    }
+  })
+  .optional();
 
 const TelegramCapabilitiesSchema = z.union([
   z.array(z.string()),
@@ -274,6 +305,7 @@ export const TelegramAccountSchemaBase = z
       .optional(),
     reactionNotifications: z.enum(["off", "own", "all"]).optional(),
     reactionLevel: z.enum(["off", "ack", "minimal", "extensive"]).optional(),
+    reactionSemantics: TelegramReactionSemanticsSchema,
     heartbeat: ChannelHeartbeatVisibilitySchema,
     healthMonitor: ChannelHealthMonitorSchema,
     linkPreview: z.boolean().optional(),

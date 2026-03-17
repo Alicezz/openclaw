@@ -1493,6 +1493,8 @@ export const FIELD_HELP: Record<string, string> = {
     "Legacy Slack preview mode alias (replace | status_final | append); auto-migrated to channels.slack.streaming.",
   "channels.telegram.customCommands":
     "Additional Telegram bot menu commands (merged with native; conflicts ignored).",
+  "channels.telegram.reactionSemantics":
+    "Map Telegram reaction keys to semantic meanings and handling behavior. Use raw emoji as shorthand for `emoji:<emoji>` and `custom_emoji:<id>` for Telegram custom emoji. Mapped reactions can be ignored, queued as system events, or queued and immediately wake the agent.",
   "messages.suppressToolErrors":
     "When true, suppress ⚠️ tool-error warnings from being shown to the user. The agent already sees errors in context and can retry. Default: false.",
   "messages.ackReaction": "Emoji reaction used to acknowledge inbound messages (empty disables).",
