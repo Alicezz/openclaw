@@ -2468,7 +2468,7 @@ export async function runEmbeddedAttempt(
           }
         }
 
-        if (autoMemoryEnabled && implicitMemoryUserInput) {
+        if (autoMemoryEnabled && !isProbeSession && implicitMemoryUserInput) {
           try {
             const implicitContext = await retrieveImplicitContext(
               implicitMemoryUserInput,
@@ -2908,7 +2908,7 @@ export async function runEmbeddedAttempt(
           });
       }
 
-      if (autoMemoryEnabled) {
+      if (autoMemoryEnabled && !isProbeSession) {
         const writeback = buildImplicitMemoryWriteback({
           userInput: implicitMemoryUserInput,
           assistantTexts,
