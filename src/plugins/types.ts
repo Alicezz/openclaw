@@ -24,6 +24,7 @@ import type { ModelProviderConfig } from "../config/types.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
 import type { InternalHookHandler } from "../hooks/internal-hooks.js";
 import type { HookEntry } from "../hooks/types.js";
+import type { ImageGenerationProvider } from "../image-generation/types.js";
 import type { ProviderUsageSnapshot } from "../infra/provider-usage.types.js";
 import type { MediaUnderstandingProvider } from "../media-understanding/types.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -890,17 +891,13 @@ export type PluginSpeechProviderEntry = SpeechProviderPlugin & {
 };
 
 export type MediaUnderstandingProviderPlugin = MediaUnderstandingProvider;
-export type ImageGenerationProviderPlugin = {
-  id: string;
-  label?: string;
+export type ImageGenerationProviderPlugin = ImageGenerationProvider & {
   description?: string;
-  aliases?: string[];
   envVars?: string[];
   models?: readonly string[];
   docsUrl?: string;
   signupUrl?: string;
   isConfigured?: (ctx: { config: OpenClawConfig }) => boolean;
-  generateImage?: (params: Record<string, unknown>) => Promise<unknown>;
 };
 
 export type OpenClawPluginGatewayMethod = {
