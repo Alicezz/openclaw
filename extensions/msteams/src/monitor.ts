@@ -283,6 +283,7 @@ export async function monitorMSTeamsProvider(
 
   // Create Express server
   const expressApp = express.default();
+  expressApp.use(authorizeJWT(authConfig));
   expressApp.use(express.json({ limit: MSTEAMS_WEBHOOK_MAX_BODY_BYTES }));
   expressApp.use((err: unknown, _req: Request, res: Response, next: (err?: unknown) => void) => {
     if (err && typeof err === "object" && "status" in err && err.status === 413) {
@@ -291,7 +292,6 @@ export async function monitorMSTeamsProvider(
     }
     next(err);
   });
-  expressApp.use(authorizeJWT(authConfig));
 
   // Set up the messages endpoint - use configured path and /api/messages as fallback
   const configuredPath = msteamsCfg.webhook?.path ?? "/api/messages";
