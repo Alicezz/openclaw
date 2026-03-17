@@ -168,7 +168,7 @@ function buildManager(opts?: ConstructorParameters<typeof OpenAIWebSocketManager
     // Use faster backoff in tests to avoid slow timer waits
     backoffDelaysMs: [10, 20, 40, 80, 160],
     socketFactory: (url, options) =>
-      new MockWebSocket(url, options as Record<string, unknown>) as never,
+      new MockWebSocket(url, options as unknown as Record<string, unknown>) as never,
     ...opts,
   });
 }
