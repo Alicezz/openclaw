@@ -47,7 +47,9 @@ import { resolveMemorySearchConfig } from "../memory-search.js";
 import {
   applyLocalNoAuthHeaderOverride,
   getApiKeyForModel,
+  resolveBedrockBearerToken,
   resolveModelAuthMode,
+  shouldInjectBedrockBearerWrapper,
 } from "../model-auth.js";
 import { supportsModelTools } from "../model-tool-support.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
@@ -78,6 +80,7 @@ import {
   type SkillSnapshot,
 } from "../skills.js";
 import { resolveTranscriptPolicy } from "../transcript-policy.js";
+import { createBedrockBearerTokenWrapper } from "./anthropic-stream-wrappers.js";
 import {
   compactWithSafetyTimeout,
   resolveCompactionTimeoutMs,
@@ -798,6 +801,21 @@ export async function compactEmbeddedPiSessionDirect(
         settingsManager,
         resourceLoader,
       });
+      // Inject Bedrock bearer token header for compaction requests.
+      // The main run flow applies this via applyExtraParamsToAgent, but
+      // compaction creates its session directly — without the wrapper,
+      // compaction calls would fail when only bearer token auth is set.
+      if (shouldInjectBedrockBearerWrapper(provider, params.config)) {
+        const bearerToken = resolveBedrockBearerToken();
+        log.debug(
+          `applying Bedrock bearer token auth header for compaction (${provider}/${modelId})`,
+        );
+        session.agent.streamFn = createBedrockBearerTokenWrapper(
+          session.agent.streamFn,
+          bearerToken!,
+        );
+      }
+
       applySystemPromptOverrideToSession(session, systemPromptOverride());
       if (model.api === "ollama") {
         const providerBaseUrl =

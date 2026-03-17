@@ -224,6 +224,36 @@ function resolveEnvSourceLabel(params: {
   return `${prefix}${params.label}`;
 }
 
+/**
+ * Returns the trimmed bearer token value from AWS_BEARER_TOKEN_BEDROCK, or undefined.
+ * Exported for use by the stream-wrapper layer that injects the Authorization header.
+ */
+export function resolveBedrockBearerToken(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return normalizeOptionalSecretInput(env[AWS_BEARER_ENV]);
+}
+
+/**
+ * Returns true when the Bedrock bearer token wrapper should be injected.
+ * Only true when:
+ * 1. Provider normalizes to amazon-bedrock
+ * 2. AWS_BEARER_TOKEN_BEDROCK env var is set
+ * 3. Auth override is either undefined (implicit) or "aws-sdk" — if the user
+ *    explicitly configured api-key/oauth/token, that credential path takes
+ *    precedence and the bearer wrapper must not overwrite it.
+ */
+export function shouldInjectBedrockBearerWrapper(provider: string, cfg?: OpenClawConfig): boolean {
+  if (normalizeProviderId(provider) !== "amazon-bedrock") {
+    return false;
+  }
+  if (!resolveBedrockBearerToken()) {
+    return false;
+  }
+  const authOverride = resolveProviderAuthOverride(cfg, provider);
+  return authOverride === undefined || authOverride === "aws-sdk";
+}
+
 export function resolveAwsSdkEnvVarName(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (env[AWS_BEARER_ENV]?.trim()) {
     return AWS_BEARER_ENV;
@@ -237,19 +267,32 @@ export function resolveAwsSdkEnvVarName(env: NodeJS.ProcessEnv = process.env): s
   return undefined;
 }
 
-function resolveAwsSdkAuthInfo(): { mode: "aws-sdk"; source: string } {
+function resolveAwsSdkAuthInfo(
+  provider: string,
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  mode: "aws-sdk" | "api-key";
+  source: string;
+  apiKey?: string;
+} {
   const applied = new Set(getShellEnvAppliedKeys());
-  if (process.env[AWS_BEARER_ENV]?.trim()) {
-    return {
-      mode: "aws-sdk",
-      source: resolveEnvSourceLabel({
-        applied,
-        envVars: [AWS_BEARER_ENV],
-        label: AWS_BEARER_ENV,
-      }),
-    };
+  // Only check bearer token for Bedrock providers to avoid leaking Bedrock
+  // credentials to unrelated providers that also use aws-sdk auth.
+  if (normalizeProviderId(provider) === "amazon-bedrock") {
+    const bearerToken = resolveBedrockBearerToken(env);
+    if (bearerToken) {
+      return {
+        mode: "api-key",
+        apiKey: bearerToken,
+        source: resolveEnvSourceLabel({
+          applied,
+          envVars: [AWS_BEARER_ENV],
+          label: AWS_BEARER_ENV,
+        }),
+      };
+    }
   }
-  if (process.env[AWS_ACCESS_KEY_ENV]?.trim() && process.env[AWS_SECRET_KEY_ENV]?.trim()) {
+  if (env[AWS_ACCESS_KEY_ENV]?.trim() && env[AWS_SECRET_KEY_ENV]?.trim()) {
     return {
       mode: "aws-sdk",
       source: resolveEnvSourceLabel({
@@ -259,7 +302,7 @@ function resolveAwsSdkAuthInfo(): { mode: "aws-sdk"; source: string } {
       }),
     };
   }
-  if (process.env[AWS_PROFILE_ENV]?.trim()) {
+  if (env[AWS_PROFILE_ENV]?.trim()) {
     return {
       mode: "aws-sdk",
       source: resolveEnvSourceLabel({
@@ -311,7 +354,7 @@ export async function resolveApiKeyForProvider(params: {
 
   const authOverride = resolveProviderAuthOverride(cfg, provider);
   if (authOverride === "aws-sdk") {
-    return resolveAwsSdkAuthInfo();
+    return resolveAwsSdkAuthInfo(provider);
   }
 
   const order = resolveAuthProfileOrder({
@@ -363,7 +406,12 @@ export async function resolveApiKeyForProvider(params: {
 
   const normalized = normalizeProviderId(provider);
   if (authOverride === undefined && normalized === "amazon-bedrock") {
-    return resolveAwsSdkAuthInfo();
+    const awsAuth = resolveAwsSdkAuthInfo(provider);
+    return {
+      apiKey: awsAuth.apiKey,
+      source: awsAuth.source,
+      mode: awsAuth.mode,
+    };
   }
 
   const { buildProviderMissingAuthMessageWithPlugin } = await loadProviderRuntime();
@@ -443,6 +491,11 @@ export function resolveModelAuthMode(
 
   const authOverride = resolveProviderAuthOverride(cfg, resolved);
   if (authOverride === "aws-sdk") {
+    // Bearer token takes precedence only for Bedrock providers so the
+    // reported mode matches what resolveApiKeyForProvider actually returns.
+    if (normalizeProviderId(resolved) === "amazon-bedrock" && resolveBedrockBearerToken()) {
+      return "api-key";
+    }
     return "aws-sdk";
   }
 
@@ -472,7 +525,8 @@ export function resolveModelAuthMode(
   }
 
   if (authOverride === undefined && normalizeProviderId(resolved) === "amazon-bedrock") {
-    return "aws-sdk";
+    // Bearer token takes precedence: report as api-key so UI/status shows the right mode.
+    return resolveBedrockBearerToken() ? "api-key" : "aws-sdk";
   }
 
   const envKey = resolveEnvApiKey(resolved);
