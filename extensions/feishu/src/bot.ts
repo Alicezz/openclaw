@@ -106,6 +106,11 @@ function extractPermissionError(err: unknown): PermissionError | null {
 // Cache display names by sender id (open_id/user_id) to avoid an API call on every message.
 const SENDER_NAME_TTL_MS = 10 * 60 * 1000;
 const senderNameCache = new Map<string, { name: string; expireAt: number }>();
+const GROUP_NAME_TTL_MS = 10 * 60 * 1000;
+const groupNameCache = new Map<string, { name: string; expireAt: number }>();
+const TOPIC_LABEL_TTL_MS = 10 * 60 * 1000;
+const TOPIC_LABEL_MAX_CHARS = 48;
+const topicLabelCache = new Map<string, { label: string; expireAt: number }>();
 
 // Cache permission errors to avoid spamming the user with repeated notifications.
 // Key: appId or "default", Value: timestamp of last notification
@@ -131,37 +136,63 @@ function resolveSenderLookupIdType(senderId: string): "open_id" | "user_id" | "u
 async function resolveFeishuSenderName(params: {
   account: ResolvedFeishuAccount;
   senderId: string;
+  senderUserId?: string;
   log: (...args: any[]) => void;
 }): Promise<SenderNameResult> {
-  const { account, senderId, log } = params;
+  const { account, senderId, senderUserId, log } = params;
   if (!account.configured) return {};
 
-  const normalizedSenderId = senderId.trim();
-  if (!normalizedSenderId) return {};
+  const candidateIds = [senderUserId?.trim(), senderId.trim()].filter(
+    (v): v is string => typeof v === "string" && v.length > 0,
+  );
+  if (candidateIds.length === 0) return {};
 
-  const cached = senderNameCache.get(normalizedSenderId);
   const now = Date.now();
-  if (cached && cached.expireAt > now) return { name: cached.name };
+  for (const candidateId of candidateIds) {
+    const cached = senderNameCache.get(candidateId);
+    if (cached && cached.expireAt > now) return { name: cached.name };
+  }
 
   try {
     const client = createFeishuClient(account);
-    const userIdType = resolveSenderLookupIdType(normalizedSenderId);
 
-    // contact/v3/users/:user_id?user_id_type=<open_id|user_id|union_id>
-    const res: any = await client.contact.user.get({
-      path: { user_id: normalizedSenderId },
-      params: { user_id_type: userIdType },
-    });
+    for (const candidateId of candidateIds) {
+      const userIdType = resolveSenderLookupIdType(candidateId);
 
-    const name: string | undefined =
-      res?.data?.user?.name ||
-      res?.data?.user?.display_name ||
-      res?.data?.user?.nickname ||
-      res?.data?.user?.en_name;
+      // contact/v3/users/:user_id?user_id_type=<open_id|user_id|union_id>
+      const res: any = await client.contact.user.get({
+        path: { user_id: candidateId },
+        params: { user_id_type: userIdType },
+      });
 
-    if (name && typeof name === "string") {
-      senderNameCache.set(normalizedSenderId, { name, expireAt: now + SENDER_NAME_TTL_MS });
-      return { name };
+      if (res?.code != null && res.code !== 0) {
+        const permErr = extractPermissionError(res);
+        if (permErr) {
+          if (shouldSuppressPermissionErrorNotice(permErr)) {
+            log(`feishu: ignoring stale permission scope error: ${permErr.message}`);
+            return {};
+          }
+          log(`feishu: permission error resolving sender name: code=${permErr.code}`);
+          return { permissionError: permErr };
+        }
+        log(
+          `feishu: sender name lookup failed for ${candidateId}: code=${String(res.code)} msg=${String(res?.msg ?? "")}`,
+        );
+        continue;
+      }
+
+      const name: string | undefined =
+        res?.data?.user?.name ||
+        res?.data?.user?.display_name ||
+        res?.data?.user?.nickname ||
+        res?.data?.user?.en_name;
+
+      if (name && typeof name === "string") {
+        for (const idForCache of candidateIds) {
+          senderNameCache.set(idForCache, { name, expireAt: now + SENDER_NAME_TTL_MS });
+        }
+        return { name };
+      }
     }
 
     return {};
@@ -178,9 +209,207 @@ async function resolveFeishuSenderName(params: {
     }
 
     // Best-effort. Don't fail message handling if name lookup fails.
-    log(`feishu: failed to resolve sender name for ${normalizedSenderId}: ${String(err)}`);
+    log(`feishu: failed to resolve sender name for ${candidateIds.join(",")}: ${String(err)}`);
     return {};
   }
+}
+
+async function resolveFeishuGroupName(params: {
+  account: ResolvedFeishuAccount;
+  chatId: string;
+  log: (...args: any[]) => void;
+}): Promise<string | undefined> {
+  const { account, chatId, log } = params;
+  if (!account.configured) return undefined;
+
+  const normalizedChatId = chatId.trim();
+  if (!normalizedChatId) return undefined;
+
+  const cacheKey = `${account.accountId}:${normalizedChatId}`;
+  const cached = groupNameCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expireAt > now) return cached.name;
+
+  try {
+    const client = createFeishuClient(account) as any;
+    const getChat = client?.im?.chat?.get;
+    if (typeof getChat !== "function") {
+      return undefined;
+    }
+
+    const res: any = await getChat({ path: { chat_id: normalizedChatId } });
+    if (res?.code !== 0) {
+      log(
+        `feishu: failed to resolve group name for ${normalizedChatId}: code=${String(res?.code)} msg=${String(res?.msg ?? "")}`,
+      );
+      return undefined;
+    }
+
+    const name =
+      typeof res?.data?.name === "string" && res.data.name.trim().length > 0
+        ? res.data.name.trim()
+        : undefined;
+    if (name) {
+      groupNameCache.set(cacheKey, { name, expireAt: now + GROUP_NAME_TTL_MS });
+      return name;
+    }
+  } catch (err) {
+    log(`feishu: failed to resolve group name for ${normalizedChatId}: ${String(err)}`);
+  }
+
+  return undefined;
+}
+
+async function resolveFeishuDirectNameFromChatMember(params: {
+  account: ResolvedFeishuAccount;
+  chatId: string;
+  senderOpenId: string;
+  log: (...args: any[]) => void;
+}): Promise<string | undefined> {
+  const { account, chatId, senderOpenId, log } = params;
+  if (!account.configured) return undefined;
+
+  const normalizedSenderOpenId = senderOpenId.trim();
+  const normalizedChatId = chatId.trim();
+  if (!normalizedSenderOpenId || !normalizedChatId) return undefined;
+
+  const cached = senderNameCache.get(normalizedSenderOpenId);
+  const now = Date.now();
+  if (cached && cached.expireAt > now) return cached.name;
+
+  try {
+    const client = createFeishuClient(account) as any;
+    const getChatMembers = client?.im?.chatMembers?.get ?? client?.im?.chat?.members?.get;
+    if (typeof getChatMembers !== "function") {
+      return undefined;
+    }
+
+    const res: any = await getChatMembers({
+      path: { chat_id: normalizedChatId },
+      params: {
+        member_id_type: "open_id",
+        page_size: 50,
+      },
+    });
+
+    if (res?.code !== 0) {
+      log(
+        `feishu: failed to resolve direct member name for ${normalizedSenderOpenId} in ${normalizedChatId}: code=${String(
+          res?.code,
+        )} msg=${String(res?.msg ?? "")}`,
+      );
+      return undefined;
+    }
+
+    const item = Array.isArray(res?.data?.items)
+      ? res.data.items.find(
+          (entry: any) =>
+            typeof entry?.member_id === "string" && entry.member_id === normalizedSenderOpenId,
+        )
+      : undefined;
+
+    const name = typeof item?.name === "string" ? item.name.trim() : "";
+    if (name) {
+      senderNameCache.set(normalizedSenderOpenId, {
+        name,
+        expireAt: now + SENDER_NAME_TTL_MS,
+      });
+      return name;
+    }
+  } catch (err) {
+    log(
+      `feishu: failed to resolve direct member name for ${normalizedSenderOpenId} in ${normalizedChatId}: ${String(err)}`,
+    );
+  }
+
+  return undefined;
+}
+
+function buildFeishuGroupDisplayName(params: { chatId: string; groupName?: string }): string {
+  const normalizedChatId = params.chatId.trim();
+  const name = params.groupName?.trim();
+
+  if (!name) return normalizedChatId;
+  if (!normalizedChatId) return name;
+  if (name.includes(normalizedChatId)) return name;
+  return `${name} (${normalizedChatId})`;
+}
+
+function buildFeishuDirectDisplayName(params: {
+  senderOpenId: string;
+  senderName?: string;
+}): string {
+  const senderId = params.senderOpenId.trim();
+  const senderName = params.senderName?.trim();
+
+  if (!senderName) return senderId;
+  if (!senderId) return senderName;
+  if (senderName.includes(senderId)) return senderName;
+  return `${senderName} (${senderId})`;
+}
+
+function truncateFeishuTopicLabel(raw: string): string {
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= TOPIC_LABEL_MAX_CHARS) return normalized;
+  return `${normalized.slice(0, TOPIC_LABEL_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+async function resolveFeishuTopicLabel(params: {
+  cfg: ClawdbotConfig;
+  account: ResolvedFeishuAccount;
+  topicRootId: string;
+  log: (...args: any[]) => void;
+}): Promise<string | undefined> {
+  const { cfg, account, topicRootId, log } = params;
+  const normalizedTopicRootId = topicRootId.trim();
+  if (!normalizedTopicRootId) return undefined;
+
+  const cacheKey = `${account.accountId}:${normalizedTopicRootId}`;
+  const cached = topicLabelCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expireAt > now) {
+    return cached.label;
+  }
+
+  try {
+    const rootMessage = await getMessageFeishu({
+      cfg,
+      messageId: normalizedTopicRootId,
+      accountId: account.accountId,
+    });
+    const label = truncateFeishuTopicLabel(rootMessage?.content ?? "");
+    if (!label) return undefined;
+    topicLabelCache.set(cacheKey, {
+      label,
+      expireAt: now + TOPIC_LABEL_TTL_MS,
+    });
+    return label;
+  } catch (err) {
+    log(`feishu: failed to resolve topic label for ${normalizedTopicRootId}: ${String(err)}`);
+    return undefined;
+  }
+}
+
+function shortFeishuTopicId(raw: string): string {
+  const normalized = raw.trim();
+  if (normalized.length <= 16) return normalized;
+  return `${normalized.slice(0, 8)}…${normalized.slice(-6)}`;
+}
+
+function buildFeishuTopicThreadLabel(params: {
+  groupDisplayName?: string;
+  chatId: string;
+  topicLabel?: string;
+  topicThreadId: string;
+}): string {
+  const groupLabel =
+    params.groupDisplayName?.trim() || buildFeishuGroupDisplayName({ chatId: params.chatId });
+  const topic = params.topicLabel?.trim();
+  if (topic) {
+    return `${groupLabel} › ${topic}`;
+  }
+  return `${groupLabel} › topic:${shortFeishuTopicId(params.topicThreadId)}`;
 }
 
 export type FeishuMessageEvent = {
@@ -965,13 +1194,33 @@ export async function handleFeishuMessage(params: {
     }
   }
 
-  // Resolve sender display name (best-effort) so the agent can attribute messages correctly.
-  // Optimization: skip if disabled to save API quota (Feishu free tier limit).
+  // Resolve sender display name with channel-specific strategy:
+  // - direct chat: members-only lookup for stable peer naming
+  // - group chat: contact user lookup (with user_id/open_id fallback)
   let permissionErrorForAgent: PermissionError | undefined;
-  if (feishuCfg?.resolveSenderNames ?? true) {
+  if (isDirect) {
+    const directName = await resolveFeishuDirectNameFromChatMember({
+      account,
+      chatId: ctx.chatId,
+      senderOpenId: ctx.senderOpenId,
+      log,
+    });
+    if (directName) {
+      ctx = {
+        ...ctx,
+        senderName: buildFeishuDirectDisplayName({
+          senderOpenId: ctx.senderOpenId,
+          senderName: directName,
+        }),
+      };
+    }
+  }
+
+  if (isGroup && (feishuCfg?.resolveSenderNames ?? true)) {
     const senderResult = await resolveFeishuSenderName({
       account,
       senderId: ctx.senderOpenId,
+      senderUserId,
       log,
     });
     if (senderResult.name) ctx = { ...ctx, senderName: senderResult.name };
@@ -989,8 +1238,19 @@ export async function handleFeishuMessage(params: {
     }
   }
 
+  const groupDisplayName = isGroup
+    ? buildFeishuGroupDisplayName({
+        chatId: ctx.chatId,
+        groupName: await resolveFeishuGroupName({
+          account,
+          chatId: ctx.chatId,
+          log,
+        }),
+      })
+    : undefined;
+
   log(
-    `feishu[${account.accountId}]: received message from ${ctx.senderOpenId} in ${ctx.chatId} (${ctx.chatType})`,
+    `feishu[${account.accountId}]: received message from ${ctx.senderOpenId} in ${groupDisplayName ?? ctx.chatId} (${ctx.chatType})`,
   );
 
   // Log mention targets if detected
@@ -1319,7 +1579,7 @@ export async function handleFeishuMessage(params: {
 
     const preview = ctx.content.replace(/\s+/g, " ").slice(0, 160);
     const inboundLabel = isGroup
-      ? `Feishu[${account.accountId}] message in group ${ctx.chatId}`
+      ? `Feishu[${account.accountId}] message in group ${groupDisplayName ?? ctx.chatId}`
       : `Feishu[${account.accountId}] DM from ${ctx.senderOpenId}`;
 
     // Do not enqueue inbound user previews as system events.
@@ -1417,6 +1677,32 @@ export async function handleFeishuMessage(params: {
           }))
         : undefined;
 
+    const topicThreadId = isGroup
+      ? ctx.rootId?.trim() || ctx.threadId?.trim() || undefined
+      : undefined;
+    const isTopicScopedSession =
+      isGroup &&
+      (groupSession?.groupSessionScope === "group_topic" ||
+        groupSession?.groupSessionScope === "group_topic_sender");
+    const topicLabel =
+      isTopicScopedSession && ctx.rootId
+        ? await resolveFeishuTopicLabel({
+            cfg,
+            account,
+            topicRootId: ctx.rootId,
+            log,
+          })
+        : undefined;
+    const topicThreadLabel =
+      isTopicScopedSession && topicThreadId
+        ? buildFeishuTopicThreadLabel({
+            groupDisplayName,
+            chatId: ctx.chatId,
+            topicLabel,
+            topicThreadId,
+          })
+        : undefined;
+
     const threadContextBySessionKey = new Map<
       string,
       {
@@ -1461,10 +1747,7 @@ export async function handleFeishuMessage(params: {
         threadHistoryBody?: string;
         threadLabel?: string;
       } = {
-        threadLabel:
-          (ctx.rootId || ctx.threadId) && isTopicSessionForThread
-            ? `Feishu thread in ${ctx.chatId}`
-            : undefined,
+        threadLabel: topicThreadLabel,
       };
 
       if (!(ctx.rootId || ctx.threadId) || !isTopicSessionForThread) {
@@ -1573,7 +1856,7 @@ export async function handleFeishuMessage(params: {
         SessionKey: agentSessionKey,
         AccountId: agentAccountId,
         ChatType: isGroup ? "group" : "direct",
-        GroupSubject: isGroup ? ctx.chatId : undefined,
+        GroupSubject: isGroup ? groupDisplayName : undefined,
         SenderName: ctx.senderName ?? ctx.senderOpenId,
         SenderId: ctx.senderOpenId,
         Provider: "feishu" as const,
