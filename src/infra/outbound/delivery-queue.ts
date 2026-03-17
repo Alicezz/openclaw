@@ -157,7 +157,7 @@ export async function enqueueDelivery(
   await fs.promises.writeFile(tmp, json, { encoding: "utf-8", mode: 0o600 });
   await fs.promises.rename(tmp, filePath);
   try {
-    addToIndex(
+    await addToIndex(
       {
         id,
         channel: params.channel,
@@ -200,7 +200,7 @@ export async function ackDelivery(id: string, stateDir?: string): Promise<void> 
   // Phase 2: remove the marker file.
   await unlinkBestEffort(deliveredPath);
   try {
-    removeFromIndex(id, stateDir);
+    await removeFromIndex(id, stateDir);
   } catch {
     // Best-effort
   }
@@ -315,7 +315,7 @@ export async function moveToFailed(id: string, stateDir?: string): Promise<void>
   const dest = path.join(failedDir, `${id}.json`);
   await fs.promises.rename(src, dest);
   try {
-    removeFromIndex(id, stateDir);
+    await removeFromIndex(id, stateDir);
   } catch {
     // Best-effort
   }
@@ -434,7 +434,7 @@ export async function recoverPendingDeliveries(opts: {
 }): Promise<RecoverySummary> {
   // Rebuild index from disk on recovery (cold start)
   try {
-    rebuildIndex(opts.stateDir);
+    await rebuildIndex(opts.stateDir);
   } catch {
     // Best-effort — recovery still works without index
   }
