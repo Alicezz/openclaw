@@ -7,6 +7,7 @@ import GOOGLE_MANIFEST from "../../extensions/google/openclaw.plugin.json" with 
 import HUGGINGFACE_MANIFEST from "../../extensions/huggingface/openclaw.plugin.json" with { type: "json" };
 import KILOCODE_MANIFEST from "../../extensions/kilocode/openclaw.plugin.json" with { type: "json" };
 import KIMI_CODING_MANIFEST from "../../extensions/kimi-coding/openclaw.plugin.json" with { type: "json" };
+import MEGANOVA_MANIFEST from "../../extensions/meganova/openclaw.plugin.json" with { type: "json" };
 import MINIMAX_MANIFEST from "../../extensions/minimax/openclaw.plugin.json" with { type: "json" };
 import MISTRAL_MANIFEST from "../../extensions/mistral/openclaw.plugin.json" with { type: "json" };
 import MODELSTUDIO_MANIFEST from "../../extensions/modelstudio/openclaw.plugin.json" with { type: "json" };
@@ -68,6 +69,7 @@ export const BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES = collectBundledProviderAu
   HUGGINGFACE_MANIFEST,
   KILOCODE_MANIFEST,
   KIMI_CODING_MANIFEST,
+  MEGANOVA_MANIFEST,
   MINIMAX_MANIFEST,
   MISTRAL_MANIFEST,
   MODELSTUDIO_MANIFEST,
