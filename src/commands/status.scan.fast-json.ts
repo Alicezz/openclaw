@@ -33,6 +33,13 @@ let memorySearchModulePromise: Promise<typeof import("../agents/memory-search.js
 let statusScanDepsRuntimeModulePromise:
   | Promise<typeof import("./status.scan.deps.runtime.js")>
   | undefined;
+let gatewayProbeModulePromise: Promise<typeof import("../gateway/probe.js")> | undefined;
+let statusSummaryModulePromise: Promise<typeof import("./status.summary.js")> | undefined;
+let agentLocalModulePromise: Promise<typeof import("./status.agent-local.js")> | undefined;
+let updateCheckModulePromise: Promise<typeof import("./status.update.js")> | undefined;
+let gatewayProbeHelpersModulePromise:
+  | Promise<typeof import("./status.gateway-probe.js")>
+  | undefined;
 
 function loadPluginRegistryModule() {
   pluginRegistryModulePromise ??= import("../cli/plugin-registry.js");
@@ -64,6 +71,31 @@ function loadStatusScanDepsRuntimeModule() {
   return statusScanDepsRuntimeModulePromise;
 }
 
+function loadGatewayProbeModule() {
+  gatewayProbeModulePromise ??= import("../gateway/probe.js");
+  return gatewayProbeModulePromise;
+}
+
+function loadStatusSummaryModule() {
+  statusSummaryModulePromise ??= import("./status.summary.js");
+  return statusSummaryModulePromise;
+}
+
+function loadAgentLocalModule() {
+  agentLocalModulePromise ??= import("./status.agent-local.js");
+  return agentLocalModulePromise;
+}
+
+function loadUpdateCheckModule() {
+  updateCheckModulePromise ??= import("./status.update.js");
+  return updateCheckModulePromise;
+}
+
+function loadGatewayProbeHelpersModule() {
+  gatewayProbeHelpersModulePromise ??= import("./status.gateway-probe.js");
+  return gatewayProbeHelpersModulePromise;
+}
+
 function shouldSkipMissingConfigFastPath(): boolean {
   return (
     process.env.VITEST === "true" ||
@@ -78,7 +110,7 @@ function resolveDefaultMemoryStorePath(agentId: string): string {
 
 async function resolveMemoryStatusSnapshot(params: {
   cfg: OpenClawConfig;
-  agentStatus: Awaited<ReturnType<typeof getAgentLocalStatuses>>;
+  agentStatus: { defaultId: string | null };
   memoryPlugin: MemoryPluginStatus;
 }): Promise<MemoryStatusSnapshot | null> {
   const { resolveMemorySearchConfig } = await loadMemorySearchModule();
@@ -137,13 +169,19 @@ export async function scanStatusJsonFast(
   const osSummary = resolveOsSummary();
   const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
   const updateTimeoutMs = opts.all ? 6500 : 2500;
-  const updatePromise = getUpdateCheckResult({
-    timeoutMs: updateTimeoutMs,
-    fetchGit: true,
-    includeRegistry: true,
-  });
-  const agentStatusPromise = getAgentLocalStatuses(cfg);
-  const summaryPromise = getStatusSummary({ config: cfg, sourceConfig: loadedRaw });
+  const updatePromise = loadUpdateCheckModule().then(({ getUpdateCheckResult }) =>
+    getUpdateCheckResult({
+      timeoutMs: updateTimeoutMs,
+      fetchGit: true,
+      includeRegistry: true,
+    }),
+  );
+  const agentStatusPromise = loadAgentLocalModule().then(({ getAgentLocalStatuses }) =>
+    getAgentLocalStatuses(cfg),
+  );
+  const summaryPromise = loadStatusSummaryModule().then(({ getStatusSummary }) =>
+    getStatusSummary({ config: cfg, sourceConfig: loadedRaw }),
+  );
 
   const tailscaleDnsPromise =
     tailscaleMode === "off"
@@ -180,6 +218,7 @@ export async function scanStatusJsonFast(
     gatewayProbe,
   } = gatewaySnapshot;
   const gatewayReachable = gatewayProbe?.ok === true;
+  const { pickGatewaySelfPresence } = await loadGatewayProbeHelpersModule();
   const gatewaySelf = gatewayProbe?.presence
     ? pickGatewaySelfPresence(gatewayProbe.presence)
     : null;
