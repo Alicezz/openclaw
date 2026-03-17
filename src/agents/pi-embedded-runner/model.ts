@@ -21,6 +21,15 @@ import {
 import { discoverAuthStorage, discoverModels } from "../pi-model-discovery.js";
 import { normalizeResolvedProviderModel } from "./model.provider-normalization.js";
 
+/**
+ * Compare model IDs treating dots and dashes as equivalent.
+ * Anthropic uses dashes (`claude-haiku-4-5`) but copilot-proxy and
+ * other providers may use dots (`claude-haiku-4.5`).
+ */
+function modelIdMatchesDotDash(a: string, b: string): boolean {
+  return a === b || a.replace(/\./g, "-") === b.replace(/\./g, "-");
+}
+
 type InlineModelEntry = ModelDefinitionConfig & {
   provider: string;
   baseUrl?: string;
@@ -106,7 +115,9 @@ function applyConfiguredProviderOverrides(params: {
       headers: sanitizeModelHeaders(discoveredModel.headers, { stripSecretRefMarkers: true }),
     };
   }
-  const configuredModel = providerConfig.models?.find((candidate) => candidate.id === modelId);
+  const configuredModel =
+    providerConfig.models?.find((candidate) => candidate.id === modelId) ??
+    providerConfig.models?.find((candidate) => modelIdMatchesDotDash(candidate.id, modelId));
   const discoveredHeaders = sanitizeModelHeaders(discoveredModel.headers, {
     stripSecretRefMarkers: true,
   });
@@ -214,9 +225,14 @@ function resolveExplicitModelWithRegistry(params: {
   const providers = cfg?.models?.providers ?? {};
   const inlineModels = buildInlineProviderModels(providers);
   const normalizedProvider = normalizeProviderId(provider);
-  const inlineMatch = inlineModels.find(
-    (entry) => normalizeProviderId(entry.provider) === normalizedProvider && entry.id === modelId,
+  // Prefer exact ID match first, then fall back to dot/dash-insensitive match.
+  // This ensures providers with genuinely distinct model IDs aren't mismatched.
+  const providerInline = inlineModels.filter(
+    (entry) => normalizeProviderId(entry.provider) === normalizedProvider,
   );
+  const inlineMatch =
+    providerInline.find((entry) => entry.id === modelId) ??
+    providerInline.find((entry) => modelIdMatchesDotDash(entry.id, modelId));
   if (inlineMatch?.api) {
     return {
       kind: "resolved",
