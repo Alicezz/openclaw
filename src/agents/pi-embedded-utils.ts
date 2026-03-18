@@ -203,17 +203,21 @@ export function stripDowngradedToolCallText(text: string): string {
  * This is a safety net for cases where the model outputs <think> tags
  * that slip through other filtering mechanisms.
  */
-export function stripThinkingTagsFromText(text: string): string {
-  return stripReasoningTagsFromText(text, { mode: "strict", trim: "both" });
+export function stripThinkingTagsFromText(text: string, options?: { finalText?: boolean }): string {
+  return stripReasoningTagsFromText(text, {
+    mode: "strict",
+    trim: "both",
+    finalText: options?.finalText,
+  });
 }
 
 export function extractAssistantText(msg: AssistantMessage): string {
   const extracted =
     extractTextFromChatContent(msg.content, {
       sanitizeText: (text) =>
-        stripThinkingTagsFromText(
-          stripDowngradedToolCallText(stripMinimaxToolCallXml(text)),
-        ).trim(),
+        stripThinkingTagsFromText(stripDowngradedToolCallText(stripMinimaxToolCallXml(text)), {
+          finalText: true,
+        }).trim(),
       joinWith: "\n",
       normalizeText: (text) => text.trim(),
     }) ?? "";
