@@ -1,3 +1,4 @@
+import { resolveLineAccount } from "openclaw/plugin-sdk/line-runtime";
 import {
   DEFAULT_ACCOUNT_ID,
   formatDocsLink,
@@ -7,7 +8,6 @@ import {
   type ChannelSetupDmPolicy,
   type ChannelSetupWizard,
 } from "openclaw/plugin-sdk/setup";
-import { resolveLineAccount } from "../../../src/line/accounts.js";
 import {
   isLineConfigured,
   listLineAccountIds,
