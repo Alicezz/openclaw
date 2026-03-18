@@ -12,6 +12,7 @@ import {
   resolveOllamaCompatNumCtxEnabled,
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
+  shouldUseImplicitMemoryForRun,
   shouldInjectOllamaCompatNumCtx,
   decodeHtmlEntitiesInObject,
   wrapOllamaCompatNumCtx,
@@ -156,6 +157,15 @@ describe("composeSystemPromptWithHookContext", () => {
     ).toBe("prepend\n\nbase system\n\nappend");
   });
 
+  it("appends implicit memory context after the base system prompt", () => {
+    expect(
+      composeSystemPromptWithHookContext({
+        baseSystemPrompt: "base system",
+        appendSystemContext: "Implicit user context: retrieved context",
+      }),
+    ).toBe("base system\n\nImplicit user context: retrieved context");
+  });
+
   it("avoids blank separators when base system prompt is empty", () => {
     expect(
       composeSystemPromptWithHookContext({
@@ -216,6 +226,37 @@ describe("resolvePromptModeForSession", () => {
     expect(resolvePromptModeForSession(undefined)).toBe("full");
     expect(resolvePromptModeForSession("agent:main")).toBe("full");
     expect(resolvePromptModeForSession("agent:main:thread:abc")).toBe("full");
+  });
+});
+
+describe("shouldUseImplicitMemoryForRun", () => {
+  it("enables implicit memory only for explicit user triggers", () => {
+    expect(
+      shouldUseImplicitMemoryForRun({
+        enabled: true,
+        isProbeSession: false,
+        trigger: "user",
+      }),
+    ).toBe(true);
+  });
+
+  it("disables implicit memory when the trigger is missing", () => {
+    expect(
+      shouldUseImplicitMemoryForRun({
+        enabled: true,
+        isProbeSession: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("disables implicit memory for probe sessions even when the trigger is user", () => {
+    expect(
+      shouldUseImplicitMemoryForRun({
+        enabled: true,
+        isProbeSession: true,
+        trigger: "user",
+      }),
+    ).toBe(false);
   });
 });
 

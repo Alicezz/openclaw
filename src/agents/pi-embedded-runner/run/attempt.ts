@@ -113,6 +113,23 @@ import {
 import { getDmHistoryLimitFromSessionKey, limitHistoryTurns } from "../history.js";
 import { log } from "../logger.js";
 import { buildEmbeddedMessageActionDiscoveryInput } from "../message-action-discovery-input.js";
+
+type ImplicitMemoryRuntimeModule = typeof import("../../../memory/implicit-memory.runtime.js");
+
+let implicitMemoryRuntimePromise: Promise<ImplicitMemoryRuntimeModule> | null = null;
+
+async function getImplicitMemoryRuntime(): Promise<ImplicitMemoryRuntimeModule> {
+  implicitMemoryRuntimePromise ??= import("../../../memory/implicit-memory.runtime.js");
+  return await implicitMemoryRuntimePromise;
+}
+
+export function shouldUseImplicitMemoryForRun(params: {
+  enabled: boolean;
+  isProbeSession: boolean;
+  trigger?: string;
+}): boolean {
+  return params.enabled && !params.isProbeSession && params.trigger === "user";
+}
 import { buildModelAliasLines } from "../model.js";
 import {
   clearActiveEmbeddedRun,
@@ -2291,7 +2308,6 @@ export async function runEmbeddedAttempt(
         getUsageTotals,
         getCompactionCount,
       } = subscription;
-
       const queueHandle: EmbeddedPiQueueHandle = {
         queueMessage: async (text: string) => {
           await activeSession.steer(text);
@@ -2304,6 +2320,12 @@ export async function runEmbeddedAttempt(
 
       let abortWarnTimer: NodeJS.Timeout | undefined;
       const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
+      const autoMemoryEnabled = params.config?.memory?.implicit?.enabled === true;
+      const shouldUseImplicitMemory = shouldUseImplicitMemoryForRun({
+        enabled: autoMemoryEnabled,
+        isProbeSession,
+        trigger: params.trigger,
+      });
       const compactionTimeoutMs = resolveCompactionTimeoutMs(params.config);
       let abortTimer: NodeJS.Timeout | undefined;
       let compactionGraceUsed = false;
@@ -2394,6 +2416,20 @@ export async function runEmbeddedAttempt(
       let promptError: unknown = null;
       let promptErrorSource: "prompt" | "compaction" | null = null;
       const prePromptMessageCount = activeSession.messages.length;
+      const implicitMemoryUserInput = params.prompt.trim();
+      let implicitMemoryRuntime: ImplicitMemoryRuntimeModule | null = null;
+      let implicitMemoryScopeKey: string | null = null;
+      if (shouldUseImplicitMemory) {
+        implicitMemoryRuntime = await getImplicitMemoryRuntime();
+        implicitMemoryScopeKey = implicitMemoryRuntime.resolveImplicitMemoryScopeKey({
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          messageChannel: params.messageChannel,
+          messageProvider: params.messageProvider,
+          agentAccountId: params.agentAccountId,
+          senderId: params.senderId,
+        });
+      }
       try {
         const promptStartedAt = Date.now();
 
@@ -2448,6 +2484,38 @@ export async function runEmbeddedAttempt(
             systemPromptText = prependedOrAppendedSystemPrompt;
             log.debug(
               `hooks: applied prependSystemContext/appendSystemContext (${prependSystemLen}+${appendSystemLen} chars)`,
+            );
+          }
+        }
+
+        if (
+          shouldUseImplicitMemory &&
+          implicitMemoryUserInput &&
+          implicitMemoryRuntime &&
+          implicitMemoryScopeKey
+        ) {
+          try {
+            const implicitContext = await implicitMemoryRuntime.retrieveImplicitContext(
+              implicitMemoryUserInput,
+              implicitMemoryScopeKey,
+            );
+            if (implicitContext) {
+              const implicitSystemContext = `Implicit user context: ${implicitContext}`;
+              const nextSystemPrompt = composeSystemPromptWithHookContext({
+                baseSystemPrompt: systemPromptText,
+                appendSystemContext: implicitSystemContext,
+              });
+              if (nextSystemPrompt) {
+                applySystemPromptOverrideToSession(activeSession, nextSystemPrompt);
+                systemPromptText = nextSystemPrompt;
+                log.debug(
+                  `implicit memory: appended system context (${implicitSystemContext.length} chars)`,
+                );
+              }
+            }
+          } catch (err) {
+            log.warn(
+              `implicit memory retrieval failed, continuing without context: ${String(err)}`,
             );
           }
         }
@@ -2863,6 +2931,25 @@ export async function runEmbeddedAttempt(
           .catch((err) => {
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
+      }
+
+      if (shouldUseImplicitMemory && implicitMemoryRuntime && implicitMemoryScopeKey) {
+        const writeback = implicitMemoryRuntime.buildImplicitMemoryWriteback({
+          userInput: implicitMemoryUserInput,
+          assistantTexts,
+          success: !aborted && !promptError,
+          error: promptError ? describeUnknownError(promptError) : undefined,
+        });
+        if (writeback) {
+          void implicitMemoryRuntime
+            .saveImplicitExperience({
+              ...writeback,
+              scopeKey: implicitMemoryScopeKey,
+            })
+            .catch((err) => {
+              log.warn(`implicit memory writeback failed: ${String(err)}`);
+            });
+        }
       }
 
       return {
