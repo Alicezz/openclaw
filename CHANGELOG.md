@@ -117,6 +117,8 @@ Docs: https://docs.openclaw.ai
 - Control UI/overview: keep the language dropdown aligned with the persisted locale during dashboard startup so refreshing the page does not fall back to English before locale hydration completes. (#48019) Thanks @git-jxj.
 - Agents/compaction: rerun transcript repair after `session.compact()` so orphaned `tool_result` blocks cannot survive compaction and break later Anthropic requests. (#16095) thanks @claw-sylphx.
 - Agents/compaction: trigger overflow recovery from the tool-result guard once post-compaction context still exceeds the safe threshold, so long tool loops compact before the next model call hard-fails. (#29371) thanks @keshav55.
+- Gateway/auth: grant operator.read for device-less token/password auth so CLI and Dashboard can run read RPCs (devices list, status, probe) instead of getting "missing scope: operator.read". Fixes #48167, #46117, #46716, #17095.
+- Gateway/handshake: restore handshake timeout to 10s (was reduced to 3s in #44089) so CLI commands like `openclaw devices list` no longer fail with "gateway closed (1000 normal closure)" on slower systems. (#47103)
 - macOS/exec approvals: harden exec-host request HMAC verification to use a timing-safe compare and keep malformed or truncated signatures fail-closed in focused IPC auth coverage.
 - Gateway/exec approvals: surface requested env override keys in gateway-host approval prompts so operators can review surviving env context without inheriting noisy base host env.
 - Telegram/network: preserve sticky IPv4 fallback state across polling restarts so hosts with unstable IPv6 to `api.telegram.org` stop re-triggering repeated Telegram timeouts after each restart. (#48282) Thanks @yassinebkr.
@@ -131,6 +133,7 @@ Docs: https://docs.openclaw.ai
 - Mattermost/DM send: retry transient direct-channel creation failures for DM deliveries, with configurable backoff and per-request timeout. (#42398) Thanks @JonathanJing.
 - Telegram/network: unify API and media fetches under the same sticky IPv4 and pinned-IP fallback chain, and re-validate pinned override addresses against SSRF policy. (#49148) Thanks @obviyus.
 - Agents/prompt composition: append bootstrap truncation warnings to the current-turn prompt and add regression coverage for stable system-prompt cache invariants. (#49237) Thanks @scoootscooob.
+- Gateway/probe: include device identity in authenticated loopback probes so `openclaw status` and probe RPCs get full paired scopes instead of being scope-limited. Only strip identity for literal anonymous probes (opts.auth undefined). (#48805)
 
 ### Breaking
 
