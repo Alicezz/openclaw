@@ -75,6 +75,10 @@ describe("provider catalog contract", () => {
   });
 
   it("keeps codex-only missing-auth hints wired through the provider runtime", () => {
+    resolveOwningPluginIdsForProviderMock.mockReturnValue(["openai"]);
+    resolvePluginProvidersMock.mockReturnValue(
+      resolveProviderContractProvidersForPluginIds(["openai"]),
+    );
     expectCodexMissingAuthHint(buildProviderMissingAuthMessageWithPlugin);
   });
 
