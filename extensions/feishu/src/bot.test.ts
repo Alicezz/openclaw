@@ -72,6 +72,7 @@ vi.mock("./send.js", () => ({
 
 vi.mock("./media.js", () => ({
   downloadMessageResourceFeishu: mockDownloadMessageResourceFeishu,
+  decodeFileNameFromFeishu: vi.fn((fileName: string) => fileName),
 }));
 
 vi.mock("./client.js", () => ({

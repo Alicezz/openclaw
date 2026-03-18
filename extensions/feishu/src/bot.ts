@@ -27,7 +27,7 @@ import { buildFeishuConversationId } from "./conversation-id.js";
 import { finalizeFeishuMessageProcessing, tryRecordMessagePersistent } from "./dedup.js";
 import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
-import { downloadMessageResourceFeishu } from "./media.js";
+import { decodeFileNameFromFeishu, downloadMessageResourceFeishu } from "./media.js";
 import { extractMentionTargets, isMentionForwardRequest } from "./mention.js";
 import {
   resolveFeishuGroupConfig,
@@ -462,7 +462,7 @@ function formatSubMessageContent(content: string, contentType: string): string {
       case "image":
         return "[Image]";
       case "file":
-        return `[File: ${parsed.file_name || "unknown"}]`;
+        return `[File: ${decodeFileNameFromFeishu(parsed.file_name) || "unknown"}]`;
       case "audio":
         return "[Audio]";
       case "video":
@@ -553,7 +553,7 @@ function parseMediaKeys(
       case "image":
         return { imageKey, fileName: parsed.file_name };
       case "file":
-        return { fileKey, fileName: parsed.file_name };
+        return { fileKey, fileName: decodeFileNameFromFeishu(parsed.file_name) };
       case "audio":
         return { fileKey, fileName: parsed.file_name };
       case "video":
