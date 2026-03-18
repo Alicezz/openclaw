@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { emitLifecycleHook } from "../lifecycle-hooks.js";
 import type { ResolvedQmdConfig } from "./backend-config.js";
 import { resolveMemoryBackendConfig } from "./backend-config.js";
 import type {
@@ -53,6 +54,7 @@ export async function getMemorySearchManager(params: {
         const wrapper = new FallbackMemoryManager(
           {
             primary,
+            agentId: params.agentId,
             fallbackFactory: async () => {
               const { MemoryIndexManager } = await loadManagerRuntime();
               return await MemoryIndexManager.get(params);
@@ -78,7 +80,17 @@ export async function getMemorySearchManager(params: {
   try {
     const { MemoryIndexManager } = await loadManagerRuntime();
     const manager = await MemoryIndexManager.get(params);
-    return { manager };
+    
+    // Wrap builtin manager to emit memory:retrieve hook
+    const wrapper = new FallbackMemoryManager(
+      {
+        primary: manager,
+        agentId: params.agentId,
+        fallbackFactory: async () => null,
+      },
+      undefined,
+    );
+    return { manager: wrapper };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { manager: null, error: message };
@@ -106,22 +118,28 @@ class FallbackMemoryManager implements MemorySearchManager {
   private primaryFailed = false;
   private lastError?: string;
   private cacheEvicted = false;
+  private readonly agentId: string;
 
   constructor(
     private readonly deps: {
       primary: MemorySearchManager;
+      agentId: string;
       fallbackFactory: () => Promise<MemorySearchManager | null>;
     },
     private readonly onClose?: () => void,
-  ) {}
+  ) {
+    this.agentId = deps.agentId;
+  }
 
   async search(
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
   ) {
+    let results: any;
+    
     if (!this.primaryFailed) {
       try {
-        return await this.deps.primary.search(query, opts);
+        results = await this.deps.primary.search(query, opts);
       } catch (err) {
         this.primaryFailed = true;
         this.lastError = err instanceof Error ? err.message : String(err);
@@ -131,11 +149,27 @@ class FallbackMemoryManager implements MemorySearchManager {
         this.evictCacheEntry();
       }
     }
-    const fallback = await this.ensureFallback();
-    if (fallback) {
-      return await fallback.search(query, opts);
+    
+    if (!results) {
+      const fallback = await this.ensureFallback();
+      if (fallback) {
+        results = await fallback.search(query, opts);
+      }
     }
-    throw new Error(this.lastError ?? "memory search unavailable");
+    
+    if (!results) {
+      throw new Error(this.lastError ?? "memory search unavailable");
+    }
+    
+    // Emit lifecycle hook: memory:retrieve
+    emitLifecycleHook("memory:retrieve", {
+      sessionKey: opts?.sessionKey,
+      agentId: this.deps.agentId,
+      query,
+      results: Array.isArray(results) ? results.map(r => ({ snippet: r.snippet, score: r.score, source: r.source, path: r.path })) : [{ snippet: results.snippet, score: results.score, source: results.source, path: results.path }],
+    });
+    
+    return results;
   }
 
   async readFile(params: { relPath: string; from?: number; lines?: number }) {

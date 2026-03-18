@@ -28,6 +28,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { loadSessionStore, resolveStorePath, type SessionEntry } from "../config/sessions.js";
 import { resolveSessionTranscriptFile } from "../config/sessions/transcript.js";
 import { callGateway } from "../gateway/call.js";
+import { emitLifecycleHook } from "../lifecycle-hooks.js";
 import { areHeartbeatsEnabled } from "../infra/heartbeat-wake.js";
 import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import {
@@ -694,6 +695,17 @@ export async function spawnAcpDirect(
       emitStartNotice: false,
     });
   }
+
+  // Emit lifecycle hook: agent:dispatch - fires BEFORE the actual dispatch attempt
+  emitLifecycleHook("agent:dispatch", {
+    sessionKey,
+    taskId: undefined, // Will be populated after successful dispatch
+    agentId: targetAgentId,
+    contextKeys: parentSessionKey ? [parentSessionKey] : undefined,
+    runtime: runtimeMode,
+    mode: spawnMode,
+  });
+
   try {
     const response = await callGateway<{ runId?: string }>({
       method: "agent",
@@ -742,6 +754,17 @@ export async function spawnAcpDirect(
       });
     }
     parentRelay?.notifyStarted();
+    
+    // Emit lifecycle hook: agent:dispatch
+    emitLifecycleHook("agent:dispatch", {
+      sessionKey,
+      taskId: childRunId,
+      agentId: targetAgentId,
+      contextKeys: parentSessionKey ? [parentSessionKey] : undefined,
+      runtime: runtimeMode,
+      mode: spawnMode,
+    });
+    
     return {
       status: "accepted",
       childSessionKey: sessionKey,
@@ -751,6 +774,16 @@ export async function spawnAcpDirect(
       note: spawnMode === "session" ? ACP_SPAWN_SESSION_ACCEPTED_NOTE : ACP_SPAWN_ACCEPTED_NOTE,
     };
   }
+
+  // Emit lifecycle hook: agent:dispatch
+  emitLifecycleHook("agent:dispatch", {
+    sessionKey,
+    taskId: childRunId,
+    agentId: targetAgentId,
+    contextKeys: parentSessionKey ? [parentSessionKey] : undefined,
+    runtime: runtimeMode,
+    mode: spawnMode,
+  });
 
   return {
     status: "accepted",
