@@ -75,6 +75,27 @@ export type {
 
 const DISCORD_BOUND_THREAD_SYSTEM_PREFIXES = ["⚙️", "🤖", "🧰"];
 
+// Cache for bot mention regexes to avoid recompilation on every message
+const botMentionRegexCache = new Map<string, RegExp>();
+const MAX_BOT_MENTION_REGEX_CACHE_KEYS = 512;
+
+/**
+ * Returns a compiled regex that matches <@botId> and <@!botId> (nickname) mentions.
+ * Results are cached per botId to avoid repeated regex compilation.
+ * Cache is bounded to prevent unbounded growth (mirrors mentions.ts pattern).
+ */
+function getBotMentionRegex(botId: string): RegExp {
+  let regex = botMentionRegexCache.get(botId);
+  if (!regex) {
+    regex = new RegExp(`<@!?${botId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}>`);
+    if (botMentionRegexCache.size >= MAX_BOT_MENTION_REGEX_CACHE_KEYS) {
+      botMentionRegexCache.clear();
+    }
+    botMentionRegexCache.set(botId, regex);
+  }
+  return regex;
+}
+
 function isPreflightAborted(abortSignal?: AbortSignal): boolean {
   return Boolean(abortSignal?.aborted);
 }
@@ -508,9 +529,29 @@ export async function preflightDiscordMessage(
     return null;
   }
   const mentionRegexes = buildMentionRegexes(params.cfg, effectiveRoute.agentId);
-  const explicitlyMentioned = Boolean(
+  // Fixes #44183: In Discord threads, mentionedUsers may be empty even when
+  // the bot is mentioned in text. Fall back to text-based detection.
+  const explicitlyMentionedViaArray = Boolean(
     botId && message.mentionedUsers?.some((user: User) => user.id === botId),
   );
+  // Strip inline/fenced code blocks and escaped mention literals before text-based
+  // mention detection to avoid false positives from code snippets or intentionally
+  // escaped <@id> tokens (e.g. \<@id>) that Discord renders as literal text.
+  const textForMentionCheck = baseText
+    ? baseText
+        .replace(/`{3,}[\s\S]*?`{3,}/g, "")  // fenced code blocks (3+ backticks, any length)
+        .replace(/`+[^`\n]+`+/g, "")           // inline code spans (arbitrary backtick count)
+        .replace(/\\<@/g, "")               // escaped mention literals \<@
+    : undefined;
+  const explicitlyMentionedViaText = Boolean(
+    botId && textForMentionCheck && getBotMentionRegex(botId).test(textForMentionCheck),
+  );
+  const explicitlyMentioned = explicitlyMentionedViaArray || explicitlyMentionedViaText;
+  if (explicitlyMentionedViaText && !explicitlyMentionedViaArray) {
+    logVerbose(
+      `discord: text-fallback mention detected — channel=${messageChannelId} botId=${botId}`,
+    );
+  }
   const hasAnyMention = Boolean(
     !isDirectMessage &&
     ((message.mentionedUsers?.length ?? 0) > 0 ||
