@@ -355,6 +355,7 @@ export const OpenClawSchema = z
       .object({
         enabled: z.boolean().optional(),
         evaluateEnabled: z.boolean().optional(),
+        requireTargetId: z.boolean().optional(),
         cdpUrl: z.string().optional(),
         remoteCdpTimeoutMs: z.number().int().nonnegative().optional(),
         remoteCdpHandshakeTimeoutMs: z.number().int().nonnegative().optional(),
