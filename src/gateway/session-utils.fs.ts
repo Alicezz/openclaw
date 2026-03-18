@@ -83,14 +83,66 @@ export function readSessionMessages(
     return [];
   }
 
-  const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/);
+  // NOTE: This is on the Gateway hot path (chat.history). Reading + splitting an entire transcript
+  // file can freeze the UI when a session grows large (or when a single JSONL record is huge).
+  // We therefore tail-read large files and apply a per-line size guard.
+  //
+  // MAX_TAIL_BYTES must exceed the chat.history response budget (6 MB) with enough headroom
+  // that the file-read layer never drops records that would fit in the response. Set to 3×
+  // the 6 MB response budget so truncation always happens at the response-cap layer in
+  // chat.ts (which the caller can observe), never silently here.
+  const MAX_TAIL_BYTES = 18 * 1024 * 1024; // 3× the 6 MB chat.history response budget
+  // 200KB per line: a normal assistant reply is well under 50KB. Anything larger is a runaway
+  // prompt/response that would only stall JSON.parse and bloat the UI — skip it entirely.
+  // (The confirmed 447KB line causing Gateway freezes is caught by this threshold.)
+  const MAX_LINE_CHARS = 200 * 1024;
+
+  let content = "";
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_TAIL_BYTES) {
+      const fd = fs.openSync(filePath, "r");
+      try {
+        const start = Math.max(0, stat.size - MAX_TAIL_BYTES);
+        const buf = Buffer.allocUnsafe(stat.size - start);
+        // Capture bytesRead: if the file shrank between statSync and readSync (TOCTOU),
+        // readSync returns fewer bytes than buf.length — slice to avoid feeding
+        // uninitialized memory into the UTF-8 / JSON pipeline.
+        const bytesRead = fs.readSync(fd, buf, 0, buf.length, start);
+        content = buf.toString("utf-8", 0, bytesRead);
+        // If we started mid-line, drop the partial first line.
+        // Note: messages before the 2 MB boundary are intentionally omitted to keep
+        // this RPC fast; the UI will show the most recent history only.
+        const firstNewline = content.indexOf("\n");
+        if (firstNewline >= 0 && start > 0) {
+          content = content.slice(firstNewline + 1);
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    } else {
+      content = fs.readFileSync(filePath, "utf-8");
+    }
+  } catch {
+    return [];
+  }
+
+  const lines = content.split(/\r?\n/);
   const messages: unknown[] = [];
   for (const line of lines) {
-    if (!line.trim()) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (trimmed.length > MAX_LINE_CHARS) {
+      // Skip lines that are too large to safely parse on the RPC path.
+      console.warn(
+        `[session-utils] skipping oversized line in session ${sessionId}: ${trimmed.length} chars (max ${MAX_LINE_CHARS})`,
+      );
       continue;
     }
     try {
-      const parsed = JSON.parse(line);
+      const parsed = JSON.parse(trimmed);
       if (parsed?.message) {
         messages.push(parsed.message);
         continue;
