@@ -116,6 +116,7 @@ import { buildEmbeddedMessageActionDiscoveryInput } from "../message-action-disc
 import { buildModelAliasLines } from "../model.js";
 import {
   clearActiveEmbeddedRun,
+  forceClearActiveEmbeddedRun,
   type EmbeddedPiQueueHandle,
   setActiveEmbeddedRun,
   updateActiveEmbeddedRunSnapshot,
@@ -2344,9 +2345,16 @@ export async function runEmbeddedAttempt(
               timedOutDuringCompaction = true;
             }
             abortRun(true);
+            // Safety net: force-clear the active run state after a brief grace
+            // period so the session returns to idle even if the normal cleanup
+            // path in the finally block never executes (zombie state).
+            // See: https://github.com/openclaw/openclaw/issues/48518
             if (!abortWarnTimer) {
               abortWarnTimer = setTimeout(() => {
                 if (!activeSession.isStreaming) {
+                  // Run already stopped — force-clear in case the finally
+                  // block hasn't (or won't) run due to a stuck await.
+                  forceClearActiveEmbeddedRun(params.sessionId, params.sessionKey);
                   return;
                 }
                 if (!isProbeSession) {
@@ -2354,6 +2362,9 @@ export async function runEmbeddedAttempt(
                     `embedded run abort still streaming: runId=${params.runId} sessionId=${params.sessionId}`,
                   );
                 }
+                // Force-clear regardless — after timeout + 10s grace, the run
+                // is definitively zombie.  The session must return to idle.
+                forceClearActiveEmbeddedRun(params.sessionId, params.sessionKey);
               }, 10_000);
             }
           },
