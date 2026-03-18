@@ -1,0 +1,12 @@
+{
+  "id": "tavily",
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": { "type": "string" },
+      "baseUrl": { "type": "string" }
+    }
+  }
+}

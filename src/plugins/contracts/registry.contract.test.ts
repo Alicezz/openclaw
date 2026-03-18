@@ -178,6 +178,14 @@ describe("plugin contract registry", () => {
       webSearchProviderIds: ["firecrawl"],
       toolNames: ["firecrawl_search", "firecrawl_scrape"],
     });
+    expect(findRegistrationForPlugin("tavily")).toMatchObject({
+      providerIds: [],
+      speechProviderIds: [],
+      mediaUnderstandingProviderIds: [],
+      imageGenerationProviderIds: [],
+      webSearchProviderIds: ["tavily"],
+      toolNames: ["tavily_search", "tavily_extract"],
+    });
   });
 
   it("tracks speech registrations on bundled provider plugins", () => {
