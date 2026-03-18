@@ -139,7 +139,7 @@ describe("buildGatewayInstallPlan", () => {
     process.env.OPENCLAW_STATE_DIR = stateDirForTest;
     fs.writeFileSync(
       path.join(stateDirForTest, ".env"),
-      "OPENAI_API_KEY=sk-openai-test\nANTHROPIC_TOKEN=ant-test-token\n",
+      "OPENAI_API_KEY=openai-test-value\nANTHROPIC_TOKEN=anthropic-test-value\n",
       "utf8",
     );
     mocks.loadAuthProfileStoreForSecretsRuntime.mockReturnValue({
@@ -161,8 +161,8 @@ describe("buildGatewayInstallPlan", () => {
     const plan = await buildGatewayInstallPlan({
       env: {
         OPENCLAW_STATE_DIR: stateDirForTest,
-        OPENAI_API_KEY: "sk-openai-test", // pragma: allowlist secret
-        ANTHROPIC_TOKEN: "ant-test-token",
+        OPENAI_API_KEY: "openai-test-value",
+        ANTHROPIC_TOKEN: "anthropic-test-value",
       },
       port: 3000,
       runtime: "node",
@@ -194,13 +194,13 @@ describe("buildGatewayInstallPlan", () => {
     const plan = await buildGatewayInstallPlan({
       env: {
         OPENCLAW_STATE_DIR: stateDirForTest,
-        OPENAI_API_KEY: "sk-openai-test", // pragma: allowlist secret
+        OPENAI_API_KEY: "openai-test-value",
       },
       port: 3000,
       runtime: "node",
     });
 
-    expect(plan.environment.OPENAI_API_KEY).toBe("sk-openai-test");
+    expect(plan.environment.OPENAI_API_KEY).toBe("openai-test-value");
   });
 });
 
