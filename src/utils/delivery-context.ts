@@ -49,6 +49,26 @@ export function normalizeDeliveryContext(context?: DeliveryContext): DeliveryCon
   return normalized;
 }
 
+export function formatConversationTarget(params: {
+  channel?: string;
+  conversationId?: string | number;
+}): string | undefined {
+  const channel =
+    typeof params.channel === "string"
+      ? (normalizeMessageChannel(params.channel) ?? params.channel.trim())
+      : undefined;
+  const conversationId =
+    typeof params.conversationId === "number" && Number.isFinite(params.conversationId)
+      ? String(Math.trunc(params.conversationId))
+      : typeof params.conversationId === "string"
+        ? params.conversationId.trim()
+        : undefined;
+  if (!channel || !conversationId) {
+    return undefined;
+  }
+  return channel === "matrix" ? `room:${conversationId}` : `channel:${conversationId}`;
+}
+
 export function normalizeSessionDeliveryFields(source?: DeliveryContextSessionSource): {
   deliveryContext?: DeliveryContext;
   lastChannel?: string;

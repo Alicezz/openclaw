@@ -41,7 +41,11 @@ import {
   normalizeAgentId,
   parseAgentSessionKey,
 } from "../routing/session-key.js";
-import { deliveryContextFromSession, normalizeDeliveryContext } from "../utils/delivery-context.js";
+import {
+  deliveryContextFromSession,
+  formatConversationTarget,
+  normalizeDeliveryContext,
+} from "../utils/delivery-context.js";
 import {
   type AcpSpawnParentRelayHandle,
   resolveAcpSpawnStreamLogPath,
@@ -666,9 +670,16 @@ export async function spawnAcpDirect(
   const fallbackThreadId =
     fallbackThreadIdRaw != null ? String(fallbackThreadIdRaw).trim() || undefined : undefined;
   const deliveryThreadId = boundThreadId ?? fallbackThreadId;
-  const inferredDeliveryTo = boundThreadId
-    ? `channel:${boundThreadId}`
-    : requesterOrigin?.to?.trim() || (deliveryThreadId ? `channel:${deliveryThreadId}` : undefined);
+  const inferredDeliveryTo =
+    formatConversationTarget({
+      channel: requesterOrigin?.channel ?? binding?.conversation.channel,
+      conversationId: boundThreadId,
+    }) ??
+    requesterOrigin?.to?.trim() ??
+    formatConversationTarget({
+      channel: requesterOrigin?.channel,
+      conversationId: deliveryThreadId,
+    });
   const hasDeliveryTarget = Boolean(requesterOrigin?.channel && inferredDeliveryTo);
   // Fresh one-shot ACP runs should bootstrap the worker first, then let higher layers
   // decide how to relay status. Inline delivery is reserved for thread-bound sessions.

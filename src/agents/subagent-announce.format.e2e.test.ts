@@ -4,6 +4,8 @@ import {
   __testing as sessionBindingServiceTesting,
   registerSessionBindingAdapter,
 } from "../infra/outbound/session-binding-service.js";
+import { setActivePluginRegistry } from "../plugins/runtime.js";
+import { createTestRegistry } from "../test-utils/channel-plugins.js";
 
 type AgentCallRequest = { method?: string; params?: Record<string, unknown> };
 type RequesterResolution = {
@@ -173,6 +175,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
 describe("subagent announce formatting", () => {
   let previousFastTestEnv: string | undefined;
   let runSubagentAnnounceFlow: (typeof import("./subagent-announce.js"))["runSubagentAnnounceFlow"];
+  let matrixPlugin: (typeof import("../../extensions/matrix/src/channel.js"))["matrixPlugin"];
 
   beforeAll(async () => {
     // Set FAST_TEST_MODE before importing the module to ensure the module-level
@@ -181,6 +184,7 @@ describe("subagent announce formatting", () => {
     // See: https://github.com/openclaw/openclaw/issues/31298
     previousFastTestEnv = process.env.OPENCLAW_TEST_FAST;
     process.env.OPENCLAW_TEST_FAST = "1";
+    ({ matrixPlugin } = await import("../../extensions/matrix/src/channel.js"));
     ({ runSubagentAnnounceFlow } = await import("./subagent-announce.js"));
   });
 
@@ -232,6 +236,9 @@ describe("subagent announce formatting", () => {
     chatHistoryMock.mockReset().mockResolvedValue({ messages: [] });
     sessionStore = {};
     sessionBindingServiceTesting.resetSessionBindingAdaptersForTests();
+    setActivePluginRegistry(
+      createTestRegistry([{ pluginId: "matrix", plugin: matrixPlugin, source: "test" }]),
+    );
     configOverride = {
       session: {
         mainKey: "main",
@@ -833,6 +840,64 @@ describe("subagent announce formatting", () => {
       expect.arrayContaining(["channel:thread-child-a", "channel:thread-child-b"]),
     );
     expect(directTargets).not.toContain("channel:main-parent-channel");
+  });
+
+  it("routes Matrix bound completion delivery to room targets", async () => {
+    sessionStore = {
+      "agent:main:subagent:matrix-child": {
+        sessionId: "child-session-matrix",
+      },
+      "agent:main:main": {
+        sessionId: "requester-session-matrix",
+      },
+    };
+    chatHistoryMock.mockResolvedValueOnce({
+      messages: [{ role: "assistant", content: [{ type: "text", text: "matrix bound answer" }] }],
+    });
+    subagentRegistryMock.countActiveDescendantRuns.mockImplementation((sessionKey: string) =>
+      sessionKey === "agent:main:main" ? 1 : 0,
+    );
+    registerSessionBindingAdapter({
+      channel: "matrix",
+      accountId: "acct-matrix",
+      listBySession: (targetSessionKey: string) =>
+        targetSessionKey === "agent:main:subagent:matrix-child"
+          ? [
+              {
+                bindingId: "matrix:acct-matrix:$thread-bound-1",
+                targetSessionKey,
+                targetKind: "subagent",
+                conversation: {
+                  channel: "matrix",
+                  accountId: "acct-matrix",
+                  conversationId: "$thread-bound-1",
+                  parentConversationId: "!room:example",
+                },
+                status: "active",
+                boundAt: Date.now(),
+              },
+            ]
+          : [],
+      resolveByConversation: () => null,
+    });
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:matrix-child",
+      childRunId: "run-session-bound-matrix",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      requesterOrigin: { channel: "matrix", to: "room:!room:example", accountId: "acct-matrix" },
+      ...defaultOutcomeAnnounce,
+      expectsCompletionMessage: true,
+      spawnMode: "session",
+    });
+
+    expect(didAnnounce).toBe(true);
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(agentSpy).toHaveBeenCalledTimes(1);
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    expect(call?.params?.channel).toBe("matrix");
+    expect(call?.params?.to).toBe("room:$thread-bound-1");
   });
 
   it("includes completion status details for error and timeout outcomes", async () => {

@@ -6,6 +6,26 @@ function normalizeConversationId(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+function resolveScopedConversationTarget(value: string): string | undefined {
+  const trimmed = normalizeConversationId(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const matrixScoped = trimmed.toLowerCase().startsWith("matrix:")
+    ? trimmed.slice("matrix:".length).trim()
+    : trimmed;
+  for (const prefix of ["channel:", "room:"]) {
+    if (!matrixScoped.startsWith(prefix)) {
+      continue;
+    }
+    const conversationId = normalizeConversationId(matrixScoped.slice(prefix.length));
+    if (conversationId) {
+      return conversationId;
+    }
+  }
+  return undefined;
+}
+
 export function resolveConversationIdFromTargets(params: {
   threadId?: string | number;
   targets: Array<string | undefined | null>;
@@ -21,12 +41,9 @@ export function resolveConversationIdFromTargets(params: {
     if (!target) {
       continue;
     }
-    if (target.startsWith("channel:")) {
-      const channelId = normalizeConversationId(target.slice("channel:".length));
-      if (channelId) {
-        return channelId;
-      }
-      continue;
+    const scopedConversationId = resolveScopedConversationTarget(target);
+    if (scopedConversationId) {
+      return scopedConversationId;
     }
     const mentionMatch = target.match(/^<#(\d+)>$/);
     if (mentionMatch?.[1]) {

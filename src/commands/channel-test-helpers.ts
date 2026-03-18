@@ -8,11 +8,12 @@ import type { ChannelChoice } from "./onboard-types.js";
 type ChannelSetupWizardAdapterPatch = Partial<
   Pick<
     ChannelSetupWizardAdapter,
-    "configure" | "configureInteractive" | "configureWhenConfigured" | "getStatus"
+    "afterConfigWritten" | "configure" | "configureInteractive" | "configureWhenConfigured" | "getStatus"
   >
 >;
 
 type PatchedSetupAdapterFields = {
+  afterConfigWritten?: ChannelSetupWizardAdapter["afterConfigWritten"];
   configure?: ChannelSetupWizardAdapter["configure"];
   configureInteractive?: ChannelSetupWizardAdapter["configureInteractive"];
   configureWhenConfigured?: ChannelSetupWizardAdapter["configureWhenConfigured"];
@@ -47,6 +48,10 @@ export function patchChannelSetupWizardAdapter(
     previous.getStatus = adapter.getStatus;
     adapter.getStatus = patch.getStatus ?? adapter.getStatus;
   }
+  if (Object.prototype.hasOwnProperty.call(patch, "afterConfigWritten")) {
+    previous.afterConfigWritten = adapter.afterConfigWritten;
+    adapter.afterConfigWritten = patch.afterConfigWritten;
+  }
   if (Object.prototype.hasOwnProperty.call(patch, "configure")) {
     previous.configure = adapter.configure;
     adapter.configure = patch.configure ?? adapter.configure;
@@ -63,6 +68,9 @@ export function patchChannelSetupWizardAdapter(
   return () => {
     if (Object.prototype.hasOwnProperty.call(patch, "getStatus")) {
       adapter.getStatus = previous.getStatus!;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "afterConfigWritten")) {
+      adapter.afterConfigWritten = previous.afterConfigWritten;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "configure")) {
       adapter.configure = previous.configure!;

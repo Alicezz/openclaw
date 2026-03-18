@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatConversationTarget,
   deliveryContextKey,
   deliveryContextFromSession,
   mergeDeliveryContext,
@@ -75,6 +76,16 @@ describe("delivery context helpers", () => {
     expect(deliveryContextKey({ channel: "slack", to: "channel:C1", threadId: "123.456" })).toBe(
       "slack|channel:C1||123.456",
     );
+  });
+
+  it("formats channel-aware conversation targets", () => {
+    expect(formatConversationTarget({ channel: "discord", conversationId: "123" })).toBe(
+      "channel:123",
+    );
+    expect(formatConversationTarget({ channel: "matrix", conversationId: "!room:example" })).toBe(
+      "room:!room:example",
+    );
+    expect(formatConversationTarget({ channel: "matrix", conversationId: "  " })).toBeUndefined();
   });
 
   it("derives delivery context from a session entry", () => {

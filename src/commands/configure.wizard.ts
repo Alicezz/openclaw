@@ -31,7 +31,12 @@ import {
 } from "./configure.shared.js";
 import { formatHealthCheckFailure } from "./health-format.js";
 import { healthCommand } from "./health.js";
-import { noteChannelStatus, setupChannels } from "./onboard-channels.js";
+import {
+  createChannelOnboardingPostWriteHookCollector,
+  noteChannelStatus,
+  runCollectedChannelOnboardingPostWriteHooks,
+  setupChannels,
+} from "./onboard-channels.js";
 import {
   applyWizardMetadata,
   DEFAULT_WORKSPACE,
@@ -429,6 +434,7 @@ export async function runConfigureWizard(
       baseConfig.agents?.defaults?.workspace ??
       DEFAULT_WORKSPACE;
     let gatewayPort = resolveGatewayPort(baseConfig);
+    const postWriteHooks = createChannelOnboardingPostWriteHookCollector();
 
     const persistConfig = async () => {
       nextConfig = applyWizardMetadata(nextConfig, {
@@ -436,6 +442,11 @@ export async function runConfigureWizard(
         mode,
       });
       await writeConfigFile(nextConfig);
+      await runCollectedChannelOnboardingPostWriteHooks({
+        hooks: postWriteHooks.drain(),
+        cfg: nextConfig,
+        runtime,
+      });
       logConfigUpdated(runtime);
     };
 
@@ -494,6 +505,9 @@ export async function runConfigureWizard(
         nextConfig = await setupChannels(nextConfig, runtime, prompter, {
           allowDisable: true,
           allowSignalInstall: true,
+          onPostWriteHook: (hook) => {
+            postWriteHooks.collect(hook);
+          },
           skipConfirm: true,
           skipStatusNote: true,
         });

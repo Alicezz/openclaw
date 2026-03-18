@@ -260,8 +260,7 @@ describe("plugin-sdk subpath exports", () => {
 
   it("keeps the newly added bundled plugin-sdk contracts available", async () => {
     expect(typeof bluebubblesSdk.parseFiniteNumber).toBe("function");
-    expect(typeof matrixSdk.matrixSetupWizard).toBe("object");
-    expect(typeof matrixSdk.matrixSetupAdapter).toBe("object");
+    expect(typeof matrixSdk.getMatrixScopedEnvVarNames).toBe("function");
     expect(typeof mattermostSdk.parseStrictPositiveInteger).toBe("function");
     expect(typeof nextcloudTalkSdk.waitForAbortSignal).toBe("function");
     expect(typeof twitchSdk.DEFAULT_ACCOUNT_ID).toBe("string");

@@ -34,6 +34,16 @@ describe("resolveConversationIdFromTargets", () => {
       expected: "987654321",
     },
     {
+      name: "extracts room ids from room targets",
+      targets: ["room:!room:example"],
+      expected: "!room:example",
+    },
+    {
+      name: "extracts room ids from matrix-scoped room targets",
+      targets: ["matrix:room:!room:example"],
+      expected: "!room:example",
+    },
+    {
       name: "extracts ids from Discord channel mentions",
       targets: ["<#1475250310120214812>"],
       expected: "1475250310120214812",

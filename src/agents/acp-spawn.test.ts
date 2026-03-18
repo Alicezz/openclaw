@@ -386,6 +386,76 @@ describe("spawnAcpDirect", () => {
     expect(transcriptCalls[1]?.threadId).toBe("child-thread");
   });
 
+  it("spawns Matrix thread-bound ACP sessions from top-level room targets", async () => {
+    hoisted.state.cfg = {
+      ...hoisted.state.cfg,
+      channels: {
+        ...hoisted.state.cfg.channels,
+        matrix: {
+          threadBindings: {
+            enabled: true,
+            spawnAcpSessions: true,
+          },
+        },
+      },
+    };
+    hoisted.sessionBindingBindMock.mockImplementationOnce(
+      async (input: {
+        targetSessionKey: string;
+        conversation: { accountId: string; conversationId: string; parentConversationId?: string };
+        metadata?: Record<string, unknown>;
+      }) =>
+        createSessionBinding({
+          targetSessionKey: input.targetSessionKey,
+          conversation: {
+            channel: "matrix",
+            accountId: input.conversation.accountId,
+            conversationId: "child-thread",
+            parentConversationId: input.conversation.parentConversationId ?? "!room:example",
+          },
+          metadata: {
+            boundBy:
+              typeof input.metadata?.boundBy === "string" ? input.metadata.boundBy : "system",
+            agentId: "codex",
+            webhookId: "wh-1",
+          },
+        }),
+    );
+
+    const result = await spawnAcpDirect(
+      {
+        task: "Investigate flaky tests",
+        agentId: "codex",
+        mode: "session",
+        thread: true,
+      },
+      {
+        agentSessionKey: "agent:main:matrix:channel:!room:example",
+        agentChannel: "matrix",
+        agentAccountId: "default",
+        agentTo: "room:!room:example",
+      },
+    );
+
+    expect(result.status).toBe("accepted");
+    expect(hoisted.sessionBindingBindMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        placement: "child",
+        conversation: expect.objectContaining({
+          channel: "matrix",
+          accountId: "default",
+          conversationId: "!room:example",
+        }),
+      }),
+    );
+    const agentCall = hoisted.callGatewayMock.mock.calls
+      .map((call: unknown[]) => call[0] as { method?: string; params?: Record<string, unknown> })
+      .find((request) => request.method === "agent");
+    expect(agentCall?.params?.channel).toBe("matrix");
+    expect(agentCall?.params?.to).toBe("room:child-thread");
+    expect(agentCall?.params?.threadId).toBe("child-thread");
+  });
+
   it("does not inline delivery for fresh oneshot ACP runs", async () => {
     const result = await spawnAcpDirect(
       {
@@ -963,6 +1033,18 @@ describe("spawnAcpDirect", () => {
   });
 
   it("keeps inline delivery for thread-bound ACP session mode", async () => {
+    hoisted.state.cfg = {
+      ...hoisted.state.cfg,
+      channels: {
+        ...hoisted.state.cfg.channels,
+        telegram: {
+          threadBindings: {
+            spawnAcpSessions: true,
+          },
+        },
+      },
+    };
+
     const result = await spawnAcpDirect(
       {
         task: "Investigate flaky tests",

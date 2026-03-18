@@ -42,6 +42,11 @@ describe("warning filter", () => {
         name: "ExperimentalWarning",
         message: "SQLite is an experimental feature and might change at any time",
       },
+      }),
+      {
+        name: "Warning",
+        message: "`--localstorage-file` was provided without a valid path",
+      },
     ];
 
     for (const warning of ignoredWarnings) {
