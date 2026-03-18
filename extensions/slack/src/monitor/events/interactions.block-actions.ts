@@ -1,13 +1,13 @@
 import type { SlackActionMiddlewareArgs } from "@slack/bolt";
 import type { Block, KnownBlock } from "@slack/web-api";
-import { callGateway } from "../../../../../src/gateway/call.js";
-import { enqueueSystemEvent } from "../../../../../src/infra/system-events.js";
 import {
   buildPluginBindingResolvedText,
   parsePluginBindingApprovalCustomId,
   resolvePluginConversationBindingApproval,
-} from "../../../../../src/plugins/conversation-binding.js";
-import { dispatchPluginInteractiveHandler } from "../../../../../src/plugins/interactive.js";
+} from "openclaw/plugin-sdk/conversation-runtime";
+import { enqueueSystemEvent } from "openclaw/plugin-sdk/infra-runtime";
+import { dispatchPluginInteractiveHandler } from "openclaw/plugin-sdk/plugin-runtime";
+import { callGateway } from "../../../../../src/gateway/call.js";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,

@@ -1,13 +1,13 @@
-import { callGateway } from "../../gateway/call.js";
-import { logVerbose } from "../../globals.js";
 import {
   isSlackExecApprovalApprover,
   isSlackExecApprovalClientEnabled,
-} from "../../plugin-sdk-internal/slack.js";
+} from "../../../extensions/slack/src/exec-approvals.js";
+import { callGateway } from "../../gateway/call.js";
+import { logVerbose } from "../../globals.js";
 import {
   isTelegramExecApprovalApprover,
   isTelegramExecApprovalClientEnabled,
-} from "../../plugin-sdk-internal/telegram.js";
+} from "../../plugin-sdk/telegram.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../utils/message-channel.js";
 import { requireGatewayClientScopeForInternalChannel } from "./command-gates.js";
 import type { CommandHandler } from "./commands-types.js";
