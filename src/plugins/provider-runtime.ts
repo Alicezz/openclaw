@@ -358,7 +358,18 @@ export function buildProviderMissingAuthMessageWithPlugin(params: {
   env?: NodeJS.ProcessEnv;
   context: ProviderBuildMissingAuthMessageContext;
 }) {
-  const bundledResult = buildBundledProviderMissingAuthMessage(params.context);
+  const owningPluginIds = resolveOwningPluginIdsForProvider({
+    provider: params.provider,
+    config: params.config,
+    workspaceDir: params.workspaceDir,
+    env: params.env,
+  });
+  const bundledProviderOwnsHintTarget = (owningPluginIds ?? []).some(
+    (pluginId) => normalizeProviderId(pluginId) === normalizeProviderId(params.provider),
+  );
+  const bundledResult = bundledProviderOwnsHintTarget
+    ? buildBundledProviderMissingAuthMessage(params.context)
+    : undefined;
   if (bundledResult) {
     return bundledResult;
   }
