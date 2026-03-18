@@ -2,12 +2,14 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import {
   addAllowlistEntry,
   type ExecAsk,
+  type ExecHost,
   type ExecSecurity,
   buildEnforcedShellCommand,
   evaluateShellAllowlist,
   recordAllowlistUse,
   requiresExecApproval,
   resolveAllowAlwaysPatterns,
+  resolveAllowlistForHost,
 } from "../infra/exec-approvals.js";
 import { detectCommandObfuscation } from "../infra/exec-obfuscation-detect.js";
 import type { SafeBinProfile } from "../infra/exec-safe-bin-policy.js";
@@ -46,6 +48,8 @@ export type ProcessGatewayAllowlistParams = {
   defaultTimeoutSec: number;
   security: ExecSecurity;
   ask: ExecAsk;
+  /** The exec host being processed (defaults to "gateway" for backward compat). */
+  host?: ExecHost;
   safeBins: Set<string>;
   safeBinProfiles: Readonly<Record<string, SafeBinProfile>>;
   agentId?: string;
@@ -61,6 +65,10 @@ export type ProcessGatewayAllowlistParams = {
   maxOutput: number;
   pendingMaxOutput: number;
   trustedSafeBinDirs?: ReadonlySet<string>;
+  /** Sandbox context for sandbox-host exec — passed to runExecProcess when host=sandbox. */
+  sandbox?: import("./bash-tools.exec-types.js").ExecToolDefaults["sandbox"];
+  /** Pre-resolved container workdir (from resolveSandboxWorkdir). Used for sandbox approval runs. */
+  containerWorkdir?: string | null;
 };
 
 export type ProcessGatewayAllowlistResult = {
@@ -71,15 +79,18 @@ export type ProcessGatewayAllowlistResult = {
 export async function processGatewayAllowlist(
   params: ProcessGatewayAllowlistParams,
 ): Promise<ProcessGatewayAllowlistResult> {
+  const effectiveHost = params.host ?? "gateway";
   const { approvals, hostSecurity, hostAsk, askFallback } = resolveExecHostApprovalContext({
     agentId: params.agentId,
     security: params.security,
     ask: params.ask,
-    host: "gateway",
+    host: effectiveHost,
   });
+  // Resolve the allowlist for the specific host (falls back to "default" / flat list).
+  const hostAllowlist = resolveAllowlistForHost(approvals, effectiveHost);
   const allowlistEval = evaluateShellAllowlist({
     command: params.command,
-    allowlist: approvals.allowlist,
+    allowlist: hostAllowlist,
     safeBins: params.safeBins,
     safeBinProfiles: params.safeBinProfiles,
     cwd: params.workdir,
@@ -118,7 +129,14 @@ export async function processGatewayAllowlist(
         continue;
       }
       seen.add(match.pattern);
-      recordAllowlistUse(approvals.file, params.agentId, match, params.command, resolvedPath);
+      recordAllowlistUse(
+        approvals.file,
+        params.agentId,
+        match,
+        params.command,
+        resolvedPath,
+        effectiveHost,
+      );
     }
   };
   const hasHeredocSegment = allowlistEval.segments.some((segment) =>
@@ -155,7 +173,7 @@ export async function processGatewayAllowlist(
         command: params.command,
         env: params.requestedEnv,
         workdir: params.workdir,
-        host: "gateway",
+        host: effectiveHost,
         security: hostSecurity,
         ask: hostAsk,
         ...buildExecApprovalRequesterContext({
@@ -235,7 +253,7 @@ export async function processGatewayAllowlist(
           });
           for (const pattern of patterns) {
             if (pattern) {
-              addAllowlistEntry(approvals.file, params.agentId, pattern);
+              addAllowlistEntry(approvals.file, params.agentId, pattern, effectiveHost);
             }
           }
         }
@@ -262,8 +280,8 @@ export async function processGatewayAllowlist(
           execCommand: enforcedCommand,
           workdir: params.workdir,
           env: params.env,
-          sandbox: undefined,
-          containerWorkdir: null,
+          sandbox: effectiveHost === "sandbox" ? params.sandbox : undefined,
+          containerWorkdir: effectiveHost === "sandbox" ? (params.containerWorkdir ?? params.sandbox?.containerWorkdir ?? null) : null,
           usePty: params.pty,
           warnings: params.warnings,
           maxOutput: params.maxOutput,
@@ -297,7 +315,7 @@ export async function processGatewayAllowlist(
 
     return {
       pendingResult: buildExecApprovalPendingToolResult({
-        host: "gateway",
+        host: effectiveHost,
         command: params.command,
         cwd: params.workdir,
         warningText,
