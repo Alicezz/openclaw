@@ -139,25 +139,16 @@ describe("isSystemdServiceEnabled", () => {
     expect(result).toBe(false);
   });
 
-  it("returns false when the managed unit file is missing and system scope has no unit", async () => {
+  it("returns false without calling systemctl when the managed unit file is missing", async () => {
     const { isSystemdServiceEnabled } = await import("./systemd.js");
     const err = new Error("missing unit") as NodeJS.ErrnoException;
     err.code = "ENOENT";
     vi.spyOn(fs, "access").mockRejectedValueOnce(err);
 
-    // probeSystemScope: system is-enabled → disabled, system is-active → inactive
-    execFileMock
-      .mockImplementationOnce((_cmd, args, _opts, cb) => {
-        expect(args).toEqual(["is-enabled", "openclaw-gateway.service"]);
-        cb(createExecFileError("disabled", { stderr: "disabled" }), "", "");
-      })
-      .mockImplementationOnce((_cmd, args, _opts, cb) => {
-        expect(args).toEqual(["is-active", "openclaw-gateway.service"]);
-        cb(createExecFileError("inactive", { stderr: "inactive" }), "", "");
-      });
-
     const result = await isSystemdServiceEnabled({ env: { HOME: "/tmp/openclaw-test-home" } });
+
     expect(result).toBe(false);
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 
   it("calls systemctl is-enabled when systemctl is present", async () => {
@@ -171,23 +162,14 @@ describe("isSystemdServiceEnabled", () => {
     expect(result).toBe(true);
   });
 
-  it("returns false when systemctl reports disabled in both scopes", async () => {
+  it("returns false when systemctl reports disabled", async () => {
     const { isSystemdServiceEnabled } = await import("./systemd.js");
     mockManagedUnitPresent();
-    // user is-enabled → disabled
-    execFileMock
-      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
-        const err = new Error("disabled") as Error & { code?: number };
-        err.code = 1;
-        cb(err, "disabled", "");
-      })
-      // probeSystemScope: system is-enabled → disabled, system is-active → inactive
-      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
-        cb(createExecFileError("disabled", { stderr: "disabled" }), "", "");
-      })
-      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
-        cb(createExecFileError("inactive", { stderr: "inactive" }), "", "");
-      });
+    execFileMock.mockImplementationOnce((_cmd, _args, _opts, cb) => {
+      const err = new Error("disabled") as Error & { code?: number };
+      err.code = 1;
+      cb(err, "disabled", "");
+    });
     const result = await isSystemdServiceEnabled({ env: { HOME: "/tmp/openclaw-test-home" } });
     expect(result).toBe(false);
   });
@@ -310,26 +292,18 @@ describe("isSystemdServiceEnabled", () => {
     ).rejects.toThrow("systemctl is-enabled unavailable: permission denied");
   });
 
-  it("returns false when systemctl is-enabled exits with code 4 (not-found) in both scopes", async () => {
+  it("returns false when systemctl is-enabled exits with code 4 (not-found)", async () => {
     const { isSystemdServiceEnabled } = await import("./systemd.js");
     mockManagedUnitPresent();
-    execFileMock
-      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
-        // On Ubuntu 24.04, `systemctl --user is-enabled <unit>` exits with
-        // code 4 and prints "not-found" to stdout when the unit doesn't exist.
-        const err = new Error(
-          "Command failed: systemctl --user is-enabled openclaw-gateway.service",
-        ) as Error & { code?: number };
-        err.code = 4;
-        cb(err, "not-found\n", "");
-      })
-      // probeSystemScope: system is-enabled → not-found, system is-active → inactive
-      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
-        cb(createExecFileError("not-found", { code: 4 }), "not-found\n", "");
-      })
-      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
-        cb(createExecFileError("inactive", { stderr: "inactive" }), "", "");
-      });
+    execFileMock.mockImplementationOnce((_cmd, _args, _opts, cb) => {
+      // On Ubuntu 24.04, `systemctl --user is-enabled <unit>` exits with
+      // code 4 and prints "not-found" to stdout when the unit doesn't exist.
+      const err = new Error(
+        "Command failed: systemctl --user is-enabled openclaw-gateway.service",
+      ) as Error & { code?: number };
+      err.code = 4;
+      cb(err, "not-found\n", "");
+    });
     const result = await isSystemdServiceEnabled({ env: { HOME: "/tmp/openclaw-test-home" } });
     expect(result).toBe(false);
   });
@@ -661,50 +635,7 @@ describe("systemd system-scope fallback", () => {
     execFileMock.mockReset();
   });
 
-  it("treats an active system unit as enabled when the user unit file is missing", async () => {
-    const { isSystemdServiceEnabled } = await import("./systemd.js");
-    const err = new Error("missing unit") as NodeJS.ErrnoException;
-    err.code = "ENOENT";
-    vi.spyOn(fs, "access").mockRejectedValueOnce(err);
-
-    // probeSystemScope: is-enabled (system), is-active (system)
-    execFileMock
-      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
-        expect(args).toEqual(["is-enabled", "openclaw-gateway.service"]);
-        cb(createExecFileError("disabled", { stderr: "disabled" }), "", "");
-      })
-      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
-        expect(args).toEqual(["is-active", "openclaw-gateway.service"]);
-        cb(null, "active", "");
-      });
-
-    await expect(
-      isSystemdServiceEnabled({ env: { HOME: "/tmp/openclaw-test-home" } }),
-    ).resolves.toBe(true);
-  });
-
-  it("returns false when both user unit file and system scope are missing", async () => {
-    const { isSystemdServiceEnabled } = await import("./systemd.js");
-    const err = new Error("missing unit") as NodeJS.ErrnoException;
-    err.code = "ENOENT";
-    vi.spyOn(fs, "access").mockRejectedValueOnce(err);
-
-    execFileMock
-      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
-        expect(args).toEqual(["is-enabled", "openclaw-gateway.service"]);
-        cb(createExecFileError("disabled", { stderr: "disabled" }), "", "");
-      })
-      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
-        expect(args).toEqual(["is-active", "openclaw-gateway.service"]);
-        cb(createExecFileError("inactive", { stderr: "inactive" }), "", "");
-      });
-
-    await expect(
-      isSystemdServiceEnabled({ env: { HOME: "/tmp/openclaw-test-home" } }),
-    ).resolves.toBe(false);
-  });
-
-  it("falls back to system scope for restart when user-scope restart fails", async () => {
+  it("falls back to system scope for restart when user unit is not found", async () => {
     // assertSystemdAvailable: user status ok
     // runSystemdServiceAction: user restart fails, system restart succeeds
     execFileMock
@@ -732,7 +663,7 @@ describe("systemd system-scope fallback", () => {
     expect(write).toHaveBeenCalledTimes(1);
   });
 
-  it("reads runtime from system scope when user-scope show fails", async () => {
+  it("reads runtime from system scope when user unit is not found", async () => {
     const { readSystemdServiceRuntime } = await import("./systemd.js");
     // assertSystemdAvailable: user status ok
     execFileMock
