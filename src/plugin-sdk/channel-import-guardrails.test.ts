@@ -9,6 +9,7 @@ const ALLOWED_EXTENSION_PUBLIC_SEAMS = new Set([
   "index.js",
   "login-qr-api.js",
   "runtime-api.js",
+  "setup-api.js",
   "setup-entry.js",
 ]);
 const GUARDED_CHANNEL_EXTENSIONS = new Set([
@@ -341,7 +342,7 @@ describe("channel import guardrails", () => {
     for (const file of collectExtensionSourceFiles()) {
       const text = readFileSync(file, "utf8");
       expect(text, `${file} should not import another extension's src`).not.toMatch(
-        /["'][^"']*\.\.\/(?:\.\.\/)?(?!src\/)[^/"']+\/src\//,
+        /["'][^"']*(?:\.\.\/)+(?!src\/)[A-Za-z0-9][^/"']*\/src\//,
       );
     }
   });
