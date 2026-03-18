@@ -76,4 +76,11 @@ export type SubagentRunRecord = {
    * rather than rebuilding it (which would omit attachment suffixes).
    */
   extraSystemPrompt?: string;
+  /**
+   * The thinking override level (e.g. "low", "medium", "high") that was passed
+   * to the original agent dispatch.  Stored so that restart-recovery redispatch
+   * can forward the same reasoning settings instead of falling back to the
+   * agent default.
+   */
+  thinking?: string;
 };

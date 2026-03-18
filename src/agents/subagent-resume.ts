@@ -1005,6 +1005,11 @@ export async function redispatchSubagentRunAfterRestart(
                 return { model: modelStr };
               })()
             : undefined),
+          // Preserve the original thinking override so the redispatched run uses
+          // the same reasoning settings as the interrupted run, not the agent default.
+          ...(typeof entry.thinking === "string" && entry.thinking.trim()
+            ? { thinking: entry.thinking.trim() }
+            : undefined),
           // Note: spawnedBy and workspaceDir are intentionally NOT passed here.
           // AgentParamsSchema has additionalProperties: false and does not define
           // these fields.  The original spawn path (subagent-spawn.ts) applies

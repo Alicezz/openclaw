@@ -728,6 +728,12 @@ async function restoreSubagentRunsOnce(): Promise<void> {
     if (restoredCount === 0) {
       return;
     }
+    // Snapshot the set of run IDs loaded from disk BEFORE any async work.
+    // Runs inserted into subagentRuns after this point (fresh spawns during
+    // the rehydration/reconciliation window) must NOT be swept into the
+    // startup resume/recovery logic — they are actively running and would be
+    // misclassified as `resumable-fresh`, causing duplicate side effects.
+    const restoredRunIds = new Set(subagentRuns.keys());
     // Ordering: rehydrateSessionStoreEntries MUST run before
     // reconcileOrphanedRestoredRuns.  The rehydration step injects synthetic
     // session-store entries for runs whose store write fell inside the ~400 ms
@@ -744,12 +750,18 @@ async function restoreSubagentRunsOnce(): Promise<void> {
     if (subagentRuns.size === 0) {
       return;
     }
-    // Resume pending work.
+    // Resume pending work — only for runs that were present in the snapshot.
+    // Runs added after the snapshot (fresh spawns during the restore window)
+    // are excluded to prevent misclassification (#2950160020).
     ensureListener();
     if ([...subagentRuns.values()].some((entry) => entry.archiveAtMs)) {
       startSweeper();
     }
-    for (const runId of subagentRuns.keys()) {
+    for (const runId of restoredRunIds) {
+      // Skip if the run was pruned by reconcileOrphanedRestoredRuns.
+      if (!subagentRuns.has(runId)) {
+        continue;
+      }
       resumeSubagentRun(runId);
     }
 
@@ -1257,6 +1269,7 @@ export function registerSubagentRun(params: {
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
   extraSystemPrompt?: string;
+  thinking?: string;
 }) {
   const now = Date.now();
   const cfg = loadConfig();
@@ -1292,6 +1305,7 @@ export function registerSubagentRun(params: {
     attachmentsRootDir: params.attachmentsRootDir,
     retainAttachmentsOnKeep: params.retainAttachmentsOnKeep,
     extraSystemPrompt: params.extraSystemPrompt,
+    thinking: params.thinking,
   });
   ensureListener();
   persistSubagentRuns();
