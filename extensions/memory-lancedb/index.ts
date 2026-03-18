@@ -527,13 +527,24 @@ export default definePluginEntry({
 
             if (results.length === 1 && results[0].score > 0.9) {
               const matchId = results[0].entry.id;
-              const matchText = results[0].entry.text;
               // Acquire the same per-ID lock used by memory_refresh to prevent
               // a concurrent refresh from resurrecting a deleted memory.
+              // Re-search inside the lock to close the TOCTOU race between
+              // the initial search and lock acquisition.
               return withMemoryLock(matchId, async () => {
+                const verified = await db.search(vector, 5, 0.7);
+                const match = verified.find((r) => r.entry.id === matchId && r.score > 0.9);
+                if (!match) {
+                  return {
+                    content: [
+                      { type: "text", text: "Memory was modified before deletion — please retry." },
+                    ],
+                    details: { action: "conflict", id: matchId },
+                  };
+                }
                 await db.delete(matchId);
                 return {
-                  content: [{ type: "text", text: `Forgotten: "${matchText}"` }],
+                  content: [{ type: "text", text: `Forgotten: "${match.entry.text}"` }],
                   details: { action: "deleted", id: matchId },
                 };
               });
