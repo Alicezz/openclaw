@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { modelKey } from "../../agents/model-selection.js";
 import {
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
@@ -60,8 +61,8 @@ function buildResetSessionNoticeText(params: {
   defaultProvider: string;
   defaultModel: string;
 }): string {
-  const modelLabel = `${params.provider}/${params.model}`;
-  const defaultLabel = `${params.defaultProvider}/${params.defaultModel}`;
+  const modelLabel = modelKey(params.provider, params.model);
+  const defaultLabel = modelKey(params.defaultProvider, params.defaultModel);
   return modelLabel === defaultLabel
     ? `✅ New session started · model: ${modelLabel}`
     : `✅ New session started · model: ${modelLabel} (default: ${defaultLabel})`;
