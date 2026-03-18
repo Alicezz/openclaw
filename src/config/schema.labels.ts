@@ -221,6 +221,11 @@ export const FIELD_LABELS: Record<string, string> = {
   "tools.web.search.timeoutSeconds": "Web Search Timeout (sec)",
   "tools.web.search.cacheTtlMinutes": "Web Search Cache TTL (min)",
   "tools.web.search.brave.mode": "Brave Search Mode",
+  "tools.web.search.exa.apiKey": "Exa Search API Key", // pragma: allowlist secret
+  "tools.web.search.exa.type": "Exa Search Type",
+  "tools.web.search.exa.contents": "Exa Search Content Options",
+  "tools.web.search.exa.contents.highlights": "Exa Search Highlights",
+  "tools.web.search.exa.contents.text": "Exa Search Text",
   "tools.web.search.firecrawl.apiKey": "Firecrawl Search API Key", // pragma: allowlist secret
   "tools.web.search.firecrawl.baseUrl": "Firecrawl Search Base URL",
   "tools.web.search.gemini.apiKey": "Gemini Search API Key", // pragma: allowlist secret

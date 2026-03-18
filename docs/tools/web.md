@@ -1,5 +1,5 @@
 ---
-summary: "Web search + fetch tools (Brave, Firecrawl, Gemini, Grok, Kimi, and Perplexity providers)"
+summary: "Web search + fetch tools (Brave, Exa, Firecrawl, Gemini, Grok, Kimi, and Perplexity providers)"
 read_when:
   - You want to enable web_search or web_fetch
   - You need provider API key setup
@@ -11,7 +11,7 @@ title: "Web Tools"
 
 OpenClaw ships two lightweight web tools:
 
-- `web_search` — Search the web using Brave Search API, Firecrawl Search, Gemini with Google Search grounding, Grok, Kimi, or Perplexity Search API.
+- `web_search` — Search the web using Brave Search API, Exa, Firecrawl Search, Gemini with Google Search grounding, Grok, Kimi, or Perplexity Search API.
 - `web_fetch` — HTTP fetch + readable extraction (HTML → markdown/text).
 
 These are **not** browser automation. For JS-heavy sites or logins, use the
@@ -33,6 +33,7 @@ See [Brave Search setup](/brave-search) and [Perplexity Search setup](/perplexit
 | Provider                  | Result shape                       | Provider-specific filters                                    | Notes                                                                          | API key                                     |
 | ------------------------- | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------- |
 | **Brave Search API**      | Structured results with snippets   | `country`, `language`, `ui_lang`, time                       | Supports Brave `llm-context` mode                                              | `BRAVE_API_KEY`                             |
+| **Exa Search**            | Structured results with snippets   | `freshness`, `date_after`, `date_before`, `type`, `contents` | Supports neural, keyword, or auto search with optional highlights/text         | `EXA_API_KEY`                               |
 | **Firecrawl Search**      | Structured results with snippets   | Use `firecrawl_search` for Firecrawl-specific search options | Best for pairing search with Firecrawl scraping/extraction                     | `FIRECRAWL_API_KEY`                         |
 | **Gemini**                | AI-synthesized answers + citations | —                                                            | Uses Google Search grounding                                                   | `GEMINI_API_KEY`                            |
 | **Grok**                  | AI-synthesized answers + citations | —                                                            | Uses xAI web-grounded responses                                                | `XAI_API_KEY`                               |
@@ -45,10 +46,11 @@ The table above is alphabetical. If no `provider` is explicitly set, runtime aut
 
 1. **Brave** — `BRAVE_API_KEY` env var or `tools.web.search.apiKey` config
 2. **Gemini** — `GEMINI_API_KEY` env var or `tools.web.search.gemini.apiKey` config
-3. **Grok** — `XAI_API_KEY` env var or `tools.web.search.grok.apiKey` config
-4. **Kimi** — `KIMI_API_KEY` / `MOONSHOT_API_KEY` env var or `tools.web.search.kimi.apiKey` config
-5. **Perplexity** — `PERPLEXITY_API_KEY`, `OPENROUTER_API_KEY`, or `tools.web.search.perplexity.apiKey` config
-6. **Firecrawl** — `FIRECRAWL_API_KEY` env var or `tools.web.search.firecrawl.apiKey` config
+3. **Exa** — `EXA_API_KEY` env var or `tools.web.search.exa.apiKey` config
+4. **Grok** — `XAI_API_KEY` env var or `tools.web.search.grok.apiKey` config
+5. **Kimi** — `KIMI_API_KEY` / `MOONSHOT_API_KEY` env var or `tools.web.search.kimi.apiKey` config
+6. **Perplexity** — `PERPLEXITY_API_KEY`, `OPENROUTER_API_KEY`, or `tools.web.search.perplexity.apiKey` config
+7. **Firecrawl** — `FIRECRAWL_API_KEY` env var or `tools.web.search.firecrawl.apiKey` config
 
 If no keys are found, it falls back to Brave (you'll get a missing-key error prompting you to configure one).
 
@@ -91,6 +93,7 @@ See [Perplexity Search API Docs](https://docs.perplexity.ai/guides/search-quicks
 - Brave: `tools.web.search.apiKey`
 - Firecrawl: `tools.web.search.firecrawl.apiKey`
 - Gemini: `tools.web.search.gemini.apiKey`
+- Exa: `tools.web.search.exa.apiKey`
 - Grok: `tools.web.search.grok.apiKey`
 - Kimi: `tools.web.search.kimi.apiKey`
 - Perplexity: `tools.web.search.perplexity.apiKey`
@@ -102,6 +105,7 @@ All of these fields also support SecretRef objects.
 - Brave: `BRAVE_API_KEY`
 - Firecrawl: `FIRECRAWL_API_KEY`
 - Gemini: `GEMINI_API_KEY`
+- Exa: `EXA_API_KEY`
 - Grok: `XAI_API_KEY`
 - Kimi: `KIMI_API_KEY` or `MOONSHOT_API_KEY`
 - Perplexity: `PERPLEXITY_API_KEY` or `OPENROUTER_API_KEY`
@@ -120,6 +124,29 @@ For a gateway install, put these in `~/.openclaw/.env` (or your service environm
         enabled: true,
         provider: "brave",
         apiKey: "YOUR_BRAVE_API_KEY", // optional if BRAVE_API_KEY is set // pragma: allowlist secret
+      },
+    },
+  },
+}
+```
+
+**Exa Search:**
+
+```json5
+{
+  tools: {
+    web: {
+      search: {
+        enabled: true,
+        provider: "exa",
+        exa: {
+          apiKey: "exa-...", // optional if EXA_API_KEY is set
+          type: "auto",
+          contents: {
+            highlights: true,
+            text: false,
+          },
+        },
       },
     },
   },
@@ -269,6 +296,7 @@ Search the web using your configured provider.
   - **Brave**: `BRAVE_API_KEY` or `tools.web.search.apiKey`
   - **Firecrawl**: `FIRECRAWL_API_KEY` or `tools.web.search.firecrawl.apiKey`
   - **Gemini**: `GEMINI_API_KEY` or `tools.web.search.gemini.apiKey`
+  - **Exa**: `EXA_API_KEY` or `tools.web.search.exa.apiKey`
   - **Grok**: `XAI_API_KEY` or `tools.web.search.grok.apiKey`
   - **Kimi**: `KIMI_API_KEY`, `MOONSHOT_API_KEY`, or `tools.web.search.kimi.apiKey`
   - **Perplexity**: `PERPLEXITY_API_KEY`, `OPENROUTER_API_KEY`, or `tools.web.search.perplexity.apiKey`
@@ -308,6 +336,8 @@ If you set `tools.web.search.perplexity.baseUrl` / `model`, use `OPENROUTER_API_
 | `freshness`           | Time filter: `day`, `week`, `month`, or `year`        |
 | `date_after`          | Results after this date (YYYY-MM-DD)                  |
 | `date_before`         | Results before this date (YYYY-MM-DD)                 |
+| `type`                | Exa search mode: `neural`, `keyword`, or `auto`       |
+| `contents`            | Exa result content options: `highlights`, `text`      |
 | `ui_lang`             | UI language code (Brave only)                         |
 | `domain_filter`       | Domain allowlist/denylist array (Perplexity only)     |
 | `max_tokens`          | Total content budget, default 25000 (Perplexity only) |
@@ -355,6 +385,14 @@ await web_search({
   query: "detailed AI research",
   max_tokens: 50000,
   max_tokens_per_page: 4096,
+});
+
+// Exa neural search with highlights
+await web_search({
+  query: "recent robotics funding",
+  type: "neural",
+  freshness: "month",
+  contents: { highlights: true },
 });
 ```
 

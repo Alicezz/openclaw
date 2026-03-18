@@ -1,4 +1,5 @@
 import bravePlugin from "../../extensions/brave/index.js";
+import exaPlugin from "../../extensions/exa/index.js";
 import firecrawlPlugin from "../../extensions/firecrawl/index.js";
 import googlePlugin from "../../extensions/google/index.js";
 import moonshotPlugin from "../../extensions/moonshot/index.js";
@@ -22,6 +23,7 @@ type RegistrablePlugin = {
 
 const BUNDLED_WEB_SEARCH_PLUGINS: readonly RegistrablePlugin[] = [
   bravePlugin,
+  exaPlugin,
   firecrawlPlugin,
   googlePlugin,
   moonshotPlugin,

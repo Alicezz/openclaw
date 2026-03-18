@@ -667,13 +667,22 @@ export const FIELD_HELP: Record<string, string> = {
   "tools.message.broadcast.enabled": "Enable broadcast action (default: true).",
   "tools.web.search.enabled": "Enable the web_search tool (requires a provider API key).",
   "tools.web.search.provider":
-    'Search provider ("brave", "firecrawl", "gemini", "grok", "kimi", or "perplexity"). Auto-detected from available API keys if omitted.',
+    'Search provider ("brave", "exa", "firecrawl", "gemini", "grok", "kimi", or "perplexity"). Auto-detected from available API keys if omitted.',
   "tools.web.search.apiKey": "Brave Search API key (fallback: BRAVE_API_KEY env var).",
   "tools.web.search.maxResults": "Number of results to return (1-10).",
   "tools.web.search.timeoutSeconds": "Timeout in seconds for web_search requests.",
   "tools.web.search.cacheTtlMinutes": "Cache TTL in minutes for web_search results.",
   "tools.web.search.brave.mode":
     'Brave Search mode: "web" (URL results) or "llm-context" (pre-extracted page content for LLM grounding).',
+  "tools.web.search.exa.apiKey": "Exa API key for web search (fallback: EXA_API_KEY env var).",
+  "tools.web.search.exa.type":
+    'Exa search mode override: "neural", "keyword", or "auto" (default).',
+  "tools.web.search.exa.contents":
+    "Optional Exa content extraction settings for highlights and text fields.",
+  "tools.web.search.exa.contents.highlights":
+    "Include Exa highlights in result descriptions when available.",
+  "tools.web.search.exa.contents.text":
+    "Include Exa text content in result descriptions when available.",
   "tools.web.search.firecrawl.apiKey":
     "Firecrawl API key for web search (fallback: FIRECRAWL_API_KEY env var).",
   "tools.web.search.firecrawl.baseUrl":

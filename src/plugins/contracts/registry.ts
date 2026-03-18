@@ -5,6 +5,7 @@ import byteplusPlugin from "../../../extensions/byteplus/index.js";
 import cloudflareAiGatewayPlugin from "../../../extensions/cloudflare-ai-gateway/index.js";
 import copilotProxyPlugin from "../../../extensions/copilot-proxy/index.js";
 import elevenLabsPlugin from "../../../extensions/elevenlabs/index.js";
+import exaPlugin from "../../../extensions/exa/index.js";
 import firecrawlPlugin from "../../../extensions/firecrawl/index.js";
 import githubCopilotPlugin from "../../../extensions/github-copilot/index.js";
 import googlePlugin from "../../../extensions/google/index.js";
@@ -112,6 +113,7 @@ const bundledProviderPlugins: RegistrablePlugin[] = [
 
 const bundledWebSearchPlugins: Array<RegistrablePlugin & { credentialValue: unknown }> = [
   { ...bravePlugin, credentialValue: "BSA-test" },
+  { ...exaPlugin, credentialValue: "exa-test" },
   { ...firecrawlPlugin, credentialValue: "fc-test" },
   { ...googlePlugin, credentialValue: "AIza-test" },
   { ...moonshotPlugin, credentialValue: "sk-test" },
