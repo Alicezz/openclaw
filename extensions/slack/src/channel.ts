@@ -36,6 +36,11 @@ import {
 } from "./accounts.js";
 import { parseSlackBlocksInput } from "./blocks-input.js";
 import { createSlackWebClient } from "./client.js";
+import {
+  isSlackExecApprovalClientEnabled,
+  resolveSlackExecApprovalTarget,
+  shouldSuppressLocalSlackExecApprovalPrompt,
+} from "./exec-approvals.js";
 import { isSlackInteractiveRepliesEnabled } from "./interactive-replies.js";
 import { normalizeAllowListLower } from "./monitor/allow-list.js";
 import type { SlackProbe } from "./probe.js";
@@ -617,6 +622,35 @@ export const slackPlugin: ChannelPlugin<ResolvedSlackAccount> = {
         ...base,
         ...projectCredentialSnapshotFields(account),
       };
+    },
+  },
+  execApprovals: {
+    getInitiatingSurfaceState: ({ cfg, accountId }) =>
+      isSlackExecApprovalClientEnabled({ cfg, accountId })
+        ? { kind: "enabled" }
+        : { kind: "disabled" },
+    shouldSuppressLocalPrompt: ({ cfg, accountId, payload }) =>
+      shouldSuppressLocalSlackExecApprovalPrompt({ cfg, accountId, payload }),
+    hasConfiguredDmRoute: ({ cfg }) => {
+      return listEnabledSlackAccounts(cfg).some(({ accountId }) => {
+        if (!isSlackExecApprovalClientEnabled({ cfg, accountId })) {
+          return false;
+        }
+        const target = resolveSlackExecApprovalTarget({ cfg, accountId });
+        return target === "dm" || target === "both";
+      });
+    },
+    shouldSuppressForwardingFallback: ({ cfg, target, request }) => {
+      const channel = target.channel?.trim().toLowerCase();
+      if (channel !== "slack") {
+        return false;
+      }
+      const requestChannel = request.request.turnSourceChannel?.trim().toLowerCase() ?? "";
+      if (requestChannel !== "slack") {
+        return false;
+      }
+      const accountId = target.accountId?.trim() || request.request.turnSourceAccountId?.trim();
+      return isSlackExecApprovalClientEnabled({ cfg, accountId });
     },
   },
   gateway: {

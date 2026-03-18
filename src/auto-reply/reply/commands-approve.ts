@@ -1,3 +1,7 @@
+import {
+  isSlackExecApprovalApprover,
+  isSlackExecApprovalClientEnabled,
+} from "../../../extensions/slack/src/exec-approvals.js";
 import { callGateway } from "../../gateway/call.js";
 import { logVerbose } from "../../globals.js";
 import {
@@ -111,6 +115,27 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
       return {
         shouldContinue: false,
         reply: { text: "❌ You are not authorized to approve exec requests on Telegram." },
+      };
+    }
+  }
+
+  if (params.command.channel === "slack") {
+    if (!isSlackExecApprovalClientEnabled({ cfg: params.cfg, accountId: params.ctx.AccountId })) {
+      return {
+        shouldContinue: false,
+        reply: { text: "❌ Slack exec approvals are not enabled for this bot account." },
+      };
+    }
+    if (
+      !isSlackExecApprovalApprover({
+        cfg: params.cfg,
+        accountId: params.ctx.AccountId,
+        senderId: params.command.senderId,
+      })
+    ) {
+      return {
+        shouldContinue: false,
+        reply: { text: "❌ You are not authorized to approve exec requests on Slack." },
       };
     }
   }
