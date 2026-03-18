@@ -393,6 +393,7 @@ const allKnownTestFiles = [
 ];
 const isUnitIsolatedFile = (fileFilter) =>
   unitIsolatedFiles.includes(fileFilter) || unitSingletonIsolatedFiles.includes(fileFilter);
+const isUnitSingletonIsolatedFile = (fileFilter) => unitSingletonIsolatedFiles.includes(fileFilter);
 const inferTarget = (fileFilter) => {
   const isolated = isUnitIsolatedFile(fileFilter);
   if (fileFilter.endsWith(".live.test.ts")) {
@@ -439,9 +440,11 @@ const isVmForkSingletonUnitFile = (fileFilter) => unitVmForkSingletonFiles.inclu
 const createTargetedEntry = (owner, isolated, filters) => {
   const name = isolated ? `${owner}-isolated` : owner;
   const forceForks = isolated;
+  const skipSharding = filters.length <= 1;
   if (owner === "unit-vmforks") {
     return {
       name,
+      skipSharding,
       args: [
         "vitest",
         "run",
@@ -456,13 +459,14 @@ const createTargetedEntry = (owner, isolated, filters) => {
   if (owner === "unit") {
     return {
       name,
+      skipSharding,
       args: [
         "vitest",
         "run",
         "--config",
         "vitest.unit.config.ts",
         `--pool=${forceForks ? "forks" : useVmForks ? "vmForks" : "forks"}`,
-        ...(disableIsolation ? ["--isolate=false"] : []),
+        ...(!forceForks && disableIsolation ? ["--isolate=false"] : []),
         ...filters,
       ],
     };
@@ -470,6 +474,7 @@ const createTargetedEntry = (owner, isolated, filters) => {
   if (owner === "extensions") {
     return {
       name,
+      skipSharding,
       args: [
         "vitest",
         "run",
@@ -483,12 +488,14 @@ const createTargetedEntry = (owner, isolated, filters) => {
   if (owner === "gateway") {
     return {
       name,
+      skipSharding,
       args: ["vitest", "run", "--config", "vitest.gateway.config.ts", "--pool=forks", ...filters],
     };
   }
   if (owner === "channels") {
     return {
       name,
+      skipSharding,
       args: [
         "vitest",
         "run",
@@ -502,17 +509,20 @@ const createTargetedEntry = (owner, isolated, filters) => {
   if (owner === "live") {
     return {
       name,
+      skipSharding,
       args: ["vitest", "run", "--config", "vitest.live.config.ts", ...filters],
     };
   }
   if (owner === "e2e") {
     return {
       name,
+      skipSharding,
       args: ["vitest", "run", "--config", "vitest.e2e.config.ts", ...filters],
     };
   }
   return {
     name,
+    skipSharding,
     args: [
       "vitest",
       "run",
@@ -533,7 +543,10 @@ const targetedEntries = (() => {
       const normalizedFile = normalizeRepoPath(fileFilter);
       const target = inferTarget(normalizedFile);
       const owner = isVmForkSingletonUnitFile(normalizedFile) ? "unit-vmforks" : target.owner;
-      const key = `${owner}:${target.isolated ? "isolated" : "default"}`;
+      const singletonSuffix = isUnitSingletonIsolatedFile(normalizedFile)
+        ? `:${normalizedFile}`
+        : "";
+      const key = `${owner}:${target.isolated ? "isolated" : "default"}${singletonSuffix}`;
       const files = acc.get(key) ?? [];
       files.push(normalizedFile);
       acc.set(key, files);
@@ -542,7 +555,8 @@ const targetedEntries = (() => {
     for (const matchedFile of matchedFiles) {
       const target = inferTarget(matchedFile);
       const owner = isVmForkSingletonUnitFile(matchedFile) ? "unit-vmforks" : target.owner;
-      const key = `${owner}:${target.isolated ? "isolated" : "default"}`;
+      const singletonSuffix = isUnitSingletonIsolatedFile(matchedFile) ? `:${matchedFile}` : "";
+      const key = `${owner}:${target.isolated ? "isolated" : "default"}${singletonSuffix}`;
       const files = acc.get(key) ?? [];
       files.push(matchedFile);
       acc.set(key, files);
@@ -723,7 +737,7 @@ const runOnce = (entry, extraArgs = []) =>
   });
 
 const run = async (entry, extraArgs = []) => {
-  if (shardCount <= 1) {
+  if (shardCount <= 1 || entry.skipSharding === true) {
     return runOnce(entry, extraArgs);
   }
   if (shardIndexOverride !== null) {
