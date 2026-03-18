@@ -601,6 +601,75 @@ describe("readSystemdServiceExecStart", () => {
   });
 });
 
+describe("systemd system-scope fallback", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    execFileMock.mockReset();
+  });
+
+  it("falls back to system scope for restart when user unit is not found", async () => {
+    // assertSystemdAvailable: user status ok
+    // runSystemdServiceAction: user restart fails, system restart succeeds
+    execFileMock
+      .mockImplementationOnce((_cmd: string, _args: string[], _opts: unknown, cb: Function) =>
+        cb(null, "", ""),
+      )
+      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
+        expect(args).toEqual(["--user", "restart", "openclaw-gateway.service"]);
+        cb(
+          createExecFileError("Unit not found", {
+            stderr: "Unit openclaw-gateway.service not found.",
+          }),
+          "",
+          "",
+        );
+      })
+      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
+        expect(args).toEqual(["restart", "openclaw-gateway.service"]);
+        cb(null, "", "");
+      });
+
+    const { write, stdout } = createWritableStreamMock();
+    const result = await restartSystemdService({ stdout, env: {} });
+    expect(result).toEqual({ outcome: "completed", scope: "system" });
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads runtime from system scope when user unit is not found", async () => {
+    const { readSystemdServiceRuntime } = await import("./systemd.js");
+    // assertSystemdAvailable: user status ok
+    execFileMock
+      .mockImplementationOnce((_cmd: string, _args: string[], _opts: unknown, cb: Function) =>
+        cb(null, "", ""),
+      )
+      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
+        // user-scope show fails
+        expect(args[0]).toBe("--user");
+        expect(args[1]).toBe("show");
+        cb(
+          createExecFileError("Unit not found", {
+            stderr: "Unit openclaw-gateway.service not found.",
+          }),
+          "",
+          "",
+        );
+      })
+      .mockImplementationOnce((_cmd: string, args: string[], _opts: unknown, cb: Function) => {
+        // system-scope show succeeds
+        expect(args[0]).toBe("show");
+        expect(args[1]).toBe("openclaw-gateway.service");
+        cb(null, ["ActiveState=active", "SubState=running", "MainPID=123"].join("\n"), "");
+      });
+
+    const runtime = await readSystemdServiceRuntime({ HOME: "/tmp/openclaw-test-home" });
+    expect(runtime).toMatchObject({
+      status: "running",
+      pid: 123,
+      detail: "system scope",
+    });
+  });
+});
+
 describe("systemd service control", () => {
   const assertMachineRestartArgs = (args: string[]) => {
     assertMachineUserSystemctlArgs(args, "debian", "restart", GATEWAY_SERVICE);
