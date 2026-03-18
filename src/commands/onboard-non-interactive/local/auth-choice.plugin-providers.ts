@@ -42,13 +42,6 @@ function buildIsolatedProviderResolutionConfig(
     plugins: {
       ...cfg.plugins,
       allow: Array.from(allow),
-      entries: {
-        ...cfg.plugins?.entries,
-        [providerId]: {
-          ...cfg.plugins?.entries?.[providerId],
-          enabled: true,
-        },
-      },
     },
   };
 }

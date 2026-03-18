@@ -5,6 +5,7 @@ import type { WizardPrompter } from "../wizard/prompts.js";
 import { normalizeLegacyOnboardAuthChoice } from "./auth-choice-legacy.js";
 import { applyAuthChoiceApiProviders } from "./auth-choice.apply.api-providers.js";
 import { normalizeApiKeyTokenProviderAuthChoice } from "./auth-choice.apply.api-providers.js";
+import { applyAuthChoiceAzureOpenAI } from "./auth-choice.apply.azure-openai.js";
 import { applyAuthChoiceOAuth } from "./auth-choice.apply.oauth.js";
 import type { AuthChoice, OnboardOptions } from "./onboard-types.js";
 
@@ -41,6 +42,7 @@ export async function applyAuthChoice(
       : { ...params, authChoice: normalizedProviderAuthChoice };
   const handlers: Array<(p: ApplyAuthChoiceParams) => Promise<ApplyAuthChoiceResult | null>> = [
     applyAuthChoiceLoadedPluginProvider,
+    applyAuthChoiceAzureOpenAI,
     applyAuthChoiceOAuth,
     applyAuthChoiceApiProviders,
   ];

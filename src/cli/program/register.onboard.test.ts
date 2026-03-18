@@ -20,11 +20,36 @@ vi.mock("../../commands/auth-choice-options.js", () => ({
 vi.mock("../../commands/onboard-core-auth-flags.js", () => ({
   CORE_ONBOARD_AUTH_FLAGS: [
     {
+      cliFlag: "--azure-openai-api-key",
+      cliOption: "--azure-openai-api-key <value>",
+      description: "Azure OpenAI API key",
+      optionKey: "azureOpenaiApiKey",
+    },
+    {
+      cliFlag: "--azure-openai-base-url",
+      cliOption: "--azure-openai-base-url <value>",
+      description: "Azure OpenAI base URL",
+      optionKey: "azureOpenaiBaseUrl",
+    },
+    {
+      cliFlag: "--azure-openai-model-id",
+      cliOption: "--azure-openai-model-id <value>",
+      description: "Azure OpenAI model ID",
+      optionKey: "azureOpenaiModelId",
+    },
+    {
+      cliFlag: "--azure-openai-api-version",
+      cliOption: "--azure-openai-api-version <value>",
+      description: "Azure OpenAI API version",
+      optionKey: "azureOpenaiApiVersion",
+    },
+    {
+      cliFlag: "--mistral-api-key",
       cliOption: "--mistral-api-key <key>",
       description: "Mistral API key",
       optionKey: "mistralApiKey",
     },
-  ] as Array<{ cliOption: string; description: string; optionKey: string }>,
+  ] as Array<{ cliFlag: string; cliOption: string; description: string; optionKey: string }>,
 }));
 
 vi.mock("../../plugins/provider-auth-choices.js", () => ({
@@ -149,6 +174,27 @@ describe("registerOnboardCommand", () => {
     expect(setupWizardCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayTokenRefEnv: "OPENCLAW_GATEWAY_TOKEN",
+      }),
+      runtime,
+    );
+  });
+
+  it("forwards Azure OpenAI version/base/model flags", async () => {
+    await runCli([
+      "onboard",
+      "--azure-openai-base-url",
+      "https://example.openai.azure.com",
+      "--azure-openai-model-id",
+      "gpt-5.4",
+      "--azure-openai-api-version",
+      "2025-04-01-preview",
+    ]);
+
+    expect(setupWizardCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        azureOpenaiBaseUrl: "https://example.openai.azure.com",
+        azureOpenaiModelId: "gpt-5.4",
+        azureOpenaiApiVersion: "2025-04-01-preview",
       }),
       runtime,
     );

@@ -43,6 +43,18 @@ const NON_INTERACTIVE_DEFAULT_OPTIONS = {
   json: true,
 } as const;
 
+function withDeniedPlugins(
+  config: Record<string, unknown>,
+  deny: string[],
+): Record<string, unknown> {
+  return {
+    ...config,
+    plugins: {
+      deny,
+    },
+  };
+}
+
 let ensureAuthProfileStore: typeof import("../agents/auth-profiles.js").ensureAuthProfileStore;
 let upsertAuthProfile: typeof import("../agents/auth-profiles.js").upsertAuthProfile;
 
@@ -162,6 +174,13 @@ async function runNonInteractiveSetupWithDefaults(
   );
 }
 
+async function writeInitialConfig(
+  configPath: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+}
+
 async function runOnboardingAndReadConfig(
   env: OnboardEnv,
   options: Record<string, unknown>,
@@ -264,6 +283,20 @@ describe("onboard (non-interactive): provider auth", () => {
     });
   });
 
+  it("fails MiniMax non-interactive setup when plugin is disabled", async () => {
+    await withOnboardEnv("openclaw-onboard-minimax-disabled-", async ({ runtime, configPath }) => {
+      const cfg = withDeniedPlugins({}, ["minimax"]);
+      await writeInitialConfig(configPath, cfg);
+
+      await expect(
+        runNonInteractiveSetupWithDefaults(runtime, {
+          authChoice: "minimax-global-api",
+          minimaxApiKey: "sk-minimax-test", // pragma: allowlist secret
+        }),
+      ).rejects.toThrow("MiniMax plugin is disabled");
+    });
+  });
+
   it("stores Z.AI API key and uses global baseUrl by default", async () => {
     await withZaiProbeFetch(
       {
@@ -288,6 +321,20 @@ describe("onboard (non-interactive): provider auth", () => {
           });
         }),
     );
+  });
+
+  it("fails Z.AI non-interactive setup when plugin is disabled", async () => {
+    await withOnboardEnv("openclaw-onboard-zai-disabled-", async ({ runtime, configPath }) => {
+      const cfg = withDeniedPlugins({}, ["zai"]);
+      await writeInitialConfig(configPath, cfg);
+
+      await expect(
+        runNonInteractiveSetupWithDefaults(runtime, {
+          authChoice: "zai-api-key",
+          zaiApiKey: "zai-test-key", // pragma: allowlist secret
+        }),
+      ).rejects.toThrow("Z.AI plugin is disabled");
+    });
   });
 
   it("supports Z.AI CN coding endpoint auth choice", async () => {
@@ -440,6 +487,145 @@ describe("onboard (non-interactive): provider auth", () => {
     });
   });
 
+  it("stores Azure OpenAI API key and sets Azure OpenAI default model", async () => {
+    await withOnboardEnv("openclaw-onboard-azure-openai-", async (env) => {
+      const cfg = await runOnboardingAndReadConfig(env, {
+        authChoice: "azure-openai-api-key",
+        azureOpenaiApiKey: "azure-test-key",
+        azureOpenaiBaseUrl: "https://example.openai.azure.com",
+        azureOpenaiModelId: "gpt-5.4",
+        azureOpenaiApiVersion: "2025-04-01-preview",
+      });
+
+      expect(cfg.auth?.profiles?.["azure-openai-responses:default"]?.provider).toBe(
+        "azure-openai-responses",
+      );
+      expect(cfg.auth?.profiles?.["azure-openai-responses:default"]?.mode).toBe("api_key");
+      expect(cfg.models?.providers?.["azure-openai-responses"]?.baseUrl).toBe(
+        "https://example.openai.azure.com/openai/v1",
+      );
+      expect(cfg.models?.providers?.["azure-openai-responses"]?.api).toBe("openai-responses");
+      expect(cfg.agents?.defaults?.model?.primary).toBe("azure-openai-responses/gpt-5.4");
+      const defaultsWithModels = cfg.agents?.defaults as
+        | {
+            models?: Record<string, { params?: Record<string, unknown> }>;
+          }
+        | undefined;
+      expect(defaultsWithModels?.models?.["azure-openai-responses/gpt-5.4"]?.params).toMatchObject({
+        azureApiVersion: "2025-04-01-preview",
+      });
+      await expectApiKeyProfile({
+        profileId: "azure-openai-responses:default",
+        provider: "azure-openai-responses",
+        key: "azure-test-key",
+      });
+    });
+  });
+
+  it("uses AZURE_OPENAI_API_KEY env fallback for Azure non-interactive auth", async () => {
+    await withOnboardEnv("openclaw-onboard-azure-openai-env-fallback-", async (env) => {
+      await withEnvAsync(
+        {
+          AZURE_OPENAI_API_KEY: "azure-env-key", // pragma: allowlist secret
+        },
+        async () => {
+          const cfg = await runOnboardingAndReadConfig(env, {
+            authChoice: "azure-openai-api-key",
+            azureOpenaiBaseUrl: "https://example.openai.azure.com",
+            azureOpenaiModelId: "gpt-4.1",
+          });
+
+          expect(cfg.auth?.profiles?.["azure-openai-responses:default"]?.provider).toBe(
+            "azure-openai-responses",
+          );
+          await expectApiKeyProfile({
+            profileId: "azure-openai-responses:default",
+            provider: "azure-openai-responses",
+            key: "azure-env-key",
+          });
+        },
+      );
+    });
+  });
+
+  it("fails Azure OpenAI onboarding when base URL/model ID flags are missing", async () => {
+    await withOnboardEnv("openclaw-onboard-azure-openai-missing-flags-", async ({ runtime }) => {
+      await expect(
+        runNonInteractiveSetupWithDefaults(runtime, {
+          authChoice: "azure-openai-api-key",
+          azureOpenaiApiKey: "azure-test-key",
+          skipSkills: true,
+        }),
+      ).rejects.toThrow(
+        'Auth choice "azure-openai-api-key" requires Azure base URL and model/deployment ID.',
+      );
+      const store = ensureAuthProfileStore();
+      expect(store.profiles["azure-openai-responses:default"]).toBeUndefined();
+    });
+  });
+
+  it("fails Azure OpenAI onboarding when base URL is not an Azure endpoint", async () => {
+    await withOnboardEnv("openclaw-onboard-azure-openai-invalid-base-url-", async ({ runtime }) => {
+      await expect(
+        runNonInteractiveSetupWithDefaults(runtime, {
+          authChoice: "azure-openai-api-key",
+          azureOpenaiApiKey: "azure-test-key",
+          azureOpenaiBaseUrl: "https://api.openai.com/v1",
+          azureOpenaiModelId: "gpt-4.1",
+          skipSkills: true,
+        }),
+      ).rejects.toThrow(/Azure OpenAI base URL must use an Azure host/);
+    });
+  });
+
+  it("infers Azure OpenAI auth choice from --azure-openai-api-key and sets default model", async () => {
+    await withOnboardEnv("openclaw-onboard-azure-openai-infer-", async (env) => {
+      const cfg = await runOnboardingAndReadConfig(env, {
+        azureOpenaiApiKey: "azure-test-key",
+        azureOpenaiBaseUrl: "https://example.openai.azure.com/openai/v1",
+        azureOpenaiModelId: "gpt-4.1",
+      });
+
+      expect(cfg.auth?.profiles?.["azure-openai-responses:default"]?.provider).toBe(
+        "azure-openai-responses",
+      );
+      expect(cfg.auth?.profiles?.["azure-openai-responses:default"]?.mode).toBe("api_key");
+      expect(cfg.agents?.defaults?.model?.primary).toBe("azure-openai-responses/gpt-4.1");
+      const defaultsWithModels = cfg.agents?.defaults as
+        | {
+            models?: Record<string, { params?: Record<string, unknown> }>;
+          }
+        | undefined;
+      expect(defaultsWithModels?.models?.["azure-openai-responses/gpt-4.1"]?.params).toEqual({});
+      await expectApiKeyProfile({
+        profileId: "azure-openai-responses:default",
+        provider: "azure-openai-responses",
+        key: "azure-test-key",
+      });
+    });
+  });
+
+  it("stores Azure preview apiVersion in model params when provided", async () => {
+    await withOnboardEnv("openclaw-onboard-azure-openai-preview-version-", async (env) => {
+      const cfg = await runOnboardingAndReadConfig(env, {
+        authChoice: "azure-openai-api-key",
+        azureOpenaiApiKey: "azure-test-key",
+        azureOpenaiBaseUrl: "https://example.openai.azure.com/openai/v1",
+        azureOpenaiModelId: "gpt-5.4",
+        azureOpenaiApiVersion: "2025-04-01-preview",
+      });
+
+      const defaultsWithModels = cfg.agents?.defaults as
+        | {
+            models?: Record<string, { params?: Record<string, unknown> }>;
+          }
+        | undefined;
+      expect(defaultsWithModels?.models?.["azure-openai-responses/gpt-5.4"]?.params).toMatchObject({
+        azureApiVersion: "2025-04-01-preview",
+      });
+    });
+  });
+
   it.each([
     {
       name: "anthropic",
@@ -456,6 +642,14 @@ describe("onboard (non-interactive): provider auth", () => {
       optionKey: "openaiApiKey",
       flagName: "--openai-api-key",
       envVar: "OPENAI_API_KEY",
+    },
+    {
+      name: "azure-openai",
+      prefix: "openclaw-onboard-ref-flag-azure-openai-",
+      authChoice: "azure-openai-api-key",
+      optionKey: "azureOpenaiApiKey",
+      flagName: "--azure-openai-api-key",
+      envVar: "AZURE_OPENAI_API_KEY",
     },
     {
       name: "openrouter",
@@ -499,6 +693,12 @@ describe("onboard (non-interactive): provider auth", () => {
           secretInputMode: "ref", // pragma: allowlist secret
           [optionKey]: providedSecret,
           skipSkills: true,
+          ...(authChoice === "azure-openai-api-key"
+            ? {
+                azureOpenaiBaseUrl: "https://example.openai.azure.com",
+                azureOpenaiModelId: "gpt-4.1",
+              }
+            : {}),
         };
         const envOverrides: Record<string, string | undefined> = {
           [envVar]: undefined,

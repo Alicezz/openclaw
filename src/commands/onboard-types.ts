@@ -12,6 +12,7 @@ export type BuiltInAuthChoice =
   | "chutes"
   | "openai-codex"
   | "openai-api-key"
+  | "azure-openai-api-key"
   | "openrouter-api-key"
   | "kilocode-api-key"
   | "litellm-api-key"
@@ -56,6 +57,7 @@ export type AuthChoice = BuiltInAuthChoice | (string & {});
 
 export type BuiltInAuthChoiceGroupId =
   | "openai"
+  | "azure-openai"
   | "anthropic"
   | "chutes"
   | "google"
@@ -116,6 +118,10 @@ export type OnboardOptions = {
   secretInputMode?: SecretInputMode;
   anthropicApiKey?: string;
   openaiApiKey?: string;
+  azureOpenaiApiKey?: string;
+  azureOpenaiBaseUrl?: string;
+  azureOpenaiModelId?: string;
+  azureOpenaiApiVersion?: string;
   mistralApiKey?: string;
   openrouterApiKey?: string;
   kilocodeApiKey?: string;
