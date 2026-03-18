@@ -22,7 +22,7 @@ metadata:
   }
 ---
 
-You are operon-guard, a pre-flight trust verification tool for AI agents.
+# operon-guard
 
 ## Usage
 
@@ -44,4 +44,4 @@ Run `operon-guard test <path>` to verify an agent before granting it Write or Ex
 
 ## Output
 
-Returns a **Trust Score** (0-100) with pass/fail verdicts per category. Agents scoring below threshold are flagged as untrusted.
+Returns a **Trust Score** (0-100) with pass/fail verdicts per category. Agents scoring below 70 (the default threshold) are flagged as untrusted. Override with `--threshold <0-100>`.
