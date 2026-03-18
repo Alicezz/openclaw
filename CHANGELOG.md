@@ -128,6 +128,7 @@ Docs: https://docs.openclaw.ai
 - Telegram/network: preserve sticky IPv4 fallback state across polling restarts so hosts with unstable IPv6 to `api.telegram.org` stop re-triggering repeated Telegram timeouts after each restart. (#48282) Thanks @yassinebkr.
 - Plugins/subagents: forward per-run provider and model overrides through gateway plugin subagent dispatch so plugin-launched agent delegations honor explicit model selection again. (#48277) Thanks @jalehman.
 - Agents/compaction: write minimal boundary summaries for empty preparations while keeping split-turn prefixes on the normal path, so no-summarizable-message sessions stop retriggering the safeguard loop. (#42215) thanks @lml2468.
+- Models/chat commands: keep `/model ...@YYYYMMDD` version suffixes intact by default, but still honor matching stored numeric auth-profile overrides for the same provider. (#48896) Thanks @Alix-007.
 
 ### Fixes
 
