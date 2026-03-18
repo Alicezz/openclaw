@@ -45,7 +45,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
-    streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream === "function",
+    streamReasoning: reasoningMode === "stream",
     deltaBuffer: "",
     blockBuffer: "",
     // Track if a streamed chunk opened a <think> block (stateful across chunks).
@@ -55,6 +55,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     lastStreamedAssistantCleaned: undefined,
     emittedAssistantUpdate: false,
     lastStreamedReasoning: undefined,
+    lastStreamedReasoningRaw: undefined,
     lastBlockReplyText: undefined,
     reasoningStreamOpen: false,
     assistantMessageIndex: 0,
@@ -131,6 +132,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     state.emittedAssistantUpdate = false;
     state.lastBlockReplyText = undefined;
     state.lastStreamedReasoning = undefined;
+    state.lastStreamedReasoningRaw = undefined;
     state.lastReasoningSent = undefined;
     state.reasoningStreamOpen = false;
     state.suppressBlockChunks = false;
@@ -554,23 +556,28 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   };
 
   const emitReasoningStream = (text: string) => {
-    if (!state.streamReasoning || !params.onReasoningStream) {
+    if (!state.streamReasoning) {
       return;
     }
-    const formatted = formatReasoningMessage(text);
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+    const formatted = formatReasoningMessage(trimmed);
     if (!formatted) {
       return;
     }
     if (formatted === state.lastStreamedReasoning) {
       return;
     }
-    // Compute delta: new text since the last emitted reasoning.
+    // Compute raw delta: new incremental text only, without decoration.
     // Guard against non-prefix changes (e.g. trim/format altering earlier content).
-    const prior = state.lastStreamedReasoning ?? "";
-    const delta = formatted.startsWith(prior) ? formatted.slice(prior.length) : formatted;
+    const priorRaw = state.lastStreamedReasoningRaw ?? "";
+    const delta = trimmed.startsWith(priorRaw) ? trimmed.slice(priorRaw.length) : trimmed;
     state.lastStreamedReasoning = formatted;
+    state.lastStreamedReasoningRaw = trimmed;
 
-    // Broadcast thinking event to WebSocket clients in real-time
+    // Broadcast thinking event to WebSocket clients: formatted text, plain incremental delta.
     emitAgentEvent({
       runId: params.runId,
       stream: "thinking",
@@ -580,9 +587,11 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       },
     });
 
-    void params.onReasoningStream({
-      text: formatted,
-    });
+    // onReasoningStream is used by CLI / messaging-channel paths — keep formatted output.
+    if (params.onReasoningStream) {
+      const formatted = formatReasoningMessage(trimmed);
+      void params.onReasoningStream({ text: formatted });
+    }
   };
 
   const resetForCompactionRetry = () => {

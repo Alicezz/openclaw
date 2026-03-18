@@ -137,6 +137,7 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
+    reasoningDefault: z.union([z.literal("off"), z.literal("on"), z.literal("stream")]).optional(),
     thinkingDefault: z
       .union([
         z.literal("off"),

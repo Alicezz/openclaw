@@ -653,6 +653,7 @@ export async function startGatewayServer(
     removeChatRun,
     chatAbortControllers,
     toolEventRecipients,
+    thinkingEventRecipients,
   } = await createGatewayRuntimeState({
     cfg: cfgAtStart,
     bindHost,
@@ -793,6 +794,7 @@ export async function startGatewayServer(
           resolveSessionKeyForRun,
           clearAgentRunContext,
           toolEventRecipients,
+          thinkingEventRecipients,
         }),
       );
 
@@ -914,6 +916,7 @@ export async function startGatewayServer(
     addChatRun,
     removeChatRun,
     registerToolEventRecipient: toolEventRecipients.add,
+    registerThinkingEventRecipient: thinkingEventRecipients.add,
     dedupe,
     wizardSessions,
     findRunningWizard,
