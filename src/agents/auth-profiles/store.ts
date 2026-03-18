@@ -14,6 +14,13 @@ type RejectedCredentialEntry = { key: string; reason: CredentialRejectReason };
 type LoadAuthProfileStoreOptions = {
   allowKeychainPrompt?: boolean;
   readOnly?: boolean;
+  /**
+   * When true, skip the main-agent inheritance fallback that clones main profiles
+   * into a subagent directory when the subagent has no auth-profiles.json.
+   * Use for the pre-lock migration trigger in auth-clean to avoid materialising
+   * main credentials in the subagent file before cleanup (scope bleed).
+   */
+  skipInheritance?: boolean;
 };
 
 const AUTH_PROFILE_TYPES = new Set<AuthProfileCredential["type"]>(["api_key", "oauth", "token"]);
@@ -79,6 +86,14 @@ export function clearRuntimeAuthProfileStoreSnapshots(): void {
 
 export async function updateAuthProfileStoreWithLock(params: {
   agentDir?: string;
+  /**
+   * When true, load only the agent-local store inside the lock instead of the
+   * merged (main + agent-local) view returned by ensureAuthProfileStore.
+   * Use for non-default agents when the write target is the agent-local file
+   * only, to prevent main-store profiles from being written into that file
+   * (credential scope bleed).
+   */
+  agentLocalOnly?: boolean;
   updater: (store: AuthProfileStore) => boolean;
 }): Promise<AuthProfileStore | null> {
   const authPath = resolveAuthStorePath(params.agentDir);
@@ -86,7 +101,9 @@ export async function updateAuthProfileStoreWithLock(params: {
 
   try {
     return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
-      const store = ensureAuthProfileStore(params.agentDir);
+      const store = params.agentLocalOnly
+        ? loadAgentLocalAuthProfileStore(params.agentDir)
+        : ensureAuthProfileStore(params.agentDir);
       const shouldSave = params.updater(store);
       if (shouldSave) {
         saveAuthProfileStore(store, params.agentDir);
@@ -388,8 +405,11 @@ function loadAuthProfileStoreForAgent(
     return asStore;
   }
 
-  // Fallback: inherit auth-profiles from main agent if subagent has none
-  if (agentDir && !readOnly) {
+  // Fallback: inherit auth-profiles from main agent if subagent has none.
+  // Skipped when skipInheritance:true (e.g. auth-clean pre-lock migration trigger)
+  // to prevent materialising main credentials in the subagent file before cleanup
+  // runs — that would cause scope bleed and a misleading no-op clean. (#2915653312)
+  if (agentDir && !readOnly && !options?.skipInheritance) {
     const mainAuthPath = resolveAuthStorePath(); // without agentDir = main
     const mainRaw = loadJsonFile(mainAuthPath);
     const mainStore = coerceAuthStore(mainRaw);
@@ -415,15 +435,24 @@ function loadAuthProfileStoreForAgent(
   // Keep external CLI credentials visible in runtime even during read-only loads.
   const syncedCli = syncExternalCliCredentials(store, { log: !readOnly });
   const forceReadOnly = process.env.OPENCLAW_AUTH_STORE_READONLY === "1";
-  const shouldWrite = !readOnly && !forceReadOnly && (legacy !== null || mergedOAuth || syncedCli);
-  if (shouldWrite) {
+
+  // Legacy migration (auth.json → auth-profiles.json) is suppressed when the
+  // caller passes readOnly:true (dry-run or probe-mode loads that must not write).
+  // auth-clean.ts probes readOnly:true, then performs a separate readOnly:false
+  // load after guards pass to trigger migration before updateAuthProfileStoreWithLock's
+  // ensureAuthStoreFile can create an empty placeholder. (#2914491523, #2914711181, #2915530629)
+  const shouldMigrateLegacy = !readOnly && !forceReadOnly && legacy !== null;
+  // External-CLI / OAuth extras are still suppressed during read-only probes.
+  const shouldPersistExtras = !readOnly && !forceReadOnly && (mergedOAuth || syncedCli);
+
+  if (shouldMigrateLegacy || shouldPersistExtras) {
     saveJsonFile(authPath, store);
   }
 
   // PR #368: legacy auth.json could get re-migrated from other agent dirs,
   // overwriting fresh OAuth creds with stale tokens (fixes #363). Delete only
   // after we've successfully written auth-profiles.json.
-  if (shouldWrite && legacy !== null) {
+  if (shouldMigrateLegacy) {
     const legacyPath = resolveLegacyAuthStorePath(agentDir);
     try {
       fs.unlinkSync(legacyPath);
@@ -461,7 +490,7 @@ export function loadAuthProfileStoreForSecretsRuntime(agentDir?: string): AuthPr
 
 export function ensureAuthProfileStore(
   agentDir?: string,
-  options?: { allowKeychainPrompt?: boolean },
+  options?: { allowKeychainPrompt?: boolean; readOnly?: boolean },
 ): AuthProfileStore {
   const runtimeStore = resolveRuntimeAuthProfileStore(agentDir);
   if (runtimeStore) {
@@ -479,6 +508,22 @@ export function ensureAuthProfileStore(
   const merged = mergeAuthProfileStores(mainStore, store);
 
   return merged;
+}
+
+/**
+ * Load only the agent-local auth profile store, without merging with the main
+ * agent store. Use this when computing which profiles to delete: the clean
+ * command's write target is the agent-local file only, so profile IDs that
+ * exist exclusively in the main store must never appear in toRemove.
+ *
+ * Unlike ensureAuthProfileStore, this function does NOT merge the main store
+ * into the result for non-default agents.
+ */
+export function loadAgentLocalAuthProfileStore(
+  agentDir?: string,
+  options?: LoadAuthProfileStoreOptions,
+): AuthProfileStore {
+  return loadAuthProfileStoreForAgent(agentDir, options);
 }
 
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
