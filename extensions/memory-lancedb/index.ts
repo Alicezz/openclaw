@@ -489,25 +489,29 @@ export default definePluginEntry({
           const { query, memoryId } = params as { query?: string; memoryId?: string };
 
           if (memoryId) {
-            try {
-              await db.delete(memoryId);
-            } catch (err) {
-              // Distinguish invalid ID format from infrastructure errors.
-              // db.delete throws "Invalid memory ID format" for bad UUIDs —
-              // that's a client error (invalid_id). LanceDB init/query failures
-              // should propagate as retryable errors.
-              if (err instanceof Error && err.message.includes("Invalid memory ID format")) {
-                return {
-                  content: [{ type: "text", text: `Invalid memory ID format: ${memoryId}` }],
-                  details: { action: "error", error: "invalid_id", id: memoryId },
-                };
+            // Acquire the same per-ID lock used by memory_refresh to prevent
+            // a concurrent refresh from resurrecting a deleted memory.
+            return withMemoryLock(memoryId, async () => {
+              try {
+                await db.delete(memoryId);
+              } catch (err) {
+                // Distinguish invalid ID format from infrastructure errors.
+                // db.delete throws "Invalid memory ID format" for bad UUIDs —
+                // that's a client error (invalid_id). LanceDB init/query failures
+                // should propagate as retryable errors.
+                if (err instanceof Error && err.message.includes("Invalid memory ID format")) {
+                  return {
+                    content: [{ type: "text", text: `Invalid memory ID format: ${memoryId}` }],
+                    details: { action: "error", error: "invalid_id", id: memoryId },
+                  };
+                }
+                throw err;
               }
-              throw err;
-            }
-            return {
-              content: [{ type: "text", text: `Memory ${memoryId} forgotten.` }],
-              details: { action: "deleted", id: memoryId },
-            };
+              return {
+                content: [{ type: "text", text: `Memory ${memoryId} forgotten.` }],
+                details: { action: "deleted", id: memoryId },
+              };
+            });
           }
 
           if (query) {
