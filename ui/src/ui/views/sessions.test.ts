@@ -8,7 +8,7 @@ function buildResult(session: SessionsListResult["sessions"][number]): SessionsL
     ts: Date.now(),
     path: "(multiple)",
     count: 1,
-    defaults: { modelProvider: null, model: null, contextTokens: null },
+    defaults: { model: null, contextTokens: null, modelProvider: null },
     sessions: [session],
   };
 }
