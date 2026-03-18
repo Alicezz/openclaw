@@ -866,6 +866,7 @@ export async function redispatchSubagentRunAfterRestart(
   onComplete: (runId: string, endedAt: number, outcome: { status: string }) => Promise<void>,
   suppressNotifications?: boolean,
   onResumeCleanup?: (runId: string) => void,
+  onPersist?: () => void,
 ): Promise<void> {
   // Track whether onComplete has been called so the finally block can guarantee
   // it fires on every exit path (fix for resume-lock leak on early return or
@@ -875,6 +876,9 @@ export async function redispatchSubagentRunAfterRestart(
   // throws (transient RPC disconnect/timeout), we must NOT mark the parent run
   // as terminally failed because the child may still be executing successfully.
   let childDispatchSucceeded = false;
+  // Hoisted so the finally block can reference the redispatched child's run ID
+  // to store on the parent entry when entering waiting-for-child limbo.
+  let newRunId: string = "";
   const safeComplete = async (endedAt: number, outcome: { status: string }): Promise<void> => {
     if (!onCompleteCalled) {
       await onComplete(runId, endedAt, outcome);
@@ -951,7 +955,7 @@ export async function redispatchSubagentRunAfterRestart(
     const redispatchIdem = crypto.randomUUID();
     // Use a fresh UUID for newRunId so it is never confused with the idempotency
     // key, which is for deduplication only and is not a valid run ID.
-    let newRunId: string = crypto.randomUUID();
+    newRunId = crypto.randomUUID();
     try {
       log.info("restart recovery: re-dispatching task to child session", {
         runId,
@@ -1097,8 +1101,8 @@ export async function redispatchSubagentRunAfterRestart(
     if (!onCompleteCalled) {
       if (childDispatchSucceeded) {
         log.warn(
-          "agent.wait retries exhausted after successful redispatch; marking as terminal error to prevent duplicate dispatch",
-          { runId },
+          "agent.wait retries exhausted after successful redispatch; entering waiting-for-child limbo to prevent false failure",
+          { runId, newRunId },
         );
         // DO NOT call onResumeCleanup here — it re-enters the resume loop via
         // resumeSubagentRun, which re-classifies the run as resumable-fresh
@@ -1107,16 +1111,21 @@ export async function redispatchSubagentRunAfterRestart(
         // (transient RPC outage caused agent.wait to fail), so a second
         // dispatch would produce duplicate execution and duplicate replies.
         //
-        // Instead, mark the run as a terminal error.  If the child eventually
-        // completes, the announce mechanism will still deliver its results
-        // independently of this registry entry's status.
-        try {
-          await safeComplete(Date.now(), { status: "error" });
-        } catch (completeErr) {
-          defaultRuntime.log(
-            `[warn] subagent-resume: post-dispatch terminal-error completion failed run=${runId}: ${String(completeErr)}`,
-          );
-        }
+        // DO NOT call safeComplete(error) either — that marks the ORIGINAL run
+        // as terminally failed even though the child may still be executing
+        // successfully.  In transient RPC outage scenarios this produces a
+        // false failure state and triggers failure cleanup/announce prematurely.
+        //
+        // Instead, store the newRunId on the run entry so the parent enters a
+        // "waiting for child" limbo state.  The child's eventual completion
+        // will be delivered via the announce mechanism independently.
+        entry.redirectedToRunId = newRunId;
+        // Persist the updated entry so the redirect survives restarts.
+        // The entry is passed by reference (same object in the subagentRuns
+        // map), so the mutation is already reflected in-memory.  The onPersist
+        // callback triggers disk serialization from the caller's context where
+        // persistSubagentRuns is available.
+        onPersist?.();
       } else {
         try {
           await onComplete(runId, Date.now(), { status: "error" });
@@ -1163,6 +1172,8 @@ export function routeResumedRun(params: {
   /** Called when an async recovery path fails so the caller can clear the
    *  resume lock (`resumedRuns`) and allow the run to be retried. */
   onResumeCleanup?: (runId: string) => void;
+  /** Called when the run entry is mutated and needs disk persistence. */
+  onPersist?: () => void;
 }): boolean {
   const resumability = resolveSubagentRunResumability(params.entry);
 
@@ -1202,6 +1213,7 @@ export function routeResumedRun(params: {
       params.onCompleteRedispatch,
       true, // suppressNotifications — no user-visible messages before recovered run completes
       params.onResumeCleanup,
+      params.onPersist,
     );
     return true;
   }

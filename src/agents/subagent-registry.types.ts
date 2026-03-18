@@ -83,4 +83,11 @@ export type SubagentRunRecord = {
    * agent default.
    */
   thinking?: string;
+  /**
+   * When wait retries exhaust after a successful redispatch, the newRunId of
+   * the child dispatch is stored here instead of marking the parent as a
+   * terminal error.  The parent enters a "waiting for child" limbo state and
+   * the child's eventual completion is delivered via the announce mechanism.
+   */
+  redirectedToRunId?: string;
 };

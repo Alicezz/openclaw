@@ -225,10 +225,20 @@ function reconcileOrphanedRun(params: {
   return true;
 }
 
-function reconcileOrphanedRestoredRuns() {
+function reconcileOrphanedRestoredRuns(restoredRunIds: ReadonlySet<string>) {
   const storeCache = new Map<string, Record<string, SessionEntry>>();
   let changed = false;
-  for (const [runId, entry] of subagentRuns.entries()) {
+  // Iterate only over the pre-snapshot set of restored run IDs, NOT over the
+  // full mutable subagentRuns map.  Runs added to subagentRuns after the
+  // snapshot (fresh spawns during the async rehydration window) must not be
+  // included in orphan pruning — they are actively running and would be
+  // misclassified.
+  for (const runId of restoredRunIds) {
+    const entry = subagentRuns.get(runId);
+    if (!entry) {
+      // Already pruned or removed during rehydration — skip.
+      continue;
+    }
     const orphanReason = resolveSubagentRunOrphanReason({
       entry,
       storeCache,
@@ -702,6 +712,9 @@ function resumeSubagentRun(runId: string) {
         resumeSubagentRun(failedRunId);
       }, retryDelayMs).unref?.();
     },
+    onPersist: () => {
+      persistSubagentRuns();
+    },
   });
   if (handled) {
     resumedRuns.add(runId);
@@ -744,7 +757,7 @@ async function restoreSubagentRunsOnce(): Promise<void> {
     // rehydrateSessionStoreEntries is async (writes via updateSessionStore to
     // serialise concurrent store writers during startup through the lock).
     await rehydrateSessionStoreEntries(subagentRuns);
-    if (reconcileOrphanedRestoredRuns()) {
+    if (reconcileOrphanedRestoredRuns(restoredRunIds)) {
       persistSubagentRuns();
     }
     if (subagentRuns.size === 0) {
