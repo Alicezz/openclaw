@@ -350,6 +350,28 @@ function restoreStreamChunk(
     }
   }
 
+  // Some providers materialize complete tool call payloads in toolcall_end
+  // rather than assembling from deltas. Restore placeholders there too so
+  // downstream tool dispatch sees original values.
+  if (chunk.type === "toolcall_end") {
+    let changed = false;
+    const next: Record<string, unknown> = { ...chunk };
+    for (const key of ["toolCall", "partial", "message"] as const) {
+      if (!(key in chunk)) {
+        continue;
+      }
+      const current = chunk[key];
+      const restored = restoreUnknownStrings(current, ctx);
+      if (restored !== current) {
+        next[key] = restored;
+        changed = true;
+      }
+    }
+    if (changed) {
+      return next;
+    }
+  }
+
   return chunk;
 }
 
