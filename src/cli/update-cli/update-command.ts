@@ -681,6 +681,151 @@ async function maybeRestartService(params: {
   }
 }
 
+/**
+ * After a core update, verify the running Node version still satisfies the
+ * updated runtime-guard requirements. If not, attempt an in-place Node upgrade
+ * so that plugin installs and subsequent CLI invocations don't crash with a
+ * cryptic "requires Node >=X.Y.Z" error.
+ */
+async function ensureNodeSatisfiesUpdatedVersion(params: {
+  root: string;
+  jsonMode: boolean;
+}): Promise<void> {
+  try {
+    // Re-read the updated runtime guard to see what Node version is now required.
+    // The updated code is already on disk at params.root after the core update.
+    const guardPath = path.join(params.root, "dist", "infra", "runtime-guard.js");
+    if (!(await pathExists(guardPath))) {
+      return; // Can't check — skip gracefully
+    }
+
+    // Run the version check in a child process to bypass Node's module cache.
+    // The current process already loaded runtime-guard.js at startup, so
+    // `await import(guardPath)` would return the stale pre-update module.
+    const checkScript = [
+      `const g = require(${JSON.stringify(guardPath)});`,
+      `const d = g.detectRuntime?.();`,
+      `if (!d || g.runtimeSatisfies?.(d)) { process.exit(0); }`,
+      `process.stdout.write(JSON.stringify({ version: d.version }));`,
+      `process.exit(1);`,
+    ].join(" ");
+
+    const checkRes = await runCommandWithTimeout(
+      [process.execPath, "-e", checkScript],
+      { timeoutMs: 5_000 },
+    );
+
+    if (checkRes.code === 0) {
+      return; // Current Node satisfies the new version — all good
+    }
+
+    // Parse current version from child process output
+    let currentVersion = "unknown";
+    try {
+      const parsed = JSON.parse(checkRes.stdout.trim()) as { version?: string };
+      currentVersion = parsed.version ?? "unknown";
+    } catch {
+      // Fall through with "unknown"
+    }
+
+    // Detect platform
+    const os = await import("node:os");
+    const platform = os.platform();
+    const arch = os.arch();
+
+    // Windows: no POSIX toolchain — tell the user what to do instead of silently failing
+    if (platform === "win32") {
+      if (!params.jsonMode) {
+        defaultRuntime.log("");
+        defaultRuntime.log(
+          theme.warn(
+            `Node ${currentVersion} is too old for the updated OpenClaw.`,
+          ),
+        );
+        defaultRuntime.log(
+          theme.warn(
+            `Auto-upgrade is not supported on Windows. Please update Node manually: https://nodejs.org/en/download`,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Node is too old for the updated version — attempt auto-upgrade
+    if (!params.jsonMode) {
+      defaultRuntime.log("");
+      defaultRuntime.log(
+        theme.warn(
+          `Node ${currentVersion} is too old for the updated OpenClaw. Attempting auto-upgrade...`,
+        ),
+      );
+    }
+
+    const nodeArch = arch === "arm64" ? "arm64" : "x64";
+    const nodePlatform = platform === "darwin" ? "darwin" : "linux";
+
+    // Resolve latest Node 22 LTS version
+    const latestRes = await runCommandWithTimeout(
+      [
+        "sh",
+        "-c",
+        `curl -fsSL 'https://nodejs.org/dist/index.json' 2>/dev/null | grep -o '"version":"v22\\.[^"]*"' | head -1 | sed 's/"version":"//;s/"//'`,
+      ],
+      { timeoutMs: 15_000 },
+    );
+    const targetNodeVersion = latestRes.stdout.trim() || "v22.16.0";
+
+    // Download and install Node
+    const nodeDir = path.join(os.homedir(), ".local", "node");
+    const dist = `node-${targetNodeVersion}-${nodePlatform}-${nodeArch}`;
+    const url = `https://nodejs.org/dist/${targetNodeVersion}/${dist}.tar.xz`;
+    const tmpFile = "/tmp/node-upgrade.tar.xz";
+
+    const upgradeRes = await runCommandWithTimeout(
+      [
+        "sh",
+        "-c",
+        // trap ensures temp file is always cleaned up, even if tar/mkdir fails
+        `trap 'rm -f ${tmpFile}' EXIT; ` +
+        [
+          `mkdir -p "${nodeDir}"`,
+          `curl -fsSL "${url}" -o ${tmpFile}`,
+          `tar -xJf ${tmpFile} -C "${nodeDir}" --strip-components=1`,
+        ].join(" && "),
+      ],
+      { timeoutMs: 120_000 },
+    );
+
+    if (upgradeRes.code === 0) {
+      if (!params.jsonMode) {
+        defaultRuntime.log(
+          theme.success(`Node upgraded to ${targetNodeVersion}. Continuing update...`),
+        );
+      }
+      // Update PATH for this process so subsequent steps (plugin install) use the new Node
+      const nodeBinDir = path.join(nodeDir, "bin");
+      process.env.PATH = `${nodeBinDir}:${process.env.PATH ?? ""}`;
+    } else {
+      if (!params.jsonMode) {
+        defaultRuntime.log(
+          theme.warn(
+            `Could not auto-upgrade Node. Please upgrade manually to ${targetNodeVersion}+:`,
+          ),
+        );
+        defaultRuntime.log(
+          theme.muted(`  curl -fsSL '${url}' | tar -xJf - -C ~/.local/node --strip-components=1`),
+        );
+        defaultRuntime.log(
+          theme.muted(`  export PATH="$HOME/.local/node/bin:$PATH"`),
+        );
+      }
+    }
+  } catch {
+    // Non-fatal — if we can't auto-upgrade, the user will get the runtime guard error
+    // on next invocation, which is no worse than the current behavior.
+  }
+}
+
 export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   suppressDeprecations();
   const invocationCwd = tryResolveInvocationCwd();
@@ -957,6 +1102,10 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     defaultRuntime.exit(0);
     return;
   }
+
+  // After core update, verify Node still satisfies the updated version's requirements.
+  // If not, auto-upgrade Node so plugin installs (and subsequent runs) don't fail.
+  await ensureNodeSatisfiesUpdatedVersion({ root, jsonMode: Boolean(opts.json) });
 
   await updatePluginsAfterCoreUpdate({
     root,
