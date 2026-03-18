@@ -391,8 +391,10 @@ const allKnownTestFiles = [
     ...walkTestFiles(path.join("ui", "src", "ui")),
   ]),
 ];
+const isUnitIsolatedFile = (fileFilter) =>
+  unitIsolatedFiles.includes(fileFilter) || unitSingletonIsolatedFiles.includes(fileFilter);
 const inferTarget = (fileFilter) => {
-  const isolated = unitIsolatedFiles.includes(fileFilter);
+  const isolated = isUnitIsolatedFile(fileFilter);
   if (fileFilter.endsWith(".live.test.ts")) {
     return { owner: "live", isolated };
   }
