@@ -526,11 +526,17 @@ export default definePluginEntry({
             }
 
             if (results.length === 1 && results[0].score > 0.9) {
-              await db.delete(results[0].entry.id);
-              return {
-                content: [{ type: "text", text: `Forgotten: "${results[0].entry.text}"` }],
-                details: { action: "deleted", id: results[0].entry.id },
-              };
+              const matchId = results[0].entry.id;
+              const matchText = results[0].entry.text;
+              // Acquire the same per-ID lock used by memory_refresh to prevent
+              // a concurrent refresh from resurrecting a deleted memory.
+              return withMemoryLock(matchId, async () => {
+                await db.delete(matchId);
+                return {
+                  content: [{ type: "text", text: `Forgotten: "${matchText}"` }],
+                  details: { action: "deleted", id: matchId },
+                };
+              });
             }
 
             const list = results
