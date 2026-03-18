@@ -3,7 +3,7 @@ import type { ResolvedSlackAccount } from "../../../../extensions/slack/src/acco
 import type { SlackMessageEvent } from "../../../../extensions/slack/src/types.js";
 import type { MsgContext } from "../../../auto-reply/templating.js";
 import type { OpenClawConfig } from "../../../config/config.js";
-import { inboundCtxCapture } from "./inbound-testkit.js";
+import { buildDispatchInboundContextCapture, inboundCtxCapture } from "./inbound-testkit.js";
 import { expectChannelInboundContextContract } from "./suites.js";
 
 const dispatchInboundMessageMock = vi.hoisted(() =>
@@ -18,8 +18,8 @@ const dispatchInboundMessageMock = vi.hoisted(() =>
   ),
 );
 
-vi.mock("openclaw/plugin-sdk/reply-runtime", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/reply-runtime")>();
+vi.mock("../../../auto-reply/dispatch.js", async (importOriginal) => {
+  const actual = await buildDispatchInboundContextCapture(importOriginal, inboundCtxCapture);
   return {
     ...actual,
     dispatchInboundMessage: vi.fn(async (params: { ctx: MsgContext }) => {
