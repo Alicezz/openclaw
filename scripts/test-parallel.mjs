@@ -93,7 +93,12 @@ const unitIsolatedFilesRaw = [
   "src/infra/git-commit.test.ts",
 ];
 const unitIsolatedFiles = unitIsolatedFilesRaw.filter((file) => fs.existsSync(file));
-const unitSingletonIsolatedFilesRaw = [];
+const unitSingletonIsolatedFilesRaw = [
+  // Channel contract suites can observe mutated bundled plugin state under the
+  // shared unit-fast lane when run with isolate=false on CI shards.
+  "src/channels/plugins/contracts/actions.contract.test.ts",
+  "src/channels/plugins/contracts/surface.contract.test.ts",
+];
 const unitSingletonIsolatedFiles = unitSingletonIsolatedFilesRaw.filter((file) =>
   fs.existsSync(file),
 );
