@@ -994,7 +994,7 @@ export async function redispatchSubagentRunAfterRestart(
           // session-store entry was synthesized without the full patch flow.
           ...(typeof entry.model === "string" && entry.model.trim()
             ? (() => {
-                const modelStr = entry.model!.trim();
+                const modelStr = entry.model.trim();
                 const slashIdx = modelStr.indexOf("/");
                 if (slashIdx > 0) {
                   return {
@@ -1089,22 +1089,34 @@ export async function redispatchSubagentRunAfterRestart(
     // unexpected error prevented the normal completion path from running.
     // This ensures the resume lock is never permanently leaked (fix for comment 4).
     //
-    // However, if the child was successfully dispatched and only agent.wait
-    // threw (transient RPC disconnect/timeout), forcing status:"error" would
-    // mark the parent run as terminally failed even though the child may still
-    // be executing.  In that case, log a warning and leave the run in its
-    // current (retryable) state so a subsequent reconciliation pass can pick
-    // it up.  We only force error when dispatch itself never succeeded.
+    // Key invariant: if the child dispatch succeeded (childDispatchSucceeded),
+    // we must NOT call onResumeCleanup — that re-enters the resume loop and
+    // can issue a duplicate agent dispatch.  Instead we mark the run as a
+    // terminal error via safeComplete.  The child's eventual completion is
+    // still handled by the announce mechanism independently.
     if (!onCompleteCalled) {
       if (childDispatchSucceeded) {
         log.warn(
-          "agent.wait failed after successful redispatch; releasing resume lock for retry",
+          "agent.wait retries exhausted after successful redispatch; marking as terminal error to prevent duplicate dispatch",
           { runId },
         );
-        // Release the resume lock so a subsequent reconciliation pass can
-        // re-discover and retry this run.  Without this, the run stays in
-        // `resumedRuns` forever and no code path ever picks it up again.
-        onResumeCleanup?.(runId);
+        // DO NOT call onResumeCleanup here — it re-enters the resume loop via
+        // resumeSubagentRun, which re-classifies the run as resumable-fresh
+        // (transcript still empty) and issues a SECOND agent dispatch with a
+        // new idempotency key.  The first child may still be executing
+        // (transient RPC outage caused agent.wait to fail), so a second
+        // dispatch would produce duplicate execution and duplicate replies.
+        //
+        // Instead, mark the run as a terminal error.  If the child eventually
+        // completes, the announce mechanism will still deliver its results
+        // independently of this registry entry's status.
+        try {
+          await safeComplete(Date.now(), { status: "error" });
+        } catch (completeErr) {
+          defaultRuntime.log(
+            `[warn] subagent-resume: post-dispatch terminal-error completion failed run=${runId}: ${String(completeErr)}`,
+          );
+        }
       } else {
         try {
           await onComplete(runId, Date.now(), { status: "error" });
