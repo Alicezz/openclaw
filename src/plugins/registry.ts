@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { registerContextEngineForOwner } from "../context-engine/registry.js";
 import type {
   GatewayRequestHandler,
@@ -47,12 +48,15 @@ import type {
   PluginOrigin,
   PluginKind,
   PluginRegistrationMode,
+  PluginResetSessionResult,
   PluginHookName,
   PluginHookHandlerMap,
   PluginHookRegistration as TypedPluginHookRegistration,
   SpeechProviderPlugin,
   WebSearchProviderPlugin,
 } from "./types.js";
+
+type GatewaySessionResetModule = typeof import("../gateway/session-reset-service.js");
 
 export type PluginToolRegistration = {
   pluginId: string;
@@ -220,10 +224,143 @@ export type PluginRegistryParams = {
   // When true, skip writing to the global plugin command registry during register().
   // Used by non-activating snapshot loads to avoid leaking commands into the running gateway.
   suppressGlobalCommands?: boolean;
+  loadSessionResetModule?: () => Promise<GatewaySessionResetModule>;
 };
 
 type PluginTypedHookPolicy = {
   allowPromptInjection?: boolean;
+};
+
+const FALLBACK_AGENT_ID = "main";
+const DEFAULT_MAIN_SESSION_KEY = "main";
+const VALID_AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const INVALID_AGENT_CHARS_RE = /[^a-z0-9_-]+/g;
+const LEADING_DASH_RE = /^-+/;
+const TRAILING_DASH_RE = /-+$/;
+
+const isGlobalSessionKey = (value: string) => value === "global" || value === "unknown";
+
+const normalizePluginMainKey = (value?: string) => {
+  const trimmed = (value ?? "").trim();
+  return trimmed ? trimmed.toLowerCase() : DEFAULT_MAIN_SESSION_KEY;
+};
+
+const normalizePluginAgentId = (value?: string) => {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return FALLBACK_AGENT_ID;
+  }
+  if (VALID_AGENT_ID_RE.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  return (
+    trimmed
+      .toLowerCase()
+      .replace(INVALID_AGENT_CHARS_RE, "-")
+      .replace(LEADING_DASH_RE, "")
+      .replace(TRAILING_DASH_RE, "")
+      .slice(0, 64) || FALLBACK_AGENT_ID
+  );
+};
+
+const parsePluginAgentSessionKey = (
+  sessionKey: string,
+): { agentId: string; rest: string } | null => {
+  const raw = (sessionKey ?? "").trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "agent") {
+    return null;
+  }
+  const agentId = parts[1]?.trim();
+  const rest = parts.slice(2).join(":");
+  if (!agentId || !rest) {
+    return null;
+  }
+  return { agentId, rest };
+};
+
+const buildPluginAgentMainSessionKey = (params: { agentId: string; mainKey?: string }): string => {
+  return `agent:${normalizePluginAgentId(params.agentId)}:${normalizePluginMainKey(params.mainKey)}`;
+};
+
+const canonicalizePluginMainSessionAlias = (params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+}): string => {
+  const raw = params.sessionKey.trim();
+  if (!raw) {
+    return "";
+  }
+  const normalized = raw.toLowerCase();
+  const normalizedAgent = normalizePluginAgentId(params.agentId);
+  const normalizedMainKey = normalizePluginMainKey(params.cfg.session?.mainKey);
+  const agentMainSessionKey = buildPluginAgentMainSessionKey({
+    agentId: normalizedAgent,
+    mainKey: normalizedMainKey,
+  });
+  const agentMainAliasKey = buildPluginAgentMainSessionKey({
+    agentId: normalizedAgent,
+    mainKey: DEFAULT_MAIN_SESSION_KEY,
+  });
+  const isAlias =
+    normalized === "main" ||
+    normalized === normalizedMainKey ||
+    normalized === agentMainSessionKey ||
+    normalized === agentMainAliasKey;
+  if (params.cfg.session?.scope === "global" && isAlias) {
+    return "global";
+  }
+  return isAlias ? agentMainSessionKey : normalized;
+};
+
+const resolveDefaultPluginAgentId = (cfg: OpenClawConfig): string => {
+  const agents = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
+  const preferred =
+    agents.find((agent) => agent?.default)?.id ??
+    agents.find((agent) => typeof agent?.id === "string")?.id ??
+    FALLBACK_AGENT_ID;
+  return normalizePluginAgentId(preferred);
+};
+
+const resolvePluginMainSessionKey = (cfg: OpenClawConfig): string => {
+  if (cfg.session?.scope === "global") {
+    return "global";
+  }
+  return buildPluginAgentMainSessionKey({
+    agentId: resolveDefaultPluginAgentId(cfg),
+    mainKey: cfg.session?.mainKey,
+  });
+};
+
+const resolveCanonicalPluginSessionKey = (cfg: OpenClawConfig, rawKey: string): string => {
+  const trimmedKey = rawKey.trim();
+  if (!trimmedKey) {
+    return "";
+  }
+  const lowered = trimmedKey.toLowerCase();
+  if (isGlobalSessionKey(lowered)) {
+    return lowered;
+  }
+  const parsed = parsePluginAgentSessionKey(trimmedKey);
+  if (parsed) {
+    return canonicalizePluginMainSessionAlias({
+      cfg,
+      agentId: parsed.agentId,
+      sessionKey: trimmedKey,
+    });
+  }
+  const normalizedMainKey = normalizePluginMainKey(cfg.session?.mainKey);
+  if (lowered === "main" || lowered === normalizedMainKey) {
+    return resolvePluginMainSessionKey(cfg);
+  }
+  if (lowered.startsWith("agent:")) {
+    return lowered;
+  }
+  return `agent:${resolveDefaultPluginAgentId(cfg)}:${lowered}`;
 };
 
 const constrainLegacyPromptInjectionHook = (
@@ -266,9 +403,133 @@ export function createEmptyPluginRegistry(): PluginRegistry {
 export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const registry = createEmptyPluginRegistry();
   const coreGatewayMethods = new Set(Object.keys(registryParams.coreGatewayHandlers ?? {}));
+  const isGatewayRuntimeAvailable = () => {
+    const subagentRuntime = registryParams.runtime.subagent;
+    return (
+      Boolean(subagentRuntime) && !Object.is(subagentRuntime.run, subagentRuntime.deleteSession)
+    );
+  };
+  const runtimeLoadConfig = () => {
+    const loadConfig = registryParams.runtime.config?.loadConfig;
+    if (typeof loadConfig !== "function") {
+      throw new Error("Plugin runtime config loader is unavailable.");
+    }
+    return loadConfig();
+  };
+  const gatewayResetUnavailableError =
+    "resetSession is only available while the gateway is running.";
+  let sessionResetModuleCache: GatewaySessionResetModule | null = null;
+  const loadSessionResetModule = (() => {
+    if (registryParams.loadSessionResetModule) {
+      return registryParams.loadSessionResetModule;
+    }
+    return async () => {
+      if (!sessionResetModuleCache) {
+        sessionResetModuleCache = await import("../gateway/session-reset-service.js");
+      }
+      return sessionResetModuleCache;
+    };
+  })();
+  const resetSessionsInFlight = new Set<string>();
 
   const pushDiagnostic = (diag: PluginDiagnostic) => {
     registry.diagnostics.push(diag);
+  };
+
+  const normalizeResetSessionError = (error: unknown): string => {
+    if (error instanceof Error) {
+      return error.message || "Session reset failed.";
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    if (error && typeof error === "object") {
+      const maybeMessage = Reflect.get(error, "message");
+      if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+        return maybeMessage;
+      }
+      const nestedError = Reflect.get(error, "error");
+      if (nestedError && typeof nestedError === "object") {
+        const nestedMessage = Reflect.get(nestedError, "message");
+        if (typeof nestedMessage === "string" && nestedMessage.trim()) {
+          return nestedMessage;
+        }
+      }
+    }
+    return "Session reset failed.";
+  };
+
+  const createResetSessionFailure = (
+    key: string,
+    error: unknown,
+  ): Extract<PluginResetSessionResult, { ok: false }> => ({
+    ok: false,
+    key,
+    error: normalizeResetSessionError(error),
+  });
+
+  const createPluginResetSession = (params: {
+    pluginId: string;
+    loadConfig: () => OpenClawConfig;
+    loadSessionResetModule: () => Promise<GatewaySessionResetModule>;
+    isGatewayRuntimeAvailable: () => boolean;
+  }): NonNullable<OpenClawPluginApi["resetSession"]> => {
+    return async (key, reason = "new") => {
+      let responseKey = typeof key === "string" ? key.trim() : "";
+
+      try {
+        if (typeof key !== "string") {
+          throw new TypeError("resetSession key must be a string");
+        }
+
+        const trimmedKey = key.trim();
+        responseKey = trimmedKey;
+        if (!trimmedKey) {
+          throw new Error("resetSession key must be a non-empty string");
+        }
+
+        if (!params.isGatewayRuntimeAvailable()) {
+          return createResetSessionFailure(trimmedKey, gatewayResetUnavailableError);
+        }
+
+        const normalizedReason = reason === "reset" ? "reset" : "new";
+        const liveConfig = params.loadConfig();
+        const canonicalKey = resolveCanonicalPluginSessionKey(liveConfig, trimmedKey).trim();
+        if (!canonicalKey) {
+          throw new Error("Session reset failed to resolve a canonical session key");
+        }
+
+        responseKey = canonicalKey;
+        if (resetSessionsInFlight.has(canonicalKey)) {
+          return createResetSessionFailure(
+            canonicalKey,
+            `Session reset already in progress for ${canonicalKey}.`,
+          );
+        }
+
+        resetSessionsInFlight.add(canonicalKey);
+        try {
+          const { performGatewaySessionReset } = await params.loadSessionResetModule();
+          const result = await performGatewaySessionReset({
+            key: trimmedKey,
+            reason: normalizedReason,
+            commandSource: `plugin:${params.pluginId}`,
+          });
+          if (result.ok) {
+            return {
+              ok: true,
+              key: result.key,
+              sessionId: result.entry.sessionId,
+            };
+          }
+          return createResetSessionFailure(canonicalKey, result.error);
+        } finally {
+          resetSessionsInFlight.delete(canonicalKey);
+        }
+      } catch (error) {
+        return createResetSessionFailure(responseKey, error);
+      }
+    };
   };
 
   const registerTool = (
@@ -999,6 +1260,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
           });
         }
       },
+      resetSession:
+        registrationMode === "full"
+          ? createPluginResetSession({
+              pluginId: record.id,
+              loadConfig: runtimeLoadConfig,
+              loadSessionResetModule,
+              isGatewayRuntimeAvailable,
+            })
+          : undefined,
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) =>
         registrationMode === "full"

@@ -31,6 +31,24 @@ import type {
   ProviderWrapStreamFnContext,
 } from "./types.js";
 
+const builtInMissingAuthMessageHandlers = new Map<
+  string,
+  (ctx: ProviderBuildMissingAuthMessageContext) => string | undefined
+>([
+  [
+    "openai",
+    (ctx) => {
+      if (ctx.provider !== "openai") {
+        return undefined;
+      }
+      if (ctx.listProfileIds("openai-codex").length === 0) {
+        return undefined;
+      }
+      return 'No API key found for provider "openai". You are authenticated with OpenAI Codex OAuth. Use openai-codex/gpt-5.4 (OAuth) or set OPENAI_API_KEY to use openai/gpt-5.4.';
+    },
+  ],
+]);
+
 function matchesProviderId(provider: ProviderPlugin, providerId: string): boolean {
   const normalized = normalizeProviderId(providerId);
   if (!normalized) {
@@ -120,14 +138,23 @@ function resolveProviderPluginsForHooks(params: {
   if (cached) {
     return cached;
   }
-  const resolved = resolvePluginProviders({
-    ...params,
-    env,
-    activate: false,
-    cache: false,
-    bundledProviderAllowlistCompat: true,
-    bundledProviderVitestCompat: true,
-  });
+  let resolved: ProviderPlugin[] = [];
+  try {
+    resolved = resolvePluginProviders({
+      ...params,
+      env,
+      activate: false,
+      cache: false,
+      bundledProviderAllowlistCompat: true,
+      bundledProviderVitestCompat: true,
+    });
+  } catch (error) {
+    if ((error as Error)?.message?.includes("ensureAuthProfileStore")) {
+      resolved = [];
+    } else {
+      throw error;
+    }
+  }
   cacheBucket.set(cacheKey, resolved);
   return resolved;
 }
@@ -357,9 +384,19 @@ export function buildProviderMissingAuthMessageWithPlugin(params: {
   env?: NodeJS.ProcessEnv;
   context: ProviderBuildMissingAuthMessageContext;
 }) {
-  return (
-    resolveProviderRuntimePlugin(params)?.buildMissingAuthMessage?.(params.context) ?? undefined
-  );
+  try {
+    const plugin = resolveProviderRuntimePlugin(params);
+    const pluginResult = plugin?.buildMissingAuthMessage?.(params.context);
+    if (pluginResult) {
+      return pluginResult;
+    }
+  } catch (error) {
+    if (!(error as Error)?.message?.includes("ensureAuthProfileStore")) {
+      throw error;
+    }
+  }
+  const handler = builtInMissingAuthMessageHandlers.get(normalizeProviderId(params.provider));
+  return handler?.(params.context);
 }
 
 export function resolveProviderBuiltInModelSuppression(params: {

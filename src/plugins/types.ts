@@ -17,6 +17,8 @@ import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.js";
+import type { createVpsAwareOAuthHandlers } from "../commands/oauth-flow.js";
+import type { SecretInputMode } from "../commands/onboard-types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelProviderConfig } from "../config/types.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
@@ -38,8 +40,6 @@ import type {
   SpeechVoiceOption,
 } from "../tts/provider-types.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
-import type { SecretInputMode } from "./provider-auth-types.js";
-import type { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
 export type { PluginRuntime } from "./runtime/types.js";
@@ -903,7 +903,14 @@ export type PluginSpeechProviderEntry = SpeechProviderPlugin & {
 };
 
 export type MediaUnderstandingProviderPlugin = MediaUnderstandingProvider;
-export type ImageGenerationProviderPlugin = ImageGenerationProvider;
+export type ImageGenerationProviderPlugin = ImageGenerationProvider & {
+  description?: string;
+  envVars?: string[];
+  models?: readonly string[];
+  docsUrl?: string;
+  signupUrl?: string;
+  isConfigured?: (ctx: { config: OpenClawConfig }) => boolean;
+};
 
 export type OpenClawPluginGatewayMethod = {
   method: string;
@@ -1255,6 +1262,9 @@ export type OpenClawPluginModule =
   | ((api: OpenClawPluginApi) => void | Promise<void>);
 
 export type PluginRegistrationMode = "full" | "setup-only" | "setup-runtime";
+export type PluginResetSessionResult =
+  | { ok: true; key: string; sessionId: string }
+  | { ok: false; key: string; error: string };
 
 export type OpenClawPluginApi = {
   id: string;
@@ -1314,6 +1324,7 @@ export type OpenClawPluginApi = {
     id: string,
     factory: import("../context-engine/registry.js").ContextEngineFactory,
   ) => void;
+  resetSession?: (key: string, reason?: "new" | "reset") => Promise<PluginResetSessionResult>;
   resolvePath: (input: string) => string;
   /** Register a lifecycle hook handler */
   on: <K extends PluginHookName>(
