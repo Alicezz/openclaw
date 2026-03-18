@@ -355,14 +355,14 @@ describe("scanStatus", () => {
       session: {},
       plugins: { enabled: false },
       gateway: {},
-      channels: { telegram: { enabled: false } },
+      channels: { telegram: { enabled: false, botToken: "token" } },
     });
     mocks.resolveCommandSecretRefsViaGateway.mockResolvedValue({
       resolvedConfig: {
         session: {},
         plugins: { enabled: false },
         gateway: {},
-        channels: { telegram: { enabled: false } },
+        channels: { telegram: { enabled: false, botToken: "token" } },
       },
       diagnostics: [],
     });

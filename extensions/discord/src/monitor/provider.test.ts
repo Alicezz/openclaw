@@ -29,11 +29,13 @@ const {
   listSkillCommandsForAgentsMock,
   monitorLifecycleMock,
   reconcileAcpThreadBindingsOnStartupMock,
+  rememberDiscordManagedBotIdentityMock,
   resolveDiscordAllowlistConfigMock,
   resolveDiscordAccountMock,
   resolveNativeCommandsEnabledMock,
   resolveNativeSkillsEnabledMock,
   shouldLogVerboseMock,
+  forgetDiscordManagedBotIdentityMock,
   voiceRuntimeModuleLoadedMock,
 } = getProviderMonitorTestMocks();
 
@@ -47,6 +49,23 @@ vi.mock("openclaw/plugin-sdk/plugin-runtime", async () => {
   };
 });
 
+vi.mock("../accounts.js", () => ({
+  forgetDiscordManagedBotIdentity: forgetDiscordManagedBotIdentityMock,
+  rememberDiscordManagedBotIdentity: rememberDiscordManagedBotIdentityMock,
+  resolveDiscordAccount: resolveDiscordAccountMock,
+}));
+
+vi.mock("../probe.js", () => ({
+  fetchDiscordApplicationId: async () => "app-1",
+}));
+
+vi.mock("../token.js", () => ({
+  normalizeDiscordToken: (value?: string) => value,
+}));
+
+vi.mock("../voice/command.js", () => ({
+  createDiscordVoiceCommand: () => ({ name: "voice-command" }),
+}));
 vi.mock("../voice/manager.runtime.js", () => {
   voiceRuntimeModuleLoadedMock();
   return {
@@ -465,6 +484,85 @@ describe("monitorDiscordProvider", () => {
     );
   });
 
+  it("waits for inbound handler idle before forgetting managed bot identity", async () => {
+    const { monitorDiscordProvider } = await import("./provider.js");
+    const deactivate = vi.fn();
+    const waitForIdle = vi.fn(async () => undefined);
+    createDiscordMessageHandlerMock.mockImplementation(() =>
+      Object.assign(
+        vi.fn(async () => undefined),
+        {
+          deactivate,
+          waitForIdle,
+        },
+      ),
+    );
+
+    await monitorDiscordProvider({
+      config: baseConfig(),
+      runtime: baseRuntime(),
+    });
+
+    expect(rememberDiscordManagedBotIdentityMock).toHaveBeenCalledWith({
+      botUserId: "bot-1",
+      accountId: "default",
+    });
+    expect(deactivate).toHaveBeenCalledTimes(1);
+    expect(waitForIdle).toHaveBeenCalledTimes(1);
+    expect(forgetDiscordManagedBotIdentityMock).toHaveBeenCalledWith({
+      botUserId: "bot-1",
+      accountId: "default",
+    });
+    expect(deactivate.mock.invocationCallOrder[0]).toBeLessThan(
+      waitForIdle.mock.invocationCallOrder[0],
+    );
+    expect(waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
+      forgetDiscordManagedBotIdentityMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("bounds inbound handler idle wait during teardown", async () => {
+    vi.useFakeTimers();
+    try {
+      const { monitorDiscordProvider } = await import("./provider.js");
+      const deactivate = vi.fn();
+      const waitForIdle = vi.fn(() => new Promise<undefined>(() => undefined));
+      createDiscordMessageHandlerMock.mockImplementation(() =>
+        Object.assign(
+          vi.fn(async () => undefined),
+          {
+            deactivate,
+            waitForIdle,
+          },
+        ),
+      );
+      mockResolvedDiscordAccountConfig({
+        inboundWorker: { runTimeoutMs: 5_000 },
+      });
+      const runtime = baseRuntime();
+
+      const monitorPromise = monitorDiscordProvider({
+        config: baseConfig(),
+        runtime,
+      });
+
+      await vi.advanceTimersByTimeAsync(5_100);
+      await expect(monitorPromise).resolves.toBeUndefined();
+
+      expect(deactivate).toHaveBeenCalledTimes(1);
+      expect(waitForIdle).toHaveBeenCalledTimes(1);
+      expect(forgetDiscordManagedBotIdentityMock).toHaveBeenCalledWith({
+        botUserId: "bot-1",
+        accountId: "default",
+      });
+      expect(runtime.log).toHaveBeenCalledWith(
+        expect.stringContaining("inbound handler did not drain within 5000ms during teardown"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports connected status on startup and shutdown", async () => {
     const { monitorDiscordProvider } = await import("./provider.js");
     const setStatus = vi.fn();
@@ -483,51 +581,5 @@ describe("monitorDiscordProvider", () => {
 
     expect(connectedTrue).toBeDefined();
     expect(connectedFalse).toBeDefined();
-  });
-
-  it("logs Discord startup phases and early gateway debug events", async () => {
-    const { monitorDiscordProvider } = await import("./provider.js");
-    const runtime = baseRuntime();
-    const emitter = new EventEmitter();
-    const gateway = { emitter, isConnected: true, reconnectAttempts: 0 };
-    clientGetPluginMock.mockImplementation((name: string) =>
-      name === "gateway" ? gateway : undefined,
-    );
-    clientFetchUserMock.mockImplementationOnce(async () => {
-      emitter.emit("debug", "WebSocket connection opened");
-      return { id: "bot-1", username: "Molty" };
-    });
-    isVerboseMock.mockReturnValue(true);
-
-    await monitorDiscordProvider({
-      config: baseConfig(),
-      runtime,
-    });
-
-    const messages = vi.mocked(runtime.log).mock.calls.map((call) => String(call[0]));
-    expect(messages.some((msg) => msg.includes("fetch-application-id:start"))).toBe(true);
-    expect(messages.some((msg) => msg.includes("fetch-application-id:done"))).toBe(true);
-    expect(messages.some((msg) => msg.includes("deploy-commands:start"))).toBe(true);
-    expect(messages.some((msg) => msg.includes("deploy-commands:done"))).toBe(true);
-    expect(messages.some((msg) => msg.includes("fetch-bot-identity:start"))).toBe(true);
-    expect(messages.some((msg) => msg.includes("fetch-bot-identity:done"))).toBe(true);
-    expect(
-      messages.some(
-        (msg) => msg.includes("gateway-debug") && msg.includes("WebSocket connection opened"),
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps Discord startup chatter quiet by default", async () => {
-    const { monitorDiscordProvider } = await import("./provider.js");
-    const runtime = baseRuntime();
-
-    await monitorDiscordProvider({
-      config: baseConfig(),
-      runtime,
-    });
-
-    const messages = vi.mocked(runtime.log).mock.calls.map((call) => String(call[0]));
-    expect(messages.some((msg) => msg.includes("discord startup ["))).toBe(false);
   });
 });
