@@ -213,7 +213,14 @@ const runs = [
               {
                 name: "channel-plugin-contracts",
                 primaryShardOnly: true,
-                args: ["vitest", "run", channelPluginContractsRoot],
+                args: [
+                  "vitest",
+                  "run",
+                  "--config",
+                  "vitest.unit.config.ts",
+                  "--pool=forks",
+                  channelPluginContractsRoot,
+                ],
               },
             ]
           : []),
@@ -459,7 +466,7 @@ const createTargetedEntry = (owner, isolated, filters) => {
       name,
       skipSharding: true,
       primaryShardOnly: true,
-      args: ["vitest", "run", ...filters],
+      args: ["vitest", "run", "--config", "vitest.unit.config.ts", "--pool=forks", ...filters],
     };
   }
   if (owner === "unit-vmforks") {

@@ -294,9 +294,20 @@ async function run() {
     `[test-extension] Running ${plan.testFiles.length} test files for ${plan.extensionId} with ${plan.config}`,
   );
 
+  const poolArgs = plan.extensionId === "nostr" ? ["--pool=forks"] : [];
+
   const child = spawn(
     pnpm,
-    ["exec", "vitest", "run", "--config", plan.config, ...plan.testFiles, ...passthroughArgs],
+    [
+      "exec",
+      "vitest",
+      "run",
+      "--config",
+      plan.config,
+      ...poolArgs,
+      ...plan.testFiles,
+      ...passthroughArgs,
+    ],
     {
       cwd: repoRoot,
       stdio: "inherit",
