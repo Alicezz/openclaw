@@ -193,6 +193,14 @@ fi
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
 OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}"
 
+# Use curated list of stable core extensions if OPENCLAW_EXTENSIONS is not set.
+# This avoids including experimental extensions with known build issues.
+# Users can override with: OPENCLAW_EXTENSIONS="ext1 ext2" ./docker-setup.sh
+if [[ -z "${OPENCLAW_EXTENSIONS:-}" ]]; then
+  OPENCLAW_EXTENSIONS="anthropic google openai slack telegram whatsapp"
+  echo "Using default core extensions: $OPENCLAW_EXTENSIONS"
+fi
+
 validate_mount_path_value "OPENCLAW_CONFIG_DIR" "$OPENCLAW_CONFIG_DIR"
 validate_mount_path_value "OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_WORKSPACE_DIR"
 if [[ -n "$HOME_VOLUME_NAME" ]]; then
