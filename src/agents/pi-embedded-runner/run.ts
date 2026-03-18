@@ -1142,6 +1142,7 @@ export async function runEmbeddedPiAgent(
                   force: true,
                   compactionTarget: "budget",
                   runtimeContext: {
+                    agentId: workspaceResolution.agentId,
                     ...buildEmbeddedCompactionRuntimeContext({
                       sessionKey: params.sessionKey,
                       messageChannel: params.messageChannel,

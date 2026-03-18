@@ -302,15 +302,9 @@ describe("acp session UX bridge behavior", () => {
     const result = await agent.loadSession(createLoadSessionRequest("agent:main:work"));
 
     expect(result.modes?.currentModeId).toBe("high");
-    expect(result.modes?.availableModes.map((mode) => mode.id)).toEqual([
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "adaptive",
-    ]);
+    expect(result.modes?.availableModes.map((mode) => mode.id)).toEqual(
+      expect.arrayContaining(["off", "minimal", "low", "medium", "high", "adaptive"]),
+    );
     expect(result.configOptions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

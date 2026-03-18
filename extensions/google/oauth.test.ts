@@ -5,21 +5,19 @@ vi.mock("../../src/infra/wsl.js", () => ({
   isWSL2Sync: () => false,
 }));
 
-vi.mock("../../src/infra/net/fetch-guard.js", () => ({
-  fetchWithSsrFGuard: async (params: {
-    url: string;
-    init?: RequestInit;
-    fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-  }) => {
-    const fetchImpl = params.fetchImpl ?? globalThis.fetch;
-    const response = await fetchImpl(params.url, params.init);
-    return {
-      response,
-      finalUrl: params.url,
-      release: async () => {},
-    };
-  },
-}));
+const fetchWithSsrFGuardMock = async (params: {
+  url: string;
+  init?: RequestInit;
+  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}) => {
+  const fetchImpl = params.fetchImpl ?? globalThis.fetch;
+  const response = await fetchImpl(params.url, params.init);
+  return {
+    response,
+    finalUrl: params.url,
+    release: async () => {},
+  };
+};
 
 const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
@@ -322,7 +320,7 @@ describe("loginGeminiCliOAuth", () => {
   }
 
   let envSnapshot: Partial<Record<(typeof ENV_KEYS)[number], string>>;
-  beforeEach(() => {
+  beforeEach(async () => {
     envSnapshot = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
     process.env.OPENCLAW_GEMINI_OAUTH_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
     process.env.OPENCLAW_GEMINI_OAUTH_CLIENT_SECRET = "GOCSPX-test-client-secret"; // pragma: allowlist secret
@@ -330,9 +328,11 @@ describe("loginGeminiCliOAuth", () => {
     delete process.env.GEMINI_CLI_OAUTH_CLIENT_SECRET;
     delete process.env.GOOGLE_CLOUD_PROJECT;
     delete process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const { __setOAuthFetchWithSsrfGuardForTest } = await import("./oauth.http.js");
+    __setOAuthFetchWithSsrfGuardForTest(fetchWithSsrFGuardMock);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const key of ENV_KEYS) {
       const value = envSnapshot[key];
       if (value === undefined) {
@@ -341,6 +341,8 @@ describe("loginGeminiCliOAuth", () => {
         process.env[key] = value;
       }
     }
+    const { __resetOAuthFetchWithSsrfGuardForTest } = await import("./oauth.http.js");
+    __resetOAuthFetchWithSsrfGuardForTest();
     vi.unstubAllGlobals();
   });
 
