@@ -64,6 +64,16 @@ export type { SubagentRunRecord } from "./subagent-registry.types.js";
 const log = createSubsystemLogger("agents/subagent-registry");
 
 const subagentRuns = new Map<string, SubagentRunRecord>();
+/**
+ * Maps a redirected child run ID → the original parent run ID.
+ *
+ * When `redispatchSubagentRunAfterRestart` exhausts wait retries after a
+ * successful child dispatch, the parent run enters a "waiting for child" limbo
+ * state with `entry.redirectedToRunId` set.  The lifecycle listener uses this
+ * map to route the child's eventual completion event back to the parent run,
+ * preventing permanent limbo.
+ */
+const redirectedChildToParentRun = new Map<string, string>();
 let sweeper: NodeJS.Timeout | null = null;
 let listenerStarted = false;
 let listenerStop: (() => void) | null = null;
@@ -715,6 +725,10 @@ function resumeSubagentRun(runId: string) {
     onPersist: () => {
       persistSubagentRuns();
     },
+    onRegisterRedirect: (childRunId, parentRunId) => {
+      redirectedChildToParentRun.set(childRunId, parentRunId);
+      log.info("registered redirected child → parent mapping", { childRunId, parentRunId });
+    },
   });
   if (handled) {
     resumedRuns.add(runId);
@@ -762,6 +776,17 @@ async function restoreSubagentRunsOnce(): Promise<void> {
     }
     if (subagentRuns.size === 0) {
       return;
+    }
+    // Rebuild the redirected child → parent map from persisted entries so that
+    // lifecycle events for redirected children are routed correctly after restart.
+    for (const [parentId, entry] of subagentRuns) {
+      if (typeof entry.redirectedToRunId === "string" && entry.redirectedToRunId) {
+        redirectedChildToParentRun.set(entry.redirectedToRunId, parentId);
+        log.info("restored redirected child → parent mapping from disk", {
+          childRunId: entry.redirectedToRunId,
+          parentRunId: parentId,
+        });
+      }
     }
     // Resume pending work — only for runs that were present in the snapshot.
     // Runs added after the snapshot (fresh spawns during the restore window)
@@ -881,6 +906,50 @@ function ensureListener() {
       const phase = evt.data?.phase;
       const entry = subagentRuns.get(evt.runId);
       if (!entry) {
+        // Check if this is a redirected child run whose completion should be
+        // routed back to the original parent run (fix for redirectedToRunId
+        // limbo — the child's lifecycle event arrives under newRunId which has
+        // no entry in subagentRuns).
+        const parentRunId = redirectedChildToParentRun.get(evt.runId);
+        if (parentRunId && (phase === "end" || phase === "error")) {
+          const parentEntry = subagentRuns.get(parentRunId);
+          if (parentEntry) {
+            log.info(
+              "lifecycle: routing redirected child completion to parent run",
+              { childRunId: evt.runId, parentRunId, phase },
+            );
+            redirectedChildToParentRun.delete(evt.runId);
+            const endedAt =
+              typeof evt.data?.endedAt === "number" ? evt.data.endedAt : Date.now();
+            if (phase === "error") {
+              const error =
+                typeof evt.data?.error === "string" ? evt.data.error : undefined;
+              await completeSubagentRun({
+                runId: parentRunId,
+                endedAt,
+                outcome: { status: "error", error },
+                reason: SUBAGENT_ENDED_REASON_ERROR,
+                sendFarewell: true,
+                accountId: parentEntry.requesterOrigin?.accountId,
+                triggerCleanup: true,
+              });
+            } else {
+              const outcome: SubagentRunOutcome = evt.data?.aborted
+                ? { status: "timeout" }
+                : { status: "ok" };
+              await completeSubagentRun({
+                runId: parentRunId,
+                endedAt,
+                outcome,
+                reason: SUBAGENT_ENDED_REASON_COMPLETE,
+                sendFarewell: true,
+                accountId: parentEntry.requesterOrigin?.accountId,
+                triggerCleanup: true,
+              });
+            }
+            return;
+          }
+        }
         if (phase === "end" && typeof evt.sessionKey === "string") {
           await refreshFrozenResultFromSession(evt.sessionKey);
         }
@@ -1398,6 +1467,7 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
 export function resetSubagentRegistryForTests(opts?: { persist?: boolean }) {
   subagentRuns.clear();
   resumedRuns.clear();
+  redirectedChildToParentRun.clear();
   endedHookInFlightRunIds.clear();
   clearAllPendingLifecycleErrors();
   resetAnnounceQueuesForTests();

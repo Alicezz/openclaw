@@ -867,6 +867,7 @@ export async function redispatchSubagentRunAfterRestart(
   suppressNotifications?: boolean,
   onResumeCleanup?: (runId: string) => void,
   onPersist?: () => void,
+  onRegisterRedirect?: (childRunId: string, parentRunId: string) => void,
 ): Promise<void> {
   // Track whether onComplete has been called so the finally block can guarantee
   // it fires on every exit path (fix for resume-lock leak on early return or
@@ -1126,6 +1127,11 @@ export async function redispatchSubagentRunAfterRestart(
         // callback triggers disk serialization from the caller's context where
         // persistSubagentRuns is available.
         onPersist?.();
+        // Register the child → parent redirect so the lifecycle listener can
+        // route the child's eventual completion event back to the parent run.
+        // Without this, the child's event is dropped because subagentRuns has
+        // no entry for newRunId, leaving the parent in permanent limbo.
+        onRegisterRedirect?.(newRunId, runId);
       } else {
         try {
           await onComplete(runId, Date.now(), { status: "error" });
@@ -1174,6 +1180,10 @@ export function routeResumedRun(params: {
   onResumeCleanup?: (runId: string) => void;
   /** Called when the run entry is mutated and needs disk persistence. */
   onPersist?: () => void;
+  /** Called when a redirected child run ID needs to be mapped back to the
+   *  original parent run ID so the lifecycle listener can route the child's
+   *  completion event to the parent. */
+  onRegisterRedirect?: (childRunId: string, parentRunId: string) => void;
 }): boolean {
   const resumability = resolveSubagentRunResumability(params.entry);
 
@@ -1214,6 +1224,7 @@ export function routeResumedRun(params: {
       true, // suppressNotifications — no user-visible messages before recovered run completes
       params.onResumeCleanup,
       params.onPersist,
+      params.onRegisterRedirect,
     );
     return true;
   }
