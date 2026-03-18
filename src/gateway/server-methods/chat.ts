@@ -1027,10 +1027,11 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
 
-    // Generate cursor and hasMore for pagination
-    const hasMore = rawMessages.length > sliced.length;
-    const oldestMessage = sliced.length > 0 ? (sliced[0] as { timestamp?: number }) : null;
-    const cursor = oldestMessage?.timestamp ? String(oldestMessage.timestamp) : null;
+    // Generate cursor and hasMore from the actual delivered messages
+    const delivered = bounded.messages as Array<{ timestamp?: number }>;
+    const oldestDelivered = delivered.length > 0 ? delivered[0] : null;
+    const cursor = oldestDelivered?.timestamp ? String(oldestDelivered.timestamp) : null;
+    const hasMore = rawMessages.length > sliced.length || sliced.length > delivered.length;
 
     respond(true, {
       sessionKey,

@@ -67,7 +67,6 @@ function maybeResetToolStream(state: ChatState) {
 }
 
 export async function loadChatHistory(state: ChatState, before?: string) {
-  // Load earlier messages (pagination)
   if (!state.client || !state.connected) {
     return;
   }
@@ -84,24 +83,19 @@ export async function loadChatHistory(state: ChatState, before?: string) {
       limit: 200,
       before,
     });
-    // API response handled
+
     const messages = Array.isArray(res.messages) ? res.messages : [];
     const filtered = messages.filter((message) => !isAssistantSilentReply(message));
-    // Filtered messages handled
 
     if (before) {
-      // Prepend older messages when loading more
       state.chatMessages = [...filtered, ...state.chatMessages];
-      // Prepend handled
     } else {
-      // Initial load
       state.chatMessages = filtered;
     }
 
     state.chatThinkingLevel = res.thinkingLevel ?? null;
     state.chatHistoryCursor = res.cursor ?? null;
     state.chatHistoryHasMore = res.hasMore ?? false;
-    // State updated
 
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.
@@ -112,13 +106,6 @@ export async function loadChatHistory(state: ChatState, before?: string) {
     state.lastError = String(err);
   } finally {
     state.chatLoading = false;
-  }
-}
-
-export async function loadMoreChatHistory(state: ChatState) {
-  // Load more history called
-  if (state.chatHistoryCursor) {
-    await loadChatHistory(state, state.chatHistoryCursor);
   }
 }
 

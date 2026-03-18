@@ -1448,7 +1448,18 @@ export function renderApp(state: AppViewState) {
                 historyCursor: state.chatHistoryCursor,
                 historyHasMore: state.chatHistoryHasMore,
                 onLoadMoreHistory: () => {
-                  void loadChatHistory(state, state.chatHistoryCursor ?? undefined);
+                  const prevCount = state.chatMessages.length;
+                  void loadChatHistory(state, state.chatHistoryCursor ?? undefined).then(() => {
+                    if (state.chatMessages.length > prevCount) {
+                      const container = document.querySelector(".agent-chat__messages");
+                      if (container) {
+                        const firstMsg = container.querySelector("[data-message-key]");
+                        if (firstMsg) {
+                          firstMsg.scrollIntoView();
+                        }
+                      }
+                    }
+                  });
                 },
                 assistantName: state.assistantName,
                 assistantAvatar: state.assistantAvatar,
