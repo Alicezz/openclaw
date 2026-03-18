@@ -17,6 +17,11 @@ vi.mock("../plugins/web-search-providers.js", () => {
         getCredentialValue: (search?: Record<string, unknown>) => search?.apiKey,
       },
       {
+        id: "exa",
+        envVars: ["EXA_API_KEY"],
+        getCredentialValue: getScoped("exa"),
+      },
+      {
         id: "firecrawl",
         envVars: ["FIRECRAWL_API_KEY"],
         getCredentialValue: getScoped("firecrawl"),
@@ -73,6 +78,25 @@ describe("web search provider config", () => {
         providerConfig: {
           apiKey: "test-key", // pragma: allowlist secret
           model: "gemini-2.5-flash",
+        },
+      }),
+    );
+
+    expect(res.ok).toBe(true);
+  });
+
+  it("accepts exa provider and config", () => {
+    const res = validateConfigObject(
+      buildWebSearchProviderConfig({
+        enabled: true,
+        provider: "exa",
+        providerConfig: {
+          apiKey: "exa-test-key", // pragma: allowlist secret
+          type: "keyword",
+          contents: {
+            highlights: true,
+            text: false,
+          },
         },
       }),
     );
@@ -137,6 +161,7 @@ describe("web search provider auto-detection", () => {
 
   beforeEach(() => {
     delete process.env.BRAVE_API_KEY;
+    delete process.env.EXA_API_KEY;
     delete process.env.FIRECRAWL_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.KIMI_API_KEY;
@@ -165,6 +190,11 @@ describe("web search provider auto-detection", () => {
   it("auto-detects gemini when only GEMINI_API_KEY is set", () => {
     process.env.GEMINI_API_KEY = "test-gemini-key"; // pragma: allowlist secret
     expect(resolveSearchProvider({})).toBe("gemini");
+  });
+
+  it("auto-detects exa when only EXA_API_KEY is set", () => {
+    process.env.EXA_API_KEY = "test-exa-key"; // pragma: allowlist secret
+    expect(resolveSearchProvider({})).toBe("exa");
   });
 
   it("auto-detects firecrawl when only FIRECRAWL_API_KEY is set", () => {
@@ -210,14 +240,23 @@ describe("web search provider auto-detection", () => {
     expect(resolveSearchProvider({})).toBe("brave");
   });
 
-  it("gemini wins over grok, kimi, and perplexity when brave unavailable", () => {
+  it("gemini wins over exa, grok, kimi, and perplexity when brave unavailable", () => {
     process.env.GEMINI_API_KEY = "test-gemini-key"; // pragma: allowlist secret
+    process.env.EXA_API_KEY = "test-exa-key"; // pragma: allowlist secret
     process.env.PERPLEXITY_API_KEY = "test-perplexity-key"; // pragma: allowlist secret
     process.env.XAI_API_KEY = "test-xai-key"; // pragma: allowlist secret
     expect(resolveSearchProvider({})).toBe("gemini");
   });
 
-  it("grok wins over kimi and perplexity when brave and gemini unavailable", () => {
+  it("exa wins over grok, kimi, and perplexity when brave and gemini are unavailable", () => {
+    process.env.EXA_API_KEY = "test-exa-key"; // pragma: allowlist secret
+    process.env.XAI_API_KEY = "test-xai-key"; // pragma: allowlist secret
+    process.env.KIMI_API_KEY = "test-kimi-key"; // pragma: allowlist secret
+    process.env.PERPLEXITY_API_KEY = "test-perplexity-key"; // pragma: allowlist secret
+    expect(resolveSearchProvider({})).toBe("exa");
+  });
+
+  it("grok wins over kimi and perplexity when brave, gemini, and exa are unavailable", () => {
     process.env.XAI_API_KEY = "test-xai-key"; // pragma: allowlist secret
     process.env.KIMI_API_KEY = "test-kimi-key"; // pragma: allowlist secret
     process.env.PERPLEXITY_API_KEY = "test-perplexity-key"; // pragma: allowlist secret

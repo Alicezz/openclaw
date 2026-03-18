@@ -1,6 +1,7 @@
 import anthropicPlugin from "../../../extensions/anthropic/index.js";
 import bravePlugin from "../../../extensions/brave/index.js";
 import elevenLabsPlugin from "../../../extensions/elevenlabs/index.js";
+import exaPlugin from "../../../extensions/exa/index.js";
 import firecrawlPlugin from "../../../extensions/firecrawl/index.js";
 import googlePlugin from "../../../extensions/google/index.js";
 import microsoftPlugin from "../../../extensions/microsoft/index.js";
@@ -54,6 +55,7 @@ type PluginRegistrationContractEntry = {
 
 const bundledWebSearchPlugins: Array<RegistrablePlugin & { credentialValue: unknown }> = [
   { ...bravePlugin, credentialValue: "BSA-test" },
+  { ...exaPlugin, credentialValue: "exa-test" },
   { ...firecrawlPlugin, credentialValue: "fc-test" },
   { ...googlePlugin, credentialValue: "AIza-test" },
   { ...moonshotPlugin, credentialValue: "sk-test" },

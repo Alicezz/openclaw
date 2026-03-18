@@ -266,6 +266,7 @@ export const ToolsWebSearchSchema = z
     provider: z
       .union([
         z.literal("brave"),
+        z.literal("exa"),
         z.literal("firecrawl"),
         z.literal("perplexity"),
         z.literal("grok"),
@@ -299,6 +300,20 @@ export const ToolsWebSearchSchema = z
       .object({
         apiKey: SecretInputSchema.optional().register(sensitive),
         model: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    exa: z
+      .object({
+        apiKey: SecretInputSchema.optional().register(sensitive),
+        type: z.union([z.literal("neural"), z.literal("keyword"), z.literal("auto")]).optional(),
+        contents: z
+          .object({
+            highlights: z.boolean().optional(),
+            text: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

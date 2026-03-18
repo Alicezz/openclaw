@@ -10,9 +10,14 @@ const {
   isDirectPerplexityBaseUrl,
   resolvePerplexityRequestModel,
   resolvePerplexityApiKey,
+  resolveExaApiKey,
+  resolveExaType,
+  resolveExaContents,
   normalizeBraveLanguageParams,
   normalizeFreshness,
+  normalizeExaFreshness,
   normalizeToIsoDate,
+  toIsoDateTime,
   isoToPerplexityDate,
   resolveGrokApiKey,
   resolveGrokModel,
@@ -30,6 +35,7 @@ const kimiApiKeyEnv = ["KIMI_API", "KEY"].join("_");
 const moonshotApiKeyEnv = ["MOONSHOT_API", "KEY"].join("_");
 const openRouterApiKeyEnv = ["OPENROUTER_API", "KEY"].join("_");
 const perplexityApiKeyEnv = ["PERPLEXITY_API", "KEY"].join("_");
+const exaApiKeyEnv = ["EXA_API", "KEY"].join("_");
 const openRouterPerplexityApiKey = ["sk", "or", "v1", "test"].join("-");
 const directPerplexityApiKey = ["pplx", "test"].join("-");
 const enterprisePerplexityApiKey = ["enterprise", "perplexity", "test"].join("-");
@@ -167,6 +173,39 @@ describe("web_search freshness normalization", () => {
     expect(normalizeFreshness("2024-13-01to2024-01-31", "brave")).toBeUndefined();
     expect(normalizeFreshness("2024-02-30to2024-03-01", "brave")).toBeUndefined();
     expect(normalizeFreshness("2024-03-10to2024-03-01", "brave")).toBeUndefined();
+  });
+});
+
+describe("web_search exa config resolution", () => {
+  it("uses config apiKey when provided", () => {
+    expect(resolveExaApiKey({ apiKey: "exa-test-key" })).toBe("exa-test-key"); // pragma: allowlist secret
+  });
+
+  it("falls back to EXA_API_KEY", () => {
+    withEnv({ [exaApiKeyEnv]: "exa-env-key" }, () => {
+      expect(resolveExaApiKey({})).toBe("exa-env-key");
+    });
+  });
+
+  it("resolves exa type and contents defaults", () => {
+    expect(resolveExaType(undefined)).toBe("auto");
+    expect(resolveExaType({ type: "keyword" })).toBe("keyword");
+    expect(resolveExaContents(undefined)).toBeUndefined();
+    expect(resolveExaContents({ contents: { highlights: true, text: false } })).toEqual({
+      highlights: true,
+      text: false,
+    });
+  });
+
+  it("normalizes exa freshness aliases", () => {
+    expect(normalizeExaFreshness("pd")).toBe("day");
+    expect(normalizeExaFreshness("week")).toBe("week");
+    expect(normalizeExaFreshness("invalid")).toBeUndefined();
+  });
+
+  it("normalizes ISO dates into datetimes for Exa", () => {
+    expect(toIsoDateTime("2024-01-15")).toBe("2024-01-15T00:00:00.000Z");
+    expect(toIsoDateTime("invalid")).toBeUndefined();
   });
 });
 

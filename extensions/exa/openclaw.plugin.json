@@ -1,0 +1,8 @@
+{
+  "id": "exa",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
