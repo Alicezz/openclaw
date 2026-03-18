@@ -25,6 +25,7 @@ import type {
   SessionDailyMessageCounts,
   SessionDailyModelUsage,
   SessionDailyUsage,
+  SessionHourlyMessageCounts,
   SessionLatencyStats,
   SessionLogEntry,
   SessionMessageCounts,
@@ -44,6 +45,7 @@ export type {
   SessionDailyMessageCounts,
   SessionDailyModelUsage,
   SessionDailyUsage,
+  SessionHourlyMessageCounts,
   SessionLatencyStats,
   SessionLogEntry,
   SessionMessageCounts,
@@ -485,6 +487,7 @@ export async function loadSessionCostSummary(params: {
   const activityDatesSet = new Set<string>();
   const dailyMap = new Map<string, { tokens: number; cost: number }>();
   const dailyMessageMap = new Map<string, SessionDailyMessageCounts>();
+  const hourlyMessageMap = new Map<string, SessionHourlyMessageCounts>();
   const dailyLatencyMap = new Map<string, number[]>();
   const dailyModelUsageMap = new Map<string, SessionDailyModelUsage>();
   const messageCounts: SessionMessageCounts = {
@@ -595,6 +598,33 @@ export async function loadSessionCostSummary(params: {
           daily.errors += 1;
         }
         dailyMessageMap.set(dayKey, daily);
+
+        // Per-hour message counts for precise hourly stats
+        const hour = entry.timestamp.getHours();
+        const hourKey = `${dayKey}::${hour}`;
+        const hourly = hourlyMessageMap.get(hourKey) ?? {
+          date: dayKey,
+          hour,
+          total: 0,
+          user: 0,
+          assistant: 0,
+          toolCalls: 0,
+          toolResults: 0,
+          errors: 0,
+        };
+        hourly.total += entry.role === "user" || entry.role === "assistant" ? 1 : 0;
+        if (entry.role === "user") {
+          hourly.user += 1;
+        } else if (entry.role === "assistant") {
+          hourly.assistant += 1;
+        }
+        hourly.toolCalls += entry.toolNames.length;
+        hourly.toolResults += entry.toolResultCounts.total;
+        hourly.errors += entry.toolResultCounts.errors;
+        if (entry.stopReason && errorStopReasons.has(entry.stopReason)) {
+          hourly.errors += 1;
+        }
+        hourlyMessageMap.set(hourKey, hourly);
       }
 
       if (!entry.usage) {
@@ -680,6 +710,10 @@ export async function loadSessionCostSummary(params: {
     dailyMessageMap.values(),
   ).toSorted((a, b) => a.date.localeCompare(b.date));
 
+  const hourlyMessageCounts: SessionHourlyMessageCounts[] = Array.from(
+    hourlyMessageMap.values(),
+  ).toSorted((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour);
+
   const dailyLatency: SessionDailyLatency[] = Array.from(dailyLatencyMap.entries())
     .map(([date, values]) => {
       const stats = computeLatencyStats(values);
@@ -727,6 +761,7 @@ export async function loadSessionCostSummary(params: {
     activityDates: Array.from(activityDatesSet).toSorted(),
     dailyBreakdown,
     dailyMessageCounts,
+    hourlyMessageCounts,
     dailyLatency: dailyLatency.length ? dailyLatency : undefined,
     dailyModelUsage: dailyModelUsage.length ? dailyModelUsage : undefined,
     messageCounts,

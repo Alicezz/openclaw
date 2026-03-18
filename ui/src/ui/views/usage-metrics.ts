@@ -37,6 +37,19 @@ function buildPeakErrorHours(sessions: UsageSessionEntry[], timeZone: "local" | 
     if (!usage?.messageCounts || usage.messageCounts.total === 0) {
       continue;
     }
+
+    // Prefer precise hourly message counts if available
+    if (usage.hourlyMessageCounts && usage.hourlyMessageCounts.length > 0) {
+      for (const hourly of usage.hourlyMessageCounts) {
+        // Use local hour directly (data is already in local time)
+        const hour = hourly.hour;
+        hourErrors[hour] += hourly.errors;
+        hourMsgs[hour] += hourly.total;
+      }
+      continue;
+    }
+
+    // Fallback: time-based proportional allocation (legacy algorithm)
     const start = usage.firstActivity ?? session.updatedAt;
     const end = usage.lastActivity ?? session.updatedAt;
     if (!start || !end) {
