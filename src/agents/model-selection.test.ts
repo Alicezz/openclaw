@@ -5,13 +5,14 @@ import {
   buildAllowedModelSet,
   inferUniqueProviderFromConfiguredModels,
   parseModelRef,
+  resolveConfiguredModelRef,
+  resolveReasoningDefault,
   buildModelAliasIndex,
   normalizeModelSelection,
   normalizeProviderId,
   normalizeProviderIdForAuth,
   modelKey,
   resolveAllowedModelRef,
-  resolveConfiguredModelRef,
   resolveThinkingDefault,
   resolveModelRefFromString,
 } from "./model-selection.js";
@@ -632,8 +633,10 @@ describe("model-selection", () => {
         });
         const warning = warnSpy.mock.calls[0]?.[0] as string;
         expect(warning).toContain('Falling back to "anthropic/claude-3-5-sonnet"');
-        expect(warning).not.toContain("\u001B");
-        expect(warning).not.toContain("\n");
+        // The logger may add its own ANSI (e.g. \x1B[33m for warnings), but the
+        // injected user-supplied escape (\x1B[31m) and newline must be stripped.
+        expect(warning).not.toContain("\u001B[31m");
+        expect(warning).not.toMatch(/\n/);
       } finally {
         warnSpy.mockRestore();
         setLoggerOverride(null);
@@ -824,5 +827,46 @@ describe("normalizeModelSelection", () => {
     expect(normalizeModelSelection(undefined)).toBeUndefined();
     expect(normalizeModelSelection(null)).toBeUndefined();
     expect(normalizeModelSelection(42)).toBeUndefined();
+  });
+});
+
+describe("resolveReasoningDefault", () => {
+  it("uses explicit config reasoning false before catalog reasoning true", () => {
+    const cfg: Partial<OpenClawConfig> = {
+      models: {
+        providers: {
+          "openai-codex": {
+            models: [
+              {
+                id: "gpt-5.4",
+                name: "gpt-5.4",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128000,
+                maxTokens: 4096,
+              },
+            ],
+            baseUrl: "https://api.openai.com",
+          },
+        },
+      },
+    };
+
+    const result = resolveReasoningDefault({
+      cfg: cfg as OpenClawConfig,
+      provider: "openai-codex",
+      model: "gpt-5.4",
+      catalog: [
+        {
+          provider: "openai-codex",
+          id: "gpt-5.4",
+          name: "gpt-5.4",
+          reasoning: true,
+        },
+      ],
+    });
+
+    expect(result).toBe("off");
   });
 });
