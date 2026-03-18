@@ -1,5 +1,10 @@
 type IdleAwareAgent = {
   waitForIdle?: (() => Promise<void>) | undefined;
+  /**
+   * Optional hint for retry gaps where waitForIdle() can transiently resolve
+   * before a scheduled auto-retry starts a new running prompt.
+   */
+  hasPendingToolCalls?: (() => boolean) | undefined;
 };
 
 type ToolResultFlushManager = {
@@ -46,13 +51,53 @@ export async function flushPendingToolResultsAfterIdle(opts: {
   timeoutMs?: number;
   clearPendingOnTimeout?: boolean;
 }): Promise<void> {
-  const timedOut = await waitForAgentIdleBestEffort(
-    opts.agent,
-    opts.timeoutMs ?? DEFAULT_WAIT_FOR_IDLE_TIMEOUT_MS,
-  );
-  if (timedOut && opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
-    opts.sessionManager.clearPendingToolResults();
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_WAIT_FOR_IDLE_TIMEOUT_MS;
+  const waitStartedAt = Date.now();
+
+  while (true) {
+    const elapsedMs = Date.now() - waitStartedAt;
+    const remainingMs = timeoutMs - elapsedMs;
+
+    if (remainingMs <= 0) {
+      if (opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
+        opts.sessionManager.clearPendingToolResults();
+        return;
+      }
+      opts.sessionManager?.flushPendingToolResults?.();
+      return;
+    }
+
+    const timedOut = await waitForAgentIdleBestEffort(opts.agent, remainingMs);
+
+    if (timedOut) {
+      if (opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
+        opts.sessionManager.clearPendingToolResults();
+        return;
+      }
+      opts.sessionManager?.flushPendingToolResults?.();
+      return;
+    }
+
+    // Guard against overloaded-retry gaps: waitForIdle can briefly resolve
+    // while a scheduled retry has not yet started. If tool calls are still
+    // pending, give the agent another tick to start and wait again.
+    const hasPendingToolCalls = opts.agent?.hasPendingToolCalls;
+    let pendingToolCalls = false;
+    if (typeof hasPendingToolCalls === "function") {
+      try {
+        pendingToolCalls = hasPendingToolCalls.call(opts.agent);
+      } catch {
+        // Best-effort during cleanup.
+        pendingToolCalls = false;
+      }
+    }
+
+    if (pendingToolCalls) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      continue;
+    }
+
+    opts.sessionManager?.flushPendingToolResults?.();
     return;
   }
-  opts.sessionManager?.flushPendingToolResults?.();
 }

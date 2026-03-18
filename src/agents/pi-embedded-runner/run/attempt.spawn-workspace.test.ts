@@ -167,12 +167,16 @@ vi.mock("../tool-result-context-guard.js", () => ({
   installToolResultContextGuard: () => () => {},
 }));
 
+const flushPendingToolResultsAfterIdleMock = vi.fn(async () => {});
+
 vi.mock("../wait-for-idle-before-flush.js", () => ({
-  flushPendingToolResultsAfterIdle: async () => {},
+  flushPendingToolResultsAfterIdle: (...args: unknown[]) =>
+    flushPendingToolResultsAfterIdleMock(...args),
 }));
 
 vi.mock("../runs.js", () => ({
   setActiveEmbeddedRun: () => {},
+  updateActiveEmbeddedRunSnapshot: () => {},
   clearActiveEmbeddedRun: () => {},
 }));
 
@@ -276,6 +280,7 @@ function resetEmbeddedAttemptHarness(
       runId: "run-child",
     });
   }
+  flushPendingToolResultsAfterIdleMock.mockReset().mockResolvedValue(undefined);
   hoisted.createAgentSessionMock.mockReset();
   hoisted.sessionManagerOpenMock.mockReset().mockReturnValue(hoisted.sessionManager);
   hoisted.resolveSandboxContextMock.mockReset();
@@ -634,6 +639,88 @@ describe("runEmbeddedAttempt cache-ttl tracking after compaction", () => {
         timestamp: expect.any(Number),
       }),
     );
+  });
+});
+
+describe("runEmbeddedAttempt retry-gap idle flush wiring", () => {
+  const tempPaths: string[] = [];
+
+  beforeEach(() => {
+    resetEmbeddedAttemptHarness({
+      includeSpawnSubagent: false,
+      subscribeImpl: createSubscriptionMock,
+      sessionMessages: [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_retry_gap", name: "exec", arguments: {} }],
+          stopReason: "toolUse",
+          timestamp: 1,
+        } as AgentMessage,
+      ],
+    });
+  });
+
+  afterEach(async () => {
+    await cleanupTempPaths(tempPaths);
+  });
+
+  it("passes waitForIdle + hasPendingToolCalls into flush during runner cleanup", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-retry-gap-workspace-"));
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-retry-gap-agent-"));
+    const sessionFile = path.join(workspaceDir, "session.jsonl");
+    tempPaths.push(workspaceDir, agentDir);
+    await fs.writeFile(sessionFile, "", "utf8");
+
+    const waitForIdle = vi.fn(async () => {});
+    const hasPendingToolCalls = vi.fn(() => true);
+    const dispose = vi.fn();
+
+    hoisted.createAgentSessionMock.mockImplementation(async () => ({
+      session: {
+        ...createDefaultEmbeddedSession(),
+        agent: {
+          waitForIdle,
+          hasPendingToolCalls,
+          replaceMessages: () => {},
+        },
+        dispose,
+      },
+    }));
+
+    const result = await runEmbeddedAttempt({
+      sessionId: "embedded-session",
+      sessionKey: "agent:main:test-retry-gap",
+      sessionFile,
+      workspaceDir,
+      agentDir,
+      config: {},
+      prompt: "hello",
+      timeoutMs: 10_000,
+      runId: "run-retry-gap",
+      provider: "openai",
+      modelId: "gpt-test",
+      model: testModel,
+      authStorage: {} as AuthStorage,
+      modelRegistry: {} as ModelRegistry,
+      thinkLevel: "off",
+      senderIsOwner: true,
+      disableMessageTool: true,
+    });
+
+    expect(result.promptError).toBeNull();
+    expect(flushPendingToolResultsAfterIdleMock).toHaveBeenCalledTimes(1);
+    expect(flushPendingToolResultsAfterIdleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          waitForIdle: expect.any(Function),
+          hasPendingToolCalls: expect.any(Function),
+        }),
+        clearPendingOnTimeout: true,
+      }),
+    );
+    expect(waitForIdle).not.toHaveBeenCalled();
+    expect(hasPendingToolCalls).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 
