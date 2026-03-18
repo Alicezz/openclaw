@@ -1444,6 +1444,23 @@ export function renderApp(state: AppViewState) {
                 onOpenSidebar: (content: string) => state.handleOpenSidebar(content),
                 onCloseSidebar: () => state.handleCloseSidebar(),
                 onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
+                // Pagination props
+                historyCursor: state.chatHistoryCursor,
+                historyHasMore: state.chatHistoryHasMore,
+                onLoadMoreHistory: () => {
+                  const prevCount = state.chatMessages.length;
+                  void loadChatHistory(state, state.chatHistoryCursor ?? undefined).then(() => {
+                    if (state.chatMessages.length > prevCount) {
+                      const container = document.querySelector(".agent-chat__messages");
+                      if (container) {
+                        const firstMsg = container.querySelector("[data-message-key]");
+                        if (firstMsg) {
+                          firstMsg.scrollIntoView();
+                        }
+                      }
+                    }
+                  });
+                },
                 assistantName: state.assistantName,
                 assistantAvatar: state.assistantAvatar,
                 basePath: state.basePath ?? "",

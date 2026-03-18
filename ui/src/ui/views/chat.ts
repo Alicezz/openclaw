@@ -109,6 +109,10 @@ export type ChatProps = {
   onSplitRatioChange?: (ratio: number) => void;
   onChatScroll?: (event: Event) => void;
   basePath?: string;
+  // Pagination
+  historyCursor?: string | null;
+  historyHasMore?: boolean;
+  onLoadMoreHistory?: () => void;
 };
 
 const COMPACTION_TOAST_DURATION_MS = 5000;
@@ -895,6 +899,21 @@ export function renderChat(props: ChatProps) {
       }
       ${isEmpty && !vs.searchOpen ? renderWelcomeState(props) : nothing}
       ${
+        props.historyHasMore && !props.loading
+          ? html`
+              <div class="chat-load-more">
+                <button
+                  class="chat-load-more__btn"
+                  @click=${props.onLoadMoreHistory}
+                  ?disabled=${props.loading}
+                >
+                  Load earlier messages
+                </button>
+              </div>
+            `
+          : nothing
+      }
+      ${
         isEmpty && vs.searchOpen
           ? html`
               <div class="agent-chat__empty">No matching messages</div>
@@ -1328,7 +1347,7 @@ export function renderChat(props: ChatProps) {
   `;
 }
 
-const CHAT_HISTORY_RENDER_LIMIT = 200;
+const CHAT_HISTORY_RENDER_LIMIT = 2000;
 
 function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
   const result: Array<ChatItem | MessageGroup> = [];

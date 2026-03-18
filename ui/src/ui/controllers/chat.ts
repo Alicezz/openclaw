@@ -42,6 +42,8 @@ export type ChatState = {
   chatStream: string | null;
   chatStreamStartedAt: number | null;
   lastError: string | null;
+  chatHistoryCursor: string | null;
+  chatHistoryHasMore: boolean;
 };
 
 export type ChatEventPayload = {
@@ -64,23 +66,37 @@ function maybeResetToolStream(state: ChatState) {
   }
 }
 
-export async function loadChatHistory(state: ChatState) {
+export async function loadChatHistory(state: ChatState, before?: string) {
   if (!state.client || !state.connected) {
     return;
   }
   state.chatLoading = true;
   state.lastError = null;
   try {
-    const res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string }>(
-      "chat.history",
-      {
-        sessionKey: state.sessionKey,
-        limit: 200,
-      },
-    );
+    const res = await state.client.request<{
+      messages?: Array<unknown>;
+      thinkingLevel?: string;
+      cursor?: string;
+      hasMore?: boolean;
+    }>("chat.history", {
+      sessionKey: state.sessionKey,
+      limit: 200,
+      before,
+    });
+
     const messages = Array.isArray(res.messages) ? res.messages : [];
-    state.chatMessages = messages.filter((message) => !isAssistantSilentReply(message));
+    const filtered = messages.filter((message) => !isAssistantSilentReply(message));
+
+    if (before) {
+      state.chatMessages = [...filtered, ...state.chatMessages];
+    } else {
+      state.chatMessages = filtered;
+    }
+
     state.chatThinkingLevel = res.thinkingLevel ?? null;
+    state.chatHistoryCursor = res.cursor ?? null;
+    state.chatHistoryHasMore = res.hasMore ?? false;
+
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.
     maybeResetToolStream(state);
