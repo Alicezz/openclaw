@@ -1086,7 +1086,9 @@ describe("memory index", () => {
   it("rejects reading non-memory paths", async () => {
     const cfg = createCfg({ storePath: indexMainPath });
     const manager = await getPersistentManager(cfg);
-    await expect(manager.readFile({ relPath: "NOTES.md" })).rejects.toThrow("path required");
+    await expect(manager.readFile({ relPath: "NOTES.md" })).rejects.toThrow(
+      "path is outside the memory workspace",
+    );
   });
 
   it("allows reading from additional memory paths and blocks symlinks", async () => {
@@ -1114,7 +1116,7 @@ describe("memory index", () => {
     }
     if (symlinkOk) {
       await expect(manager.readFile({ relPath: "extra/linked.md" })).rejects.toThrow(
-        "path required",
+        "path must be a regular file",
       );
     }
   });
