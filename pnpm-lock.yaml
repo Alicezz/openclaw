@@ -294,6 +294,8 @@ importers:
 
   extensions/copilot-proxy: {}
 
+  extensions/deepseek: {}
+
   extensions/diagnostics-otel:
     dependencies:
       '@opentelemetry/api':
