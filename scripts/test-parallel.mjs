@@ -106,6 +106,7 @@ const unitVmForkSingletonFilesRaw = [
   "src/channels/plugins/contracts/inbound.telegram.contract.test.ts",
 ];
 const unitVmForkSingletonFiles = unitVmForkSingletonFilesRaw.filter((file) => fs.existsSync(file));
+const channelPluginContractsRoot = "src/channels/plugins/contracts";
 const groupedUnitIsolatedFiles = unitIsolatedFiles.filter(
   (file) => !unitSingletonIsolatedFiles.includes(file),
 );
@@ -161,6 +162,7 @@ const runs = [
               ...unitIsolatedFiles,
               ...unitSingletonIsolatedFiles,
               ...unitVmForkSingletonFiles,
+              `${channelPluginContractsRoot}/**`,
             ].flatMap((file) => ["--exclude", file]),
           ],
         },
@@ -206,6 +208,15 @@ const runs = [
           name: `${path.basename(file, ".test.ts")}-channels-isolated`,
           args: ["vitest", "run", "--config", "vitest.channels.config.ts", "--pool=forks", file],
         })),
+        ...(fs.existsSync(channelPluginContractsRoot)
+          ? [
+              {
+                name: "channel-plugin-contracts",
+                primaryShardOnly: true,
+                args: ["vitest", "run", channelPluginContractsRoot],
+              },
+            ]
+          : []),
       ]
     : [
         {
@@ -394,6 +405,8 @@ const allKnownTestFiles = [
 const isUnitIsolatedFile = (fileFilter) =>
   unitIsolatedFiles.includes(fileFilter) || unitSingletonIsolatedFiles.includes(fileFilter);
 const isUnitSingletonIsolatedFile = (fileFilter) => unitSingletonIsolatedFiles.includes(fileFilter);
+const shouldKeepWholeDirectoryTarget = (fileFilter) =>
+  normalizeRepoPath(fileFilter) === channelPluginContractsRoot;
 const inferTarget = (fileFilter) => {
   const isolated = isUnitIsolatedFile(fileFilter);
   if (fileFilter.endsWith(".live.test.ts")) {
@@ -441,6 +454,14 @@ const createTargetedEntry = (owner, isolated, filters) => {
   const name = isolated ? `${owner}-isolated` : owner;
   const forceForks = isolated;
   const skipSharding = filters.length <= 1;
+  if (owner === "unit-whole") {
+    return {
+      name,
+      skipSharding: true,
+      primaryShardOnly: true,
+      args: ["vitest", "run", ...filters],
+    };
+  }
   if (owner === "unit-vmforks") {
     return {
       name,
@@ -538,6 +559,14 @@ const targetedEntries = (() => {
     return [];
   }
   const groups = passthroughFileFilters.reduce((acc, fileFilter) => {
+    if (shouldKeepWholeDirectoryTarget(fileFilter)) {
+      const normalizedFile = normalizeRepoPath(fileFilter);
+      const key = `unit-whole:isolated:${normalizedFile}`;
+      const files = acc.get(key) ?? [];
+      files.push(normalizedFile);
+      acc.set(key, files);
+      return acc;
+    }
     const matchedFiles = resolveFilterMatches(fileFilter);
     if (matchedFiles.length === 0) {
       const normalizedFile = normalizeRepoPath(fileFilter);
@@ -644,6 +673,9 @@ const maxWorkersForRun = (name) => {
   if (resolvedOverride) {
     return resolvedOverride;
   }
+  if (name === "channel-plugin-contracts" || name === "unit-whole-isolated") {
+    return null;
+  }
   if (isCI && !isMacOS) {
     return null;
   }
@@ -737,6 +769,9 @@ const runOnce = (entry, extraArgs = []) =>
   });
 
 const run = async (entry, extraArgs = []) => {
+  if (entry.primaryShardOnly === true && shardIndexOverride !== null && shardIndexOverride !== 1) {
+    return 0;
+  }
   if (shardCount <= 1 || entry.skipSharding === true) {
     return runOnce(entry, extraArgs);
   }
