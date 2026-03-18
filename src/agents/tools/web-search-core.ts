@@ -3,6 +3,7 @@ import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeResolvedSecretInputString } from "../../config/types.secrets.js";
 import { logVerbose } from "../../globals.js";
+import { resolvePluginWebSearchProviders } from "../../plugins/web-search-providers.js";
 import type { RuntimeWebSearchMetadata } from "../../secrets/runtime-web-tools.types.js";
 import { wrapWebContent } from "../../security/external-content.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
@@ -38,7 +39,6 @@ const OPENROUTER_KEY_PREFIXES = ["sk-or-"];
 
 const XAI_API_ENDPOINT = "https://api.x.ai/v1/responses";
 const DEFAULT_GROK_MODEL = "grok-4-1-fast";
-const EXA_SEARCH_ENDPOINT = "https://api.exa.ai/search";
 const DEFAULT_KIMI_BASE_URL = "https://api.moonshot.ai/v1";
 const DEFAULT_KIMI_MODEL = "moonshot-v1-128k";
 const KIMI_WEB_SEARCH_TOOL = {
@@ -580,16 +580,6 @@ type GeminiGroundingResponse = {
     message?: string;
     status?: string;
   };
-};
-
-type ExaSearchResponse = {
-  results?: Array<{
-    title?: string;
-    url?: string;
-    publishedDate?: string | null;
-    highlights?: string[];
-    text?: string;
-  }>;
 };
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
@@ -1730,84 +1720,6 @@ async function runKimiSearch(params: {
   };
 }
 
-async function runExaSearch(params: {
-  query: string;
-  apiKey: string;
-  count: number;
-  timeoutSeconds: number;
-  freshness?: "day" | "week" | "month" | "year";
-  dateAfter?: string;
-  dateBefore?: string;
-  type: "neural" | "keyword" | "auto";
-  contents?: { highlights?: boolean; text?: boolean };
-}): Promise<
-  Array<{ title: string; url: string; description: string; published?: string; siteName?: string }>
-> {
-  const body: Record<string, unknown> = {
-    query: params.query,
-    numResults: params.count,
-    type: params.type,
-  };
-  if (params.contents) {
-    body.contents = params.contents;
-  }
-  if (params.dateAfter) {
-    body.startPublishedDate = toIsoDateTime(params.dateAfter);
-  } else if (params.freshness) {
-    body.startPublishedDate = resolveExaFreshnessStartDate(params.freshness);
-  }
-  if (params.dateBefore) {
-    body.endPublishedDate = toIsoDateTime(params.dateBefore);
-  }
-
-  return withTrustedWebSearchEndpoint(
-    {
-      url: EXA_SEARCH_ENDPOINT,
-      timeoutSeconds: params.timeoutSeconds,
-      init: {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "x-api-key": params.apiKey,
-        },
-        body: JSON.stringify(body),
-      },
-    },
-    async (res) => {
-      if (!res.ok) {
-        return await throwWebSearchApiError(res, "Exa");
-      }
-
-      let data: ExaSearchResponse;
-      try {
-        data = (await res.json()) as ExaSearchResponse;
-      } catch (err) {
-        throw new Error(`Exa API returned invalid JSON: ${String(err)}`, { cause: err });
-      }
-
-      const results = Array.isArray(data.results) ? data.results : [];
-      return results.map((entry) => {
-        const title = entry.title ?? "";
-        const url = entry.url ?? "";
-        const description = resolveExaDescription({
-          highlights: Array.isArray(entry.highlights)
-            ? entry.highlights.filter((v): v is string => typeof v === "string")
-            : undefined,
-          text: typeof entry.text === "string" ? entry.text : undefined,
-        });
-        return {
-          title: title ? wrapWebContent(title, "web_search") : "",
-          url,
-          description: description ? wrapWebContent(description, "web_search") : "",
-          published: typeof entry.publishedDate === "string" ? entry.publishedDate : undefined,
-          siteName: resolveSiteName(url) || undefined,
-        };
-      });
-    },
-  );
-}
-
 function mapBraveLlmContextResults(
   data: BraveLlmContextResponse,
 ): { url: string; title: string; snippets: string[]; siteName?: string }[] {
@@ -2072,34 +1984,29 @@ async function runWebSearch(params: {
   }
 
   if (params.provider === "exa") {
-    const results = await runExaSearch({
+    // Delegate to the exa plugin — single source of truth for Exa HTTP logic.
+    const providers = resolvePluginWebSearchProviders({ bundledAllowlistCompat: true });
+    const exaPlugin = providers.find((p) => p.id === "exa");
+    if (!exaPlugin) {
+      throw new Error("Exa plugin is not available.");
+    }
+    // Build a minimal searchConfig so the plugin can resolve the API key from params.apiKey.
+    const searchConfig: Record<string, unknown> = { exa: { apiKey: params.apiKey } };
+    const tool = exaPlugin.createTool({ config: undefined, searchConfig });
+    if (!tool) {
+      throw new Error("Exa plugin failed to create tool.");
+    }
+    const result = await tool.execute({
       query: params.query,
-      apiKey: params.apiKey,
       count: params.count,
-      timeoutSeconds: params.timeoutSeconds,
-      freshness: normalizeExaFreshness(params.freshness),
-      dateAfter: params.dateAfter,
-      dateBefore: params.dateBefore,
-      type: params.exaType ?? "auto",
+      freshness: params.freshness,
+      date_after: params.dateAfter,
+      date_before: params.dateBefore,
+      type: params.exaType,
       contents: params.exaContents,
     });
-
-    const payload = {
-      query: params.query,
-      provider: params.provider,
-      count: results.length,
-      type: params.exaType ?? "auto",
-      tookMs: Date.now() - start,
-      externalContent: {
-        untrusted: true,
-        source: "web_search",
-        provider: params.provider,
-        wrapped: true,
-      },
-      results,
-    };
-    writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
-    return payload;
+    writeCache(SEARCH_CACHE, cacheKey, result, params.cacheTtlMs);
+    return result;
   }
 
   if (params.provider !== "brave") {

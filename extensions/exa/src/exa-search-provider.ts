@@ -308,12 +308,86 @@ export function createExaWebSearchProvider(): WebSearchProviderPlugin {
           );
         }
 
-        const query = typeof args.query === "string" ? args.query : "";
+        // Strict validation: reject invalid params rather than silently normalizing.
+        const rawQuery = args.query;
+        if (typeof rawQuery !== "string" || rawQuery.trim() === "") {
+          throw new Error("web_search (exa): query must be a non-empty string.");
+        }
+        const query = rawQuery.trim();
+
+        const rawType = args.type;
+        if (
+          rawType !== undefined &&
+          rawType !== "neural" &&
+          rawType !== "keyword" &&
+          rawType !== "auto"
+        ) {
+          throw new Error(
+            `web_search (exa): invalid type "${String(rawType)}". Must be "neural", "keyword", or "auto".`,
+          );
+        }
+
+        const rawContents = args.contents;
+        if (rawContents !== undefined) {
+          if (!rawContents || typeof rawContents !== "object" || Array.isArray(rawContents)) {
+            throw new Error(
+              "web_search (exa): contents must be an object with optional boolean highlights and text fields.",
+            );
+          }
+          const contentsObj = rawContents as Record<string, unknown>;
+          for (const key of ["highlights", "text"] as const) {
+            if (key in contentsObj && typeof contentsObj[key] !== "boolean") {
+              throw new Error(
+                `web_search (exa): contents.${key} must be a boolean, got ${typeof contentsObj[key]}.`,
+              );
+            }
+          }
+          for (const key of Object.keys(contentsObj)) {
+            if (key !== "highlights" && key !== "text") {
+              throw new Error(
+                `web_search (exa): contents has unknown field "${key}". Only "highlights" and "text" are allowed.`,
+              );
+            }
+          }
+        }
+
+        const rawDateAfter = args.date_after;
+        if (rawDateAfter !== undefined && typeof rawDateAfter !== "string") {
+          throw new Error(
+            "web_search (exa): date_after must be a string (YYYY-MM-DD or ISO datetime).",
+          );
+        }
+        if (typeof rawDateAfter === "string" && rawDateAfter.trim() !== "") {
+          const parsed = toIsoDateTime(rawDateAfter.trim());
+          if (!parsed) {
+            throw new Error(
+              `web_search (exa): date_after "${rawDateAfter}" is not a valid date. Use YYYY-MM-DD or ISO datetime format.`,
+            );
+          }
+        }
+
+        const rawDateBefore = args.date_before;
+        if (rawDateBefore !== undefined && typeof rawDateBefore !== "string") {
+          throw new Error(
+            "web_search (exa): date_before must be a string (YYYY-MM-DD or ISO datetime).",
+          );
+        }
+        if (typeof rawDateBefore === "string" && rawDateBefore.trim() !== "") {
+          const parsed = toIsoDateTime(rawDateBefore.trim());
+          if (!parsed) {
+            throw new Error(
+              `web_search (exa): date_before "${rawDateBefore}" is not a valid date. Use YYYY-MM-DD or ISO datetime format.`,
+            );
+          }
+        }
+
         const count = resolveSearchCount(args.count);
         const type = normalizeSearchType(args.type);
         const freshness = resolveFreshness(args.freshness);
-        const dateAfter = toIsoDateTime(args.date_after);
-        const dateBefore = toIsoDateTime(args.date_before);
+        const dateAfter =
+          typeof args.date_after === "string" ? toIsoDateTime(args.date_after) : undefined;
+        const dateBefore =
+          typeof args.date_before === "string" ? toIsoDateTime(args.date_before) : undefined;
         const contents =
           args.contents && typeof args.contents === "object" && !Array.isArray(args.contents)
             ? {
