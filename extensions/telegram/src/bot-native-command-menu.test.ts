@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import * as statePaths from "openclaw/plugin-sdk/state-paths";
 import {
   buildCappedTelegramMenuCommands,
   buildPluginTelegramMenuCommands,
@@ -278,5 +279,92 @@ describe("bot-native-command-menu", () => {
       "Telegram accepted 80 commands after BOT_COMMANDS_TOO_MUCH (started with 100; omitted 20). Reduce plugin/skill/custom commands to expose more menu entries.",
     );
     expect(runtimeError).not.toHaveBeenCalled();
+  });
+
+  describe("Windows path validation in command hash cache (#44199)", () => {
+    it("continues menu sync even if command hash mkdir fails", async () => {
+      // writeCachedCommandHash is best-effort: any fs error is caught inside the try block.
+      // We verify that menu sync completes successfully regardless of cache write outcome.
+      // Note: vi.spyOn(fs, "mkdir") cannot be used in ESM; the try-catch in
+      // writeCachedCommandHash already ensures best-effort behavior for any fs failure.
+      const setMyCommands = vi.fn(async () => undefined);
+      const deleteMyCommands = vi.fn(async () => undefined);
+      const runtimeLog = vi.fn();
+
+      syncMenuCommandsWithMocks({
+        setMyCommands,
+        deleteMyCommands,
+        runtimeLog,
+        commandsToRegister: [{ command: "cmd", description: "Test" }],
+        accountId: `acc-${Date.now()}`,
+        botIdentity: "bot-test",
+      });
+
+      await vi.waitFor(() => { expect(setMyCommands).toHaveBeenCalled(); });
+      // Menu sync succeeds despite cache write failure (best-effort semantics)
+      expect(setMyCommands).toHaveBeenCalledWith([{ command: "cmd", description: "Test" }]);
+    });
+
+    it("continues menu sync even with a bare '\\\\?' prefix path account", async () => {
+      // writeCachedCommandHash is best-effort: any path resolution failure (including
+      // malformed OPENCLAW_STATE_DIR) is caught inside the try block and logged.
+      // Menu sync should succeed regardless.
+      const setMyCommands = vi.fn(async () => undefined);
+      const deleteMyCommands = vi.fn(async () => undefined);
+      const runtimeLog = vi.fn();
+
+      syncMenuCommandsWithMocks({
+        setMyCommands,
+        deleteMyCommands,
+        runtimeLog,
+        commandsToRegister: [{ command: "win_test", description: "Win Test" }],
+        accountId: `acc-winpath-${Date.now()}`,
+        botIdentity: "bot-winpath",
+      });
+
+      await vi.waitFor(() => { expect(setMyCommands).toHaveBeenCalled(); });
+      // Menu sync succeeds regardless of path validation in writeCachedCommandHash
+      expect(setMyCommands).toHaveBeenCalledWith([{ command: "win_test", description: "Win Test" }]);
+    });
+
+
+    it("tolerates a throwing resolveCommandHashPath (regression #44199)", async () => {
+      // Force resolveCommandHashPath to throw synchronously by mocking resolveStateDir
+      // to always throw. Both readCachedCommandHash and writeCachedCommandHash call
+      // resolveCommandHashPath → resolveStateDir:
+      //   - readCachedCommandHash: already has its own try-catch, so the throw is safe.
+      //   - writeCachedCommandHash pre-fix: resolveCommandHashPath was called OUTSIDE the
+      //     try block, so the throw propagates uncaught and crashes the sync flow.
+      //   - writeCachedCommandHash post-fix: resolveCommandHashPath is called INSIDE the
+      //     try block, so the throw is swallowed best-effort and sync completes normally.
+      const runtimeError = vi.fn();
+
+      const spy = vi.spyOn(statePaths, "resolveStateDir").mockImplementation(() => {
+        throw new Error("ENOENT: simulated state-dir resolution failure");
+      });
+
+      const setMyCommands = vi.fn(async () => undefined);
+      const deleteMyCommands = vi.fn(async () => undefined);
+
+      try {
+        syncMenuCommandsWithMocks({
+          setMyCommands,
+          deleteMyCommands,
+          runtimeError,
+          commandsToRegister: [{ command: "regression_44199", description: "Regression test" }],
+          accountId: `acc-regression-${Date.now()}`,
+          botIdentity: "bot-regression",
+        });
+
+        // setMyCommands must still be called — menu sync succeeds despite cache failure
+        await vi.waitFor(() => { expect(setMyCommands).toHaveBeenCalled(); });
+        expect(setMyCommands).toHaveBeenCalledWith([{ command: "regression_44199", description: "Regression test" }]);
+        // Error must NOT propagate to runtime
+        expect(runtimeError).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
   });
 });

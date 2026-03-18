@@ -156,13 +156,18 @@ async function writeCachedCommandHash(
   botIdentity: string | undefined,
   hash: string,
 ): Promise<void> {
-  const filePath = resolveCommandHashPath(accountId, botIdentity);
   try {
+    // Resolve path inside try so any path issues (e.g. malformed OPENCLAW_STATE_DIR)
+    // are caught best-effort rather than bubbling up to the caller.
+    const filePath = resolveCommandHashPath(accountId, botIdentity);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, hash, "utf-8");
-  } catch {
-    // Best-effort: failing to cache the hash just means the next restart
-    // will sync commands again, which is the pre-fix behaviour.
+  } catch (err) {
+    // Best-effort: cache write failure means commands re-sync on next restart.
+    // Log only the error code (not err.message) to avoid leaking filesystem paths
+    // that Node.js includes in ENOENT/EACCES messages (CWE-532).
+    const e = err as NodeJS.ErrnoException;
+    logVerbose(`telegram: failed to cache command hash (code=${e?.code ?? "unknown"})`);
   }
 }
 
