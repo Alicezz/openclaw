@@ -1,3 +1,4 @@
+import baiduPlugin from "../../extensions/baidu/index.js";
 import bravePlugin from "../../extensions/brave/index.js";
 import firecrawlPlugin from "../../extensions/firecrawl/index.js";
 import googlePlugin from "../../extensions/google/index.js";
@@ -27,6 +28,7 @@ const BUNDLED_WEB_SEARCH_PLUGINS: readonly RegistrablePlugin[] = [
   moonshotPlugin,
   perplexityPlugin,
   xaiPlugin,
+  baiduPlugin,
 ];
 
 const BUNDLED_WEB_SEARCH_ALLOWLIST_COMPAT_PLUGIN_IDS = BUNDLED_WEB_SEARCH_PLUGINS.map(
