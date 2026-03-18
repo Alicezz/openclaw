@@ -19,20 +19,6 @@ const fetchWithSsrFGuardMock = async (params: {
   };
 };
 
-vi.mock("openclaw/plugin-sdk/infra-runtime", () => ({
-  fetchWithSsrFGuard: fetchWithSsrFGuardMock,
-}));
-
-vi.mock("../../src/infra/net/fetch-guard.js", () => ({
-  fetchWithSsrFGuard: async (params: {
-    url: string;
-    init?: RequestInit;
-    fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-  }) => {
-    return await fetchWithSsrFGuardMock(params);
-  },
-}));
-
 const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
 const mockRealpathSync = vi.fn();
