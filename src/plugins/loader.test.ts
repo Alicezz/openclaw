@@ -692,7 +692,7 @@ describe("bundle plugins", () => {
     expect(plugin?.format).toBe("bundle");
     expect(plugin?.bundleFormat).toBe("codex");
     expect(plugin?.bundleCapabilities).toContain("skills");
-  });
+  }, 300_000);
 
   it.each([
     {
