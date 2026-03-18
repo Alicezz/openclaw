@@ -7,19 +7,15 @@ import type { OpenClawConfig } from "../config/types.js";
 import { resolveOsSummary } from "../infra/os-summary.js";
 import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
-import { getAgentLocalStatuses } from "./status.agent-local.js";
 import type { StatusScanResult } from "./status.scan.js";
 import {
   buildTailscaleHttpsUrl,
-  pickGatewaySelfPresence,
   resolveGatewayProbeSnapshot,
   resolveMemoryPluginStatus,
   resolveSharedMemoryStatusSnapshot,
   type MemoryPluginStatus,
   type MemoryStatusSnapshot,
 } from "./status.scan.shared.js";
-import { getStatusSummary } from "./status.summary.js";
-import { getUpdateCheckResult } from "./status.update.js";
 
 let pluginRegistryModulePromise: Promise<typeof import("../cli/plugin-registry.js")> | undefined;
 let configIoModulePromise: Promise<typeof import("../config/io.js")> | undefined;
@@ -33,7 +29,6 @@ let memorySearchModulePromise: Promise<typeof import("../agents/memory-search.js
 let statusScanDepsRuntimeModulePromise:
   | Promise<typeof import("./status.scan.deps.runtime.js")>
   | undefined;
-let gatewayProbeModulePromise: Promise<typeof import("../gateway/probe.js")> | undefined;
 let statusSummaryModulePromise: Promise<typeof import("./status.summary.js")> | undefined;
 let agentLocalModulePromise: Promise<typeof import("./status.agent-local.js")> | undefined;
 let updateCheckModulePromise: Promise<typeof import("./status.update.js")> | undefined;
@@ -69,11 +64,6 @@ function loadMemorySearchModule() {
 function loadStatusScanDepsRuntimeModule() {
   statusScanDepsRuntimeModulePromise ??= import("./status.scan.deps.runtime.js");
   return statusScanDepsRuntimeModulePromise;
-}
-
-function loadGatewayProbeModule() {
-  gatewayProbeModulePromise ??= import("../gateway/probe.js");
-  return gatewayProbeModulePromise;
 }
 
 function loadStatusSummaryModule() {
