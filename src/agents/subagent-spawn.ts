@@ -705,12 +705,18 @@ export async function spawnSubagentDirect(
       label: label || undefined,
       model: resolvedModel,
       workspaceDir: spawnedMetadata.workspaceDir,
+      groupId: spawnedMetadata.groupId,
+      groupChannel: spawnedMetadata.groupChannel,
+      groupSpace: spawnedMetadata.groupSpace,
+      spawnDepth: childDepth,
       runTimeoutSeconds,
       expectsCompletionMessage,
       spawnMode,
       attachmentsDir: attachmentAbsDir,
       attachmentsRootDir: attachmentRootDir,
       retainAttachmentsOnKeep: retainOnSessionKeep,
+      extraSystemPrompt: childSystemPrompt,
+      thinking: thinkingOverride,
     });
   } catch (err) {
     if (attachmentAbsDir) {

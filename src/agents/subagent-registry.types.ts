@@ -15,8 +15,22 @@ export type SubagentRunRecord = {
   label?: string;
   model?: string;
   workspaceDir?: string;
+  /**
+   * The child's spawn depth at the time of initial dispatch.  Stored so that
+   * restart-recovery rehydration can inject a correct synthetic session-store
+   * entry without needing to recompute the depth from the (possibly degraded)
+   * parent session store.
+   */
+  spawnDepth?: number;
   runTimeoutSeconds?: number;
   spawnMode?: SpawnSubagentMode;
+  /** Group scope metadata forwarded to the gateway agent dispatch so that
+   *  restart-recovery redispatch preserves the same group routing/policy as
+   *  the original spawn.  Mirrors the publicSpawnedMetadata spread in
+   *  subagent-spawn.ts. */
+  groupId?: string;
+  groupChannel?: string;
+  groupSpace?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
@@ -55,4 +69,25 @@ export type SubagentRunRecord = {
   attachmentsDir?: string;
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
+  /**
+   * The full extraSystemPrompt that was passed to the initial agent dispatch,
+   * including any attachment-specific suffix appended after buildSubagentSystemPrompt.
+   * Stored so that restart-recovery redispatch can restore the original prompt verbatim
+   * rather than rebuilding it (which would omit attachment suffixes).
+   */
+  extraSystemPrompt?: string;
+  /**
+   * The thinking override level (e.g. "low", "medium", "high") that was passed
+   * to the original agent dispatch.  Stored so that restart-recovery redispatch
+   * can forward the same reasoning settings instead of falling back to the
+   * agent default.
+   */
+  thinking?: string;
+  /**
+   * When wait retries exhaust after a successful redispatch, the newRunId of
+   * the child dispatch is stored here instead of marking the parent as a
+   * terminal error.  The parent enters a "waiting for child" limbo state and
+   * the child's eventual completion is delivered via the announce mechanism.
+   */
+  redirectedToRunId?: string;
 };
