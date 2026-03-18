@@ -1,4 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
+import dotenv from "dotenv";
+import {
+  loadAuthProfileStoreForSecretsRuntime,
+  type AuthProfileStore,
+} from "../agents/auth-profiles.js";
 import { formatCliCommand } from "../cli/command-format.js";
+import { resolveStateDir } from "../config/paths.js";
 import { resolveGatewayLaunchAgentLabel } from "../daemon/constants.js";
 import { resolveGatewayProgramArguments } from "../daemon/program-args.js";
 import { buildServiceEnvironment } from "../daemon/service-env.js";
@@ -17,6 +25,44 @@ export type GatewayInstallPlan = {
   environment: Record<string, string | undefined>;
 };
 
+function readDurableStateEnvKeys(env: Record<string, string | undefined>): Set<string> {
+  const envPath = path.join(resolveStateDir(env as NodeJS.ProcessEnv), ".env");
+  try {
+    const parsed = dotenv.parse(fs.readFileSync(envPath, "utf8"));
+    return new Set(Object.keys(parsed));
+  } catch {
+    return new Set();
+  }
+}
+
+function collectAuthProfileServiceEnvVars(params: {
+  env: Record<string, string | undefined>;
+  authStore?: AuthProfileStore;
+  skipKeys?: Set<string>;
+}): Record<string, string> {
+  const authStore = params.authStore ?? loadAuthProfileStoreForSecretsRuntime();
+  const entries: Record<string, string> = {};
+
+  for (const credential of Object.values(authStore.profiles)) {
+    const ref =
+      credential.type === "api_key"
+        ? credential.keyRef
+        : credential.type === "token"
+          ? credential.tokenRef
+          : undefined;
+    if (!ref || ref.source !== "env" || params.skipKeys?.has(ref.id)) {
+      continue;
+    }
+    const value = params.env[ref.id]?.trim();
+    if (!value) {
+      continue;
+    }
+    entries[ref.id] = value;
+  }
+
+  return entries;
+}
+
 export async function buildGatewayInstallPlan(params: {
   env: Record<string, string | undefined>;
   port: number;
@@ -24,6 +70,7 @@ export async function buildGatewayInstallPlan(params: {
   devMode?: boolean;
   nodePath?: string;
   warn?: DaemonInstallWarnFn;
+  authStore?: AuthProfileStore;
 }): Promise<GatewayInstallPlan> {
   const { devMode, nodePath } = await resolveDaemonInstallRuntimeInputs({
     env: params.env,
@@ -52,7 +99,17 @@ export async function buildGatewayInstallPlan(params: {
         ? resolveGatewayLaunchAgentLabel(params.env.OPENCLAW_PROFILE)
         : undefined,
   });
-  return { programArguments, workingDirectory, environment: serviceEnvironment };
+  // Avoid duplicating secrets that already live in the durable state-dir `.env`,
+  // while still preserving shell-only env refs for daemon installs.
+  const environment = {
+    ...collectAuthProfileServiceEnvVars({
+      env: params.env,
+      authStore: params.authStore,
+      skipKeys: readDurableStateEnvKeys(params.env),
+    }),
+    ...serviceEnvironment,
+  };
+  return { programArguments, workingDirectory, environment };
 }
 
 export function gatewayInstallErrorHint(platform = process.platform): string {

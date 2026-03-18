@@ -1,11 +1,19 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  loadAuthProfileStoreForSecretsRuntime: vi.fn(),
   resolvePreferredNodePath: vi.fn(),
   resolveGatewayProgramArguments: vi.fn(),
   resolveSystemNodeInfo: vi.fn(),
   renderSystemNodeWarning: vi.fn(),
   buildServiceEnvironment: vi.fn(),
+}));
+
+vi.mock("../agents/auth-profiles.js", () => ({
+  loadAuthProfileStoreForSecretsRuntime: mocks.loadAuthProfileStoreForSecretsRuntime,
 }));
 
 vi.mock("../daemon/runtime-paths.js", () => ({
@@ -28,8 +36,15 @@ import {
   resolveGatewayDevMode,
 } from "./daemon-install-helpers.js";
 
+let stateDirForTest: string | undefined;
+
 afterEach(() => {
   vi.resetAllMocks();
+  delete process.env.OPENCLAW_STATE_DIR;
+  if (stateDirForTest) {
+    fs.rmSync(stateDirForTest, { recursive: true, force: true });
+    stateDirForTest = undefined;
+  }
 });
 
 describe("resolveGatewayDevMode", () => {
@@ -62,6 +77,10 @@ function mockNodeGatewayPlanFixture(
   mocks.resolveGatewayProgramArguments.mockResolvedValue({
     programArguments: ["node", "gateway"],
     workingDirectory,
+  });
+  mocks.loadAuthProfileStoreForSecretsRuntime.mockReturnValue({
+    version: 1,
+    profiles: {},
   });
   mocks.resolveSystemNodeInfo.mockResolvedValue({
     path: "/opt/node",
@@ -116,9 +135,32 @@ describe("buildGatewayInstallPlan", () => {
         OPENCLAW_PORT: "3000",
       },
     });
+    stateDirForTest = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-state-"));
+    process.env.OPENCLAW_STATE_DIR = stateDirForTest;
+    fs.writeFileSync(
+      path.join(stateDirForTest, ".env"),
+      "OPENAI_API_KEY=sk-openai-test\nANTHROPIC_TOKEN=ant-test-token\n",
+      "utf8",
+    );
+    mocks.loadAuthProfileStoreForSecretsRuntime.mockReturnValue({
+      version: 1,
+      profiles: {
+        "openai:default": {
+          type: "api_key",
+          provider: "openai",
+          keyRef: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+        },
+        "anthropic:default": {
+          type: "token",
+          provider: "anthropic",
+          tokenRef: { source: "env", provider: "default", id: "ANTHROPIC_TOKEN" },
+        },
+      },
+    });
 
     const plan = await buildGatewayInstallPlan({
       env: {
+        OPENCLAW_STATE_DIR: stateDirForTest,
         OPENAI_API_KEY: "sk-openai-test", // pragma: allowlist secret
         ANTHROPIC_TOKEN: "ant-test-token",
       },
@@ -128,6 +170,37 @@ describe("buildGatewayInstallPlan", () => {
 
     expect(plan.environment.OPENAI_API_KEY).toBeUndefined();
     expect(plan.environment.ANTHROPIC_TOKEN).toBeUndefined();
+  });
+
+  it("keeps shell-only env-backed auth-profile refs in the service environment", async () => {
+    mockNodeGatewayPlanFixture({
+      serviceEnvironment: {
+        OPENCLAW_PORT: "3000",
+      },
+    });
+    stateDirForTest = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-state-"));
+    process.env.OPENCLAW_STATE_DIR = stateDirForTest;
+    mocks.loadAuthProfileStoreForSecretsRuntime.mockReturnValue({
+      version: 1,
+      profiles: {
+        "openai:default": {
+          type: "api_key",
+          provider: "openai",
+          keyRef: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+        },
+      },
+    });
+
+    const plan = await buildGatewayInstallPlan({
+      env: {
+        OPENCLAW_STATE_DIR: stateDirForTest,
+        OPENAI_API_KEY: "sk-openai-test", // pragma: allowlist secret
+      },
+      port: 3000,
+      runtime: "node",
+    });
+
+    expect(plan.environment.OPENAI_API_KEY).toBe("sk-openai-test");
   });
 });
 
